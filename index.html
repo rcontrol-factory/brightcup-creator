@@ -10,31 +10,38 @@
 </head>
 <body>
   <header class="header">
-  <div class="header-inner">
-    <div class="brand">
-      <div class="brand-badge">BC</div>
-      <div class="brand-title">
-        <div class="t">Bright Cup Creator</div>
-        <div class="s">Gerador de livros (Coloring + Puzzles) — padrão rígido</div>
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-badge">BC</div>
+        <div class="brand-title">
+          <div class="t">Bright Cup Creator</div>
+          <div class="s">Gerador de livros (Coloring + Puzzles) — padrão rígido</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="badge ok" id="uiStatus">READY</div>
+        <button class="btn" id="btnHelp" type="button">Ajuda</button>
+        <button class="btn primary" id="btnExport" type="button">Exportar</button>
       </div>
     </div>
-    <div class="top-actions">
-      <div class="badge ok" id="uiStatus">READY</div>
-      <button class="btn" id="btnHelp" type="button">Ajuda</button>
-      <button class="btn primary" id="btnExport" type="button">Exportar</button>
-    </div>
-  </div>
-</header>
+  </header>
 
   <main class="layout">
     <nav class="sidebar" id="sidebar">
       <button class="navitem active" data-view="coloring">🎨 Coloring Pages</button>
       <button class="navitem" data-view="covers">📘 Capas</button>
+
       <button class="navitem" data-view="wordsearch">🔎 Caça-palavras</button>
       <button class="navitem" data-view="crossword">🧩 Palavra cruzada</button>
       <button class="navitem" data-view="mandala">🌀 Mandala</button>
-      <button class="navitem" data-view="cultural">🏛️ Cultural Agent</button>
+
       <div class="sep"></div>
+
+      <button class="navitem" data-view="cultural">🏛️ Cultural Agent</button>
+      <button class="navitem" data-view="book">📖 Livro (Builder)</button>
+
+      <div class="sep"></div>
+
       <button class="navitem" data-view="settings">⚙️ Config</button>
       <button class="navitem" data-view="help">❓ Ajuda</button>
     </nav>
@@ -56,7 +63,6 @@
         </div>
         <pre id="log" class="log"></pre>
       </section>
-
     </section>
   </main>
 
