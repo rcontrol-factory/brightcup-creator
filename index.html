@@ -7,8 +7,63 @@
   <title>Bright Cup Creator</title>
   <link rel="manifest" href="./manifest.json" />
   <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Mobile UX PADRÃO (hambúrguer + wrap + overlay) -->
+  <style>
+    /* Texto sempre comportado no mobile */
+    .muted, .card, .view, .content, .panel, pre, .log { overflow-wrap: anywhere; word-break: break-word; }
+    pre { white-space: pre-wrap; }
+
+    /* Hambúrguer só no mobile */
+    .btnMenu { display:none; }
+
+    /* Overlay */
+    #navOverlay{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.45);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+      display:none;
+      z-index: 50;
+    }
+
+    @media (max-width: 860px){
+      .btnMenu{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width:44px;
+      }
+
+      /* Sidebar vira drawer */
+      .sidebar{
+        position:fixed;
+        top:64px;
+        left:0;
+        bottom:0;
+        width:min(84vw, 330px);
+        transform: translateX(-110%);
+        transition: transform .18s ease;
+        z-index: 60;
+      }
+      body.nav-open .sidebar{
+        transform: translateX(0);
+      }
+      body.nav-open #navOverlay{
+        display:block;
+      }
+      /* não deixar o fundo “rolar” com menu aberto */
+      body.nav-open{
+        overflow:hidden;
+        touch-action:none;
+      }
+    }
+  </style>
 </head>
 <body>
+  <div id="navOverlay"></div>
+
   <header class="header">
     <div class="header-inner">
       <div class="brand">
@@ -18,8 +73,13 @@
           <div class="s">Gerador de livros (Coloring + Puzzles) — padrão rígido</div>
         </div>
       </div>
+
       <div class="top-actions">
         <div class="badge ok" id="uiStatus">READY</div>
+
+        <!-- Hambúrguer no mobile -->
+        <button class="btn btnMenu" id="btnMenu" type="button">☰</button>
+
         <button class="btn" id="btnHelp" type="button">Ajuda</button>
         <button class="btn primary" id="btnExport" type="button">Exportar</button>
       </div>
@@ -49,9 +109,7 @@
     <section class="content">
       <div id="toast" class="toast" hidden></div>
 
-      <section id="view" class="view">
-        <!-- injected -->
-      </section>
+      <section id="view" class="view"></section>
 
       <section class="panel">
         <div class="panel-head">
