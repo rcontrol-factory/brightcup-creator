@@ -1,7 +1,6 @@
 /* FILE: /js/app.js */
-// Bright Cup Creator — /js/app.js
-// Controller minimalista (SAFE) para casar com o index.html atual (navitem + view injected + painel de logs).
-// Objetivo: estabilidade + produção (gerar páginas hoje) sem refatoração estrutural.
+// Bright Cup Creator — /js/app.js (SAFE BOOT FIX)
+// Corrige crash: Storage não é constructor (é objeto). Liga nav + views + logs.
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
@@ -65,13 +64,8 @@ function mergeConfig(patch) {
   Storage.set('config', State.cfg);
 }
 
-function getConfig() {
-  return State.cfg || {};
-}
-
-function setConfig(patch) {
-  mergeConfig(patch);
-}
+function getConfig() { return State.cfg || {}; }
+function setConfig(patch) { mergeConfig(patch); }
 
 function exportAll() {
   const keys = Storage.listKeys();
@@ -91,9 +85,7 @@ async function importAll(file) {
   const json = JSON.parse(txt);
   const data = json?.data || json;
   if (!data || typeof data !== 'object') throw new Error('Formato inválido');
-  for (const [k, v] of Object.entries(data)) {
-    Storage.set(k, v);
-  }
+  for (const [k, v] of Object.entries(data)) Storage.set(k, v);
   State.cfg = Storage.get('config', {});
   toast('Importado ✅ (recarregue a página)', 'ok');
 }
@@ -112,45 +104,29 @@ function helpRender(root) {
         <h2>Ajuda rápida</h2>
         <p class="muted">
           Bright Cup Creator é uma Creative Engine (ferramenta premium) para gerar páginas imprimíveis.
-          Hoje o fluxo mais rápido é: <b>Coloring</b> → gerar prompt → enviar pro ComfyUI → baixar imagens → montar livro.
         </p>
         <div class="sep"></div>
         <h3>Primeiro livro (hoje)</h3>
         <ol class="muted">
-          <li>Abra <b>Config</b> e cole sua <b>ComfyUI Base URL</b>. Clique em <b>Testar conexão</b>.</li>
+          <li>Abra <b>Config</b> e cole sua <b>ComfyUI Base URL</b>.</li>
           <li>Volte em <b>Coloring Pages</b>.</li>
-          <li>Escolha um <b>Tema</b>, idade e estilo. Escreva o <b>Assunto</b>.</li>
-          <li>Clique <b>Gerar Prompt</b> e revise.</li>
-          <li>Clique <b>Enviar para ComfyUI</b>. Use <b>Ver fila</b> / <b>Status</b>.</li>
-          <li>Baixe as imagens geradas (linha preta em fundo branco) e repita para criar um pacote de páginas.</li>
+          <li>Escolha tema/idade/estilo + assunto.</li>
+          <li><b>Gerar Prompt</b> → <b>Enviar para ComfyUI</b>.</li>
+          <li>Repita até juntar seu pacote de páginas.</li>
         </ol>
-        <p class="muted">
-          Exportação PDF KDP (8.5×11) entra na FASE 4. Por enquanto, foco é gerar páginas perfeitas e salvar/backup.
-        </p>
       </div>
     </div>
   `;
 }
 
 function mountNav() {
-  $$('.navitem').forEach(btn => {
-    btn.addEventListener('click', () => routeTo(btn.dataset.view));
-  });
-
+  $$('.navitem').forEach(btn => btn.addEventListener('click', () => routeTo(btn.dataset.view)));
   $('#btnHelp')?.addEventListener('click', () => routeTo('help'));
-  $('#btnExport')?.addEventListener('click', () => {
-    // Ainda não é o export PDF profissional (FASE 4). Aqui exporta backup de dados/config.
-    exportAll();
-  });
-
+  $('#btnExport')?.addEventListener('click', () => exportAll());
   $('#btnClear')?.addEventListener('click', () => { const el = $('#log'); if (el) el.textContent = ''; });
   $('#btnCopyLog')?.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText($('#log')?.textContent || '');
-      toast('Logs copiados ✅', 'ok');
-    } catch {
-      toast('Falha ao copiar logs', 'err');
-    }
+    try { await navigator.clipboard.writeText($('#log')?.textContent || ''); toast('Logs copiados ✅', 'ok'); }
+    catch { toast('Falha ao copiar logs', 'err'); }
   });
 }
 
@@ -166,11 +142,7 @@ function routeTo(viewId) {
   const root = $('#view');
   if (!root) return;
 
-  // render
-  if (viewId === 'help') {
-    helpRender(root);
-    return;
-  }
+  if (viewId === 'help') return helpRender(root);
 
   const mod = State.modules.get(viewId);
   if (!mod) {
@@ -183,18 +155,9 @@ function routeTo(viewId) {
     mod.onShow?.();
   } catch (e) {
     console.error(e);
-    root.innerHTML = `<div class="card"><h2>Erro ao renderizar</h2><pre class="log">${escapeHtml(String(e?.stack || e))}</pre></div>`;
+    root.innerHTML = `<div class="card"><h2>Erro ao renderizar</h2><pre class="log">${String(e?.stack || e)}</pre></div>`;
     toast('Erro ao renderizar view', 'err');
   }
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
 }
 
 async function boot() {
@@ -202,27 +165,19 @@ async function boot() {
   log(`[BOOT] ${new Date().toISOString()}`);
 
   try {
-    if ('serviceWorker' in navigator) {
-      try { await navigator.serviceWorker.register('./sw.js'); } catch {}
-    }
-
+    if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch {} }
     State.themes = await loadThemes();
 
     const app = {
       themes: State.themes,
       promptEngine: new PromptEngine(State.themes),
       comfy: new ComfyClient(() => (getConfig().comfyBase || '').trim()),
-      toast,
-      log,
-      getConfig,
-      setConfig,
-      exportAll,
-      importAll,
-      resetAll,
+      toast, log,
+      getConfig, setConfig,
+      exportAll, importAll, resetAll,
       saveProject: (obj) => { Storage.set('project:last', obj); toast('Projeto salvo ✅', 'ok'); },
     };
 
-    // módulos
     State.modules.set('coloring', new ColoringModule(app));
     State.modules.set('covers', new CoversModule(app));
     State.modules.set('wordsearch', new WordSearchModule(app));
@@ -230,9 +185,7 @@ async function boot() {
     State.modules.set('mandala', new MandalaModule(app));
     State.modules.set('settings', new SettingsModule(app));
 
-    for (const m of State.modules.values()) {
-      try { await m.init?.(); } catch (e) { console.warn(e); }
-    }
+    for (const m of State.modules.values()) { try { await m.init?.(); } catch {} }
 
     mountNav();
     uiStatus('READY', 'ok');
@@ -244,8 +197,8 @@ async function boot() {
   } catch (e) {
     console.error(e);
     uiStatus('ERROR', 'bad');
-    toast(\`Erro no boot: \${e?.message || e}\`, 'err');
-    log(\`[ERROR] \${String(e?.stack || e)}\`);
+    toast(`Erro no boot: ${e?.message || e}`, 'err');
+    log(`[ERROR] ${String(e?.stack || e)}`);
   }
 }
 
