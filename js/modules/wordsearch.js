@@ -1,9 +1,11 @@
 /* FILE: /js/modules/wordsearch.js */
-// Bright Cup Creator — Caça-Palavras (PADRÃO Produção)
-// Gera grade REAL + gabarito (key) + salva puzzle completo para o Livro Cultural.
+// Bright Cup Creator — Caça-Palavras (Produção PADRÃO)
+// - Gera grade REAL + gabarito
+// - Dois presets Brasil: Pocket (13x13) e Plus (15x15)
+// - Salva puzzle completo em cultural:puzzles (para o Livro Cultural)
 
 import { Storage } from '../core/storage.js';
-import { generateWordSearch, normalizeWord } from '../core/wordsearch_gen.js';
+import { generateWordSearch } from '../core/wordsearch_gen.js';
 
 function nowISO(){ return new Date().toISOString(); }
 
@@ -14,7 +16,7 @@ function normId(s){
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/[^a-z0-9]+/g,'_')
     .replace(/^_+|_+$/g,'')
-    .slice(0,80) || ('puzzle_' + Date.now());
+    .slice(0,90) || ('puzzle_' + Date.now());
 }
 
 function getPuzzlesMap(){
@@ -34,8 +36,8 @@ export class WordSearchModule {
         <div class="card">
           <h2>Caça-Palavras (Produção)</h2>
           <p class="muted">
-            Aqui é a <b>máquina</b> oficial: gera grade + gabarito e salva puzzle pronto para o livro.
-            <br/>Dois presets Brasil: <b>13x13</b> (revistinha) e <b>15x15</b> (plus).
+            Aqui é a <b>máquina oficial</b>: gera grade + gabarito e salva puzzle pronto pro livro.
+            <br/>Presets Brasil: <b>13x13 Pocket</b> (revistinha) e <b>15x15 Plus</b> (premium).
           </p>
 
           <div class="row">
@@ -43,7 +45,7 @@ export class WordSearchModule {
             <select id="ws_preset">
               <option value="BR_POCKET">Brasil — Pocket (13x13 / 16 palavras)</option>
               <option value="BR_PLUS" selected>Brasil — Plus (15x15 / 18 palavras)</option>
-              <option value="CUSTOM">Custom (manual)</option>
+              <option value="CUSTOM">Custom</option>
             </select>
 
             <label>Tamanho</label>
@@ -63,8 +65,8 @@ export class WordSearchModule {
               <option value="20">20</option>
             </select>
 
-            <label>ID do puzzle (para livro)</label>
-            <input id="ws_pid" placeholder="ex: fe_religiosidade (ou deixa vazio)" />
+            <label>ID do puzzle (Livro)</label>
+            <input id="ws_pid" placeholder="ex: fe_religiosidade" />
 
             <label>Título (opcional)</label>
             <input id="ws_title" placeholder="ex: Caça-Palavras — Fé e religiosidade" />
@@ -100,7 +102,6 @@ export class WordSearchModule {
     const out = $('#ws_out');
     const key = $('#ws_key');
     const hint = $('#ws_hint');
-
     let last = null;
 
     const applyPreset = () => {
@@ -114,52 +115,44 @@ export class WordSearchModule {
       }
     };
 
-    $('#ws_preset').onchange = () => {
-      applyPreset();
-      hint.textContent = '';
-    };
+    $('#ws_preset').onchange = () => { applyPreset(); hint.textContent=''; };
 
-    // Seed vindo do Builder (ou de outro fluxo)
+    // Seed (vem do Builder)
     const seed = Storage.get('wordsearch:seed', null);
     if(seed && typeof seed === 'object'){
-      // preset
       const preset = seed.preset || 'BR_PLUS';
       $('#ws_preset').value = (preset === 'BR_POCKET' || preset === 'BR_PLUS') ? preset : 'CUSTOM';
       applyPreset();
 
       if(seed.size) $('#ws_size').value = String(seed.size);
       if(seed.maxWords) $('#ws_max').value = String(seed.maxWords);
-
-      if(seed.words){
-        $('#ws_words').value = String(seed.words).trim();
-      }
+      if(seed.words) $('#ws_words').value = String(seed.words).trim();
 
       const t = seed.title || '';
-      const sid = seed.puzzleId || seed.sectionId || seed.sectionTitle || '';
+      const pid = seed.puzzleId || seed.sectionId || seed.sectionTitle || '';
       $('#ws_title').value = t;
-      $('#ws_pid').value = sid ? normId(sid) : '';
+      $('#ws_pid').value = pid ? normId(pid) : '';
 
-      hint.textContent = `Recebido do Builder ✅ (${seed.sectionTitle ? seed.sectionTitle : 'seed'}) — agora clique "Gerar".`;
-
-      // não apaga seed automaticamente (pra não perder se travar)
+      hint.textContent = `Recebido do Builder ✅ Agora clique "Gerar".`;
+    } else {
+      applyPreset();
     }
 
     const generate = () => {
       const N = parseInt($('#ws_size').value, 10);
       const maxWords = parseInt($('#ws_max').value, 10);
-
       const wordsRaw = $('#ws_words').value.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+
       const gen = generateWordSearch({
         size: N,
         words: wordsRaw,
-        maxWords: maxWords,
+        maxWords,
         allowDiagonal: true,
         allowBackwards: true
       });
 
       last = gen;
-
-      out.textContent = gen.gridText + (gen.skipped && gen.skipped.length ? `\n\n[Não coube]: ${gen.skipped.join(', ')}` : '');
+      out.textContent = gen.gridText + (gen.skipped?.length ? `\n\n[Não coube]: ${gen.skipped.join(', ')}` : '');
       key.textContent = gen.keyText;
 
       const placedCount = (gen.placed||[]).length;
@@ -170,10 +163,7 @@ export class WordSearchModule {
     };
 
     const savePuzzle = () => {
-      if(!last){
-        this.app.toast?.('Gere primeiro ✅');
-        return;
-      }
+      if(!last){ this.app.toast?.('Gere primeiro ✅'); return; }
 
       const title = ($('#ws_title').value || '').trim();
       const pidIn = ($('#ws_pid').value || '').trim();
@@ -198,7 +188,6 @@ export class WordSearchModule {
     };
 
     $('#ws_make').onclick = () => generate();
-
     $('#ws_save_puzzle').onclick = () => savePuzzle();
 
     $('#ws_save_proj').onclick = () => {
@@ -217,8 +206,5 @@ export class WordSearchModule {
       this.app.saveProject?.(proj);
       this.app.toast?.('Projeto salvo ✅');
     };
-
-    // default preset apply
-    applyPreset();
   }
 }
