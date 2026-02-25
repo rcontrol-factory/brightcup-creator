@@ -1,6 +1,12 @@
+/* FILE: /js/app.js */
+// Bright Cup Creator — /js/app.js
+// Controller minimalista (SAFE) para casar com o index.html atual (navitem + view injected + painel de logs).
+// Objetivo: estabilidade + produção (gerar páginas hoje) sem refatoração estrutural.
+
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
 import { ComfyClient } from './core/comfy.js';
+
 import { ColoringModule } from './modules/coloring.js';
 import { CoversModule } from './modules/covers.js';
 import { WordSearchModule } from './modules/wordsearch.js';
@@ -13,26 +19,39 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
 const State = {
   themes: null,
-  activeView: 'coloring',
-  toastTimer: null,
-  storage: new Storage('bcc:'),
-  prompt: null,
-  comfy: null,
+  cfg: Storage.get('config', {}),
+  activeView: null,
   modules: new Map(),
+  toastTimer: null,
 };
+
+function uiStatus(text, kind = 'ok') {
+  const el = $('#uiStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.add(kind);
+}
 
 function toast(msg, type = 'info') {
   const el = $('#toast');
+  if (!el) return;
+  el.hidden = false;
   el.textContent = msg;
   el.className = `toast show ${type}`;
   clearTimeout(State.toastTimer);
-  State.toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  State.toastTimer = setTimeout(() => {
+    el.classList.remove('show');
+    el.hidden = true;
+  }, 2600);
 }
 
-function setBusy(isBusy) {
-  const b = $('#busy');
-  b.hidden = !isBusy;
-  b.setAttribute('aria-busy', String(!!isBusy));
+function log(line) {
+  const el = $('#log');
+  if (!el) return;
+  const t = typeof line === 'string' ? line : JSON.stringify(line, null, 2);
+  el.textContent += t + '\n';
+  el.scrollTop = el.scrollHeight;
 }
 
 async function loadThemes() {
@@ -41,55 +60,192 @@ async function loadThemes() {
   return await res.json();
 }
 
-function routeTo(viewId) {
-  State.activeView = viewId;
-  $$('.navbtn').forEach(b => b.classList.toggle('active', b.dataset.view === viewId));
-  $$('.view').forEach(v => v.hidden = (v.id !== `view-${viewId}`));
-  const mod = State.modules.get(viewId);
-  mod?.onShow?.();
+function mergeConfig(patch) {
+  State.cfg = { ...(State.cfg || {}), ...(patch || {}) };
+  Storage.set('config', State.cfg);
 }
 
-function wireNav() {
-  $$('.navbtn').forEach(btn => {
+function getConfig() {
+  return State.cfg || {};
+}
+
+function setConfig(patch) {
+  mergeConfig(patch);
+}
+
+function exportAll() {
+  const keys = Storage.listKeys();
+  const data = {};
+  keys.forEach(k => { data[k] = Storage.get(k, null); });
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), data }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `brightcup-backup-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast('Backup exportado ✅', 'ok');
+}
+
+async function importAll(file) {
+  const txt = await file.text();
+  const json = JSON.parse(txt);
+  const data = json?.data || json;
+  if (!data || typeof data !== 'object') throw new Error('Formato inválido');
+  for (const [k, v] of Object.entries(data)) {
+    Storage.set(k, v);
+  }
+  State.cfg = Storage.get('config', {});
+  toast('Importado ✅ (recarregue a página)', 'ok');
+}
+
+function resetAll() {
+  const keys = Storage.listKeys();
+  keys.forEach(k => Storage.del(k));
+  State.cfg = {};
+  toast('Reset feito ✅ (recarregue a página)', 'ok');
+}
+
+function helpRender(root) {
+  root.innerHTML = `
+    <div class="grid">
+      <div class="card">
+        <h2>Ajuda rápida</h2>
+        <p class="muted">
+          Bright Cup Creator é uma Creative Engine (ferramenta premium) para gerar páginas imprimíveis.
+          Hoje o fluxo mais rápido é: <b>Coloring</b> → gerar prompt → enviar pro ComfyUI → baixar imagens → montar livro.
+        </p>
+        <div class="sep"></div>
+        <h3>Primeiro livro (hoje)</h3>
+        <ol class="muted">
+          <li>Abra <b>Config</b> e cole sua <b>ComfyUI Base URL</b>. Clique em <b>Testar conexão</b>.</li>
+          <li>Volte em <b>Coloring Pages</b>.</li>
+          <li>Escolha um <b>Tema</b>, idade e estilo. Escreva o <b>Assunto</b>.</li>
+          <li>Clique <b>Gerar Prompt</b> e revise.</li>
+          <li>Clique <b>Enviar para ComfyUI</b>. Use <b>Ver fila</b> / <b>Status</b>.</li>
+          <li>Baixe as imagens geradas (linha preta em fundo branco) e repita para criar um pacote de páginas.</li>
+        </ol>
+        <p class="muted">
+          Exportação PDF KDP (8.5×11) entra na FASE 4. Por enquanto, foco é gerar páginas perfeitas e salvar/backup.
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+function mountNav() {
+  $$('.navitem').forEach(btn => {
     btn.addEventListener('click', () => routeTo(btn.dataset.view));
   });
-  $('#btnHelp').addEventListener('click', () => {
-    $('#dlgHelp').showModal();
+
+  $('#btnHelp')?.addEventListener('click', () => routeTo('help'));
+  $('#btnExport')?.addEventListener('click', () => {
+    // Ainda não é o export PDF profissional (FASE 4). Aqui exporta backup de dados/config.
+    exportAll();
   });
-  $('#btnCloseHelp').addEventListener('click', () => $('#dlgHelp').close());
+
+  $('#btnClear')?.addEventListener('click', () => { const el = $('#log'); if (el) el.textContent = ''; });
+  $('#btnCopyLog')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText($('#log')?.textContent || '');
+      toast('Logs copiados ✅', 'ok');
+    } catch {
+      toast('Falha ao copiar logs', 'err');
+    }
+  });
+}
+
+function setActiveNav(viewId) {
+  $$('.navitem').forEach(b => b.classList.toggle('active', b.dataset.view === viewId));
+}
+
+function routeTo(viewId) {
+  State.activeView = viewId;
+  mergeConfig({ lastView: viewId });
+  setActiveNav(viewId);
+
+  const root = $('#view');
+  if (!root) return;
+
+  // render
+  if (viewId === 'help') {
+    helpRender(root);
+    return;
+  }
+
+  const mod = State.modules.get(viewId);
+  if (!mod) {
+    root.innerHTML = `<div class="card"><h2>View não encontrada</h2><p class="muted">${viewId}</p></div>`;
+    return;
+  }
+
+  try {
+    mod.render?.(root);
+    mod.onShow?.();
+  } catch (e) {
+    console.error(e);
+    root.innerHTML = `<div class="card"><h2>Erro ao renderizar</h2><pre class="log">${escapeHtml(String(e?.stack || e))}</pre></div>`;
+    toast('Erro ao renderizar view', 'err');
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 async function boot() {
-  setBusy(true);
+  uiStatus('BOOT', 'warn');
+  log(`[BOOT] ${new Date().toISOString()}`);
+
   try {
     if ('serviceWorker' in navigator) {
       try { await navigator.serviceWorker.register('./sw.js'); } catch {}
     }
 
     State.themes = await loadThemes();
-    const cfg = await State.storage.getJSON('config', {});
 
-    State.prompt = new PromptEngine(State.themes);
-    State.comfy = new ComfyClient(cfg.comfyBaseUrl || '', cfg.comfyApiKey || '');
+    const app = {
+      themes: State.themes,
+      promptEngine: new PromptEngine(State.themes),
+      comfy: new ComfyClient(() => (getConfig().comfyBase || '').trim()),
+      toast,
+      log,
+      getConfig,
+      setConfig,
+      exportAll,
+      importAll,
+      resetAll,
+      saveProject: (obj) => { Storage.set('project:last', obj); toast('Projeto salvo ✅', 'ok'); },
+    };
 
-    State.modules.set('coloring', new ColoringModule({ $, $$, State, toast, setBusy }));
-    State.modules.set('covers', new CoversModule({ $, $$, State, toast, setBusy }));
-    State.modules.set('wordsearch', new WordSearchModule({ $, $$, State, toast, setBusy }));
-    State.modules.set('crossword', new CrosswordModule({ $, $$, State, toast, setBusy }));
-    State.modules.set('mandala', new MandalaModule({ $, $$, State, toast, setBusy }));
-    State.modules.set('settings', new SettingsModule({ $, $$, State, toast, setBusy }));
+    // módulos
+    State.modules.set('coloring', new ColoringModule(app));
+    State.modules.set('covers', new CoversModule(app));
+    State.modules.set('wordsearch', new WordSearchModule(app));
+    State.modules.set('crossword', new CrosswordModule(app));
+    State.modules.set('mandala', new MandalaModule(app));
+    State.modules.set('settings', new SettingsModule(app));
 
-    for (const mod of State.modules.values()) await mod.init?.();
+    for (const m of State.modules.values()) {
+      try { await m.init?.(); } catch (e) { console.warn(e); }
+    }
 
-    wireNav();
-    routeTo(cfg.lastView || 'coloring');
+    mountNav();
+    uiStatus('READY', 'ok');
+
+    const start = getConfig().lastView || 'coloring';
+    routeTo(start);
 
     toast('Pronto ✅', 'ok');
   } catch (e) {
     console.error(e);
-    toast(`Erro no boot: ${e?.message || e}`, 'err');
-  } finally {
-    setBusy(false);
+    uiStatus('ERROR', 'bad');
+    toast(\`Erro no boot: \${e?.message || e}\`, 'err');
+    log(\`[ERROR] \${String(e?.stack || e)}\`);
   }
 }
 
