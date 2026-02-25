@@ -1,5 +1,8 @@
-/* Bright Cup Creator — Service Worker (offline-first) */
-const CACHE = 'bcc-v2.0.0';
+/* FILE: /sw.js */
+/* Bright Cup Creator — Service Worker (offline-first, iOS Safari SAFE) */
+
+const CACHE = 'bcc-v2.0.1'; // <-- sempre suba quando fizer releases importantes
+
 const ASSETS = [
   './',
   './index.html',
@@ -37,27 +40,67 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+function isAppShell(req) {
+  const url = new URL(req.url);
+  if (url.origin !== location.origin) return false;
+  const p = url.pathname;
+
+  // navegação / HTML
+  if (req.mode === 'navigate') return true;
+
+  // arquivos que NÃO podem ficar presos no cache no iOS
+  if (p.endsWith('.js')) return true;
+  if (p.endsWith('.css')) return true;
+  if (p.endsWith('.json')) return true;
+
+  // index explícito
+  if (p.endsWith('/') || p.endsWith('/index.html')) return true;
+
+  return false;
+}
+
+async function networkFirst(req) {
+  const cache = await caches.open(CACHE);
+  try {
+    const res = await fetch(req, { cache: 'no-store' });
+    // guarda cópia para offline
+    cache.put(req, res.clone());
+    return res;
+  } catch {
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    return new Response('Offline', { status: 503, statusText: 'Offline' });
+  }
+}
+
+async function cacheFirst(req) {
+  const cache = await caches.open(CACHE);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  const res = await fetch(req);
+  cache.put(req, res.clone());
+  return res;
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-  // Same-origin: cache-first
-  if (url.origin === location.origin) {
+
+  // Cross-origin (ex: ComfyUI): sempre network
+  if (url.origin !== location.origin) {
     event.respondWith((async () => {
-      const cached = await caches.match(req);
-      if (cached) return cached;
-      const res = await fetch(req);
-      const cache = await caches.open(CACHE);
-      cache.put(req, res.clone());
-      return res;
+      try { return await fetch(req); }
+      catch { return new Response('Offline', { status: 503, statusText: 'Offline' }); }
     })());
     return;
   }
-  // Cross-origin (ex: ComfyUI): network-first
-  event.respondWith((async () => {
-    try {
-      return await fetch(req);
-    } catch {
-      return new Response('Offline', { status: 503, statusText: 'Offline' });
-    }
-  })());
+
+  // App shell: network-first (pra não prender JS velho no Safari)
+  if (isAppShell(req)) {
+    event.respondWith(networkFirst(req));
+    return;
+  }
+
+  // resto: cache-first
+  event.respondWith(cacheFirst(req));
 });
