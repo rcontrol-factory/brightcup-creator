@@ -1,7 +1,5 @@
 /* FILE: /js/app.js */
-// Bright Cup Creator — /js/app.js (SAFE BOOT FIX + CULTURAL MODULE)
-// Corrige: Storage não é constructor (é objeto). Liga nav + views + logs.
-// + Adiciona Cultural Agent (manual mode) como módulo novo.
+// Bright Cup Creator — /js/app.js (PADRÃO) + Cultural Agent + Book Builder
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
@@ -14,6 +12,7 @@ import { CrosswordModule } from './modules/crossword.js';
 import { MandalaModule } from './modules/mandala.js';
 import { SettingsModule } from './modules/settings.js';
 import { CulturalAgentModule } from './modules/cultural_agent.js';
+import { CulturalBookBuilderModule } from './modules/cultural_book_builder.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -82,39 +81,17 @@ function exportAll() {
   toast('Backup exportado ✅', 'ok');
 }
 
-async function importAll(file) {
-  const txt = await file.text();
-  const json = JSON.parse(txt);
-  const data = json?.data || json;
-  if (!data || typeof data !== 'object') throw new Error('Formato inválido');
-  for (const [k, v] of Object.entries(data)) Storage.set(k, v);
-  State.cfg = Storage.get('config', {});
-  toast('Importado ✅ (recarregue a página)', 'ok');
-}
-
-function resetAll() {
-  const keys = Storage.listKeys();
-  keys.forEach(k => Storage.del(k));
-  State.cfg = {};
-  toast('Reset feito ✅ (recarregue a página)', 'ok');
-}
-
 function helpRender(root) {
   root.innerHTML = `
     <div class="grid">
       <div class="card">
         <h2>Ajuda rápida</h2>
         <p class="muted">
-          Bright Cup Creator é uma Creative Engine (ferramenta premium) para gerar páginas imprimíveis.
-          Use o <b>Cultural Agent</b> para gerar palavras + texto base e aplicar no Caça-Palavras.
+          Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b> para validar layout →
+          depois Export PDF (KDP).
+          <br/><br/>
+          Linha Coloring (USA/Global) permanece separada.
         </p>
-        <div class="sep"></div>
-        <h3>Primeiro livro (hoje)</h3>
-        <ol class="muted">
-          <li>Abra <b>Config</b> e cole sua <b>ComfyUI Base URL</b>.</li>
-          <li>Para puzzles culturais: abra <b>Cultural Agent</b> → gerar → aplicar no <b>Caça-Palavras</b>.</li>
-          <li>Para coloring: abra <b>Coloring Pages</b> → gerar prompt → enviar para ComfyUI.</li>
-        </ol>
       </div>
     </div>
   `;
@@ -175,7 +152,7 @@ async function boot() {
       comfy: new ComfyClient(() => (getConfig().comfyBase || '').trim()),
       toast, log,
       getConfig, setConfig,
-      exportAll, importAll, resetAll,
+      exportAll,
       saveProject: (obj) => { Storage.set('project:last', obj); toast('Projeto salvo ✅', 'ok'); },
     };
 
@@ -184,7 +161,11 @@ async function boot() {
     State.modules.set('wordsearch', new WordSearchModule(app));
     State.modules.set('crossword', new CrosswordModule(app));
     State.modules.set('mandala', new MandalaModule(app));
+
+    // Linha Cultural Brasil
     State.modules.set('cultural', new CulturalAgentModule(app));
+    State.modules.set('book', new CulturalBookBuilderModule(app));
+
     State.modules.set('settings', new SettingsModule(app));
 
     for (const m of State.modules.values()) { try { await m.init?.(); } catch {} }
