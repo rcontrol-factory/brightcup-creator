@@ -1,15 +1,15 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4 PADRÃO (1 ano)
-// Objetivo: preview editorial do livro cultural (6x9) VISUAL no mobile.
+// Bright Cup Creator — Cultural Book Builder v0.3 PADRÃO (1 ano)
+// Objetivo: preview editorial do livro cultural (6x9) de forma LIMPA e VISUAL no mobile.
 // - Se não existir plano (Safari limpou storage): gera plano padrão MG aqui mesmo.
-// - Esconde especificações técnicas da UI (specs ficam internas).
-// - Modo Folhear no mobile (1 página) + modo Spread (2 páginas).
-// - Puzzle VISÍVEL usando o gerador OFICIAL (/js/core/wordsearch_gen.js).
-// - Backup anti-Safari: exportar/importar plano JSON aqui.
-// - Não gera PDF ainda (isso vem no Exporter).
+// - NÃO mostra “spec técnica” (isso fica interno).
+// - Mostra páginas em “papel branco” (visual final).
+// - Mostra grade real do caça-palavras dentro da página (preview).
+// - Sem scroll dentro da folha (só scroll da tela).
+// - Export PDF vem no Exporter (fase 4).
 
 import { Storage } from '../core/storage.js';
-import { generateWordSearch } from '../core/wordsearch_gen.js';
+import { generateWordSearch, normalizeWord as normWS } from '../core/wordsearch_gen.js';
 
 function esc(s){
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -18,6 +18,8 @@ function esc(s){
 }
 
 function normalizeWord(s){
+  // usa o mesmo padrão do gerador (garantia)
+  try { return normWS(s); } catch { /* fallback */ }
   return String(s || '')
     .trim()
     .toUpperCase()
@@ -42,11 +44,12 @@ function uniq(list){
 function pickWords(words, gridSize, maxCount){
   const maxLen = gridSize;
   const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
+  // puxa palavras “boas de achar” (tamanho médio)
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
-  return filtered.slice(0, maxCount);
+  return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
 
-function wrap(text, max=72){
+function wrap(text, max=78){
   const words = String(text||'').split(/\s+/g);
   const lines = [];
   let line = '';
@@ -75,7 +78,7 @@ function iconLabel(icon){
   return map[icon] || (icon || 'ilustração');
 }
 
-function buildDefaultPlanMG(grid=15, wpp=20){
+function buildDefaultPlanMG(grid=13, wpp=16){
   return {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
@@ -206,18 +209,20 @@ function buildDefaultPlanMG(grid=15, wpp=20){
 
 function buildPages(plan){
   const m = plan.meta || {};
-  const grid = Number(m.grid_default || 15);
-  const wpp  = Number(m.words_per_puzzle || 20);
+  const grid = Number(m.grid_default || 13);
+  const wpp  = Number(m.words_per_puzzle || 16);
+
   const pages = [];
 
   pages.push({
     kind:'text',
     icon:'history',
-    title: m.title || 'MINAS GERAIS CULTURAL',
-    meta: (m.subtitle || '').trim(),
+    title: m.title || 'LIVRO CULTURAL',
+    subtitle: (m.subtitle || '').trim(),
     body: wrap(
-      `Apresentação\n\nEste livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
-      `Cada seção traz um texto curto (com alma) e um caça-palavras temático.\n\n` +
+      `Apresentação\n\n` +
+      `Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
+      `Cada tema traz um texto curto (com alma) e um caça-palavras.\n\n` +
       `No final, você encontra o gabarito completo. Boa leitura e bom passatempo.`,
       72
     )
@@ -228,7 +233,7 @@ function buildPages(plan){
       kind:'text',
       icon: s.icon,
       title: s.title,
-      meta: 'Texto cultural',
+      subtitle: 'Texto cultural',
       body: wrap(s.text || '', 72)
     });
 
@@ -242,7 +247,8 @@ function buildPages(plan){
       kind:'puzzle',
       icon: s.icon,
       title: `Caça-Palavras — ${s.title}`,
-      meta: 'Puzzle',
+      subtitle: 'Puzzle',
+      sectionId: s.id || s.title,
       sectionTitle: s.title,
       grid,
       words
@@ -253,7 +259,7 @@ function buildPages(plan){
     kind:'text',
     icon:'history',
     title:'Gabarito (no final)',
-    meta:'(entra completo no Export PDF)',
+    subtitle:'(entra completo no Export PDF)',
     body: wrap(
       `O gabarito completo entra na fase do Export PDF (KDP).\n\n` +
       `Aqui no Builder a gente valida: ordem, texto, tema, palavras e padrão editorial.`,
@@ -265,18 +271,54 @@ function buildPages(plan){
   return pages;
 }
 
-function downloadText(filename, text){
-  try{
-    const blob = new Blob([text], { type:'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url), 4000);
-  }catch{}
+function hashKey(s){
+  // hash simples mobile-safe
+  let h = 2166136261;
+  const str = String(s || '');
+  for(let i=0;i<str.length;i++){
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16);
+}
+
+function getPuzzleCache(planId){
+  return Storage.get(`cultural:puzzle_cache:${planId}`, {});
+}
+function setPuzzleCache(planId, cache){
+  Storage.set(`cultural:puzzle_cache:${planId}`, cache || {});
+}
+
+function buildPuzzlePreview(plan, page){
+  const planId = plan?.meta?.id || 'PLAN';
+  const cache = getPuzzleCache(planId);
+
+  const sig = `${planId}|${page.sectionId}|${page.grid}|${(page.words||[]).join(',')}`;
+  const key = hashKey(sig);
+
+  if (cache[key] && cache[key].gridText && cache[key].wordsPlaced != null){
+    return cache[key];
+  }
+
+  const ws = generateWordSearch({
+    size: page.grid,
+    words: page.words || [],
+    maxWords: (page.words || []).length,
+    allowDiagonal: true,
+    allowBackwards: true
+  });
+
+  const out = {
+    size: ws.size,
+    gridText: ws.gridText,
+    wordsPlaced: (ws.placed || []).length,
+    wordsUsed: (ws.words || []).length
+  };
+
+  cache[key] = out;
+  setPuzzleCache(planId, cache);
+
+  return out;
 }
 
 export class CulturalBookBuilderModule {
@@ -290,113 +332,173 @@ export class CulturalBookBuilderModule {
 
   render(root){
     let plan = Storage.get('cultural:book_plan', null);
-    const seed = Storage.get('cultural:builder_seed', { pageIndex: 0, mode: 'spread' }); // spread | folio
+
+    const seed = Storage.get('cultural:builder_seed', {
+      mode: 'flip',        // flip | spread
+      pageIndex: 0
+    });
+
+    const saveSeed = () => Storage.set('cultural:builder_seed', seed);
 
     root.innerHTML = `
       <style>
         .bb-wrap{ display:grid; gap:14px; }
-        .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
-        .bb-toolbar .left, .bb-toolbar .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-        .bb-mode{ display:flex; gap:8px; align-items:center; }
-        .bb-mode .chip{
-          border:1px solid rgba(255,255,255,.14);
-          background:rgba(0,0,0,.12);
-          padding:8px 10px;
-          border-radius:999px;
-          font-size:12px;
-          cursor:pointer;
-          user-select:none;
-        }
-        .bb-mode .chip.active{
-          border-color: rgba(140,220,255,.35);
-          background: rgba(20,120,160,.20);
-        }
+        .bb-top{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+        .bb-top .left,.bb-top .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 
-        .bb-spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
-        .bb-folio{ display:grid; grid-template-columns: 1fr; gap:14px; }
-
-        .bb-page{
-          border-radius:18px;
-          border:1px solid rgba(255,255,255,.10);
-          background:rgba(0,0,0,.18);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
-          padding:14px;
-          position:relative;
-          overflow:hidden;
-        }
-        .bb-page::before{ content:""; display:block; padding-top:150%; } /* 6x9 ratio */
-        .bb-page > .bb-inner{ position:absolute; inset:14px; display:flex; flex-direction:column; gap:10px; }
-
-        /* Paper */
-        .paper{
-          flex:1;
+        /* controles */
+        .bb-pill{ display:inline-flex; gap:6px; align-items:center; }
+        .bb-seg{
+          display:inline-flex;
+          border:1px solid rgba(255,255,255,.12);
           border-radius:14px;
-          background: rgba(255,255,255,.96);
-          color:#111;
-          box-shadow: 0 12px 32px rgba(0,0,0,.22);
-          border: 1px solid rgba(0,0,0,.08);
           overflow:hidden;
+          background:rgba(0,0,0,.18);
+        }
+        .bb-seg button{
+          border:0;
+          background:transparent;
+          color:inherit;
+          padding:10px 12px;
+          font-weight:800;
+          opacity:.85;
+        }
+        .bb-seg button.active{
+          background:rgba(255,255,255,.10);
+          opacity:1;
+        }
+
+        /* palco */
+        .bb-stage{
+          display:grid;
+          gap:14px;
+          justify-items:center;
+        }
+
+        /* “papel” */
+        .bb-paper{
+          width:min(520px, 96vw);
+          aspect-ratio: 2 / 3; /* 6x9 */
+          background:#f7f7f7;
+          color:#121212;
+          border-radius:16px;
+          box-shadow: 0 12px 36px rgba(0,0,0,.35);
+          border: 1px solid rgba(0,0,0,.10);
+          overflow:hidden; /* papel pode cortar o que passar */
+          position:relative;
+        }
+
+        .bb-paper-inner{
+          position:absolute; inset:18px;
+          display:flex; flex-direction:column; gap:10px;
+          overflow:visible; /* <- NUNCA scroll interno */
+        }
+
+        .bb-head{
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap:12px;
+        }
+        .bb-title{
+          font-size: clamp(16px, 4.6vw, 20px);
+          font-weight: 900;
+          letter-spacing: .2px;
+          line-height:1.05;
+        }
+        .bb-sub{
+          font-size: 12px;
+          opacity:.70;
+          margin-top:2px;
+          line-height:1.15;
+        }
+        .bb-pno{
+          font-size: 12px;
+          opacity:.70;
+          white-space:nowrap;
+        }
+
+        .bb-body{
+          flex:1;
+          border:1px solid rgba(0,0,0,.10);
+          border-radius:14px;
+          background:#ffffff;
+          padding:12px;
+          overflow:visible; /* <- NUNCA scroll interno */
           display:flex;
           flex-direction:column;
+          gap:10px;
+          min-height:0;
         }
-        .paper-head{
-          padding:12px 14px 10px 14px;
-          border-bottom: 1px solid rgba(0,0,0,.08);
-          display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
-        }
-        .paper-title{ font-size:15px; font-weight:900; letter-spacing:.2px; overflow-wrap:anywhere; }
-        .paper-meta{ font-size:12px; color: rgba(0,0,0,.62); overflow-wrap:anywhere; margin-top:2px; }
-        .paper-pageno{ font-size:12px; color: rgba(0,0,0,.55); white-space:nowrap; }
-        .paper-body{ padding:12px 14px; overflow:auto; }
-        .paper-body pre{
+
+        .bb-body pre{
           margin:0;
           white-space:pre-wrap;
           overflow-wrap:anywhere;
           word-break:break-word;
           font-family: ui-serif, Georgia, "Times New Roman", serif;
-          font-size:14px;
-          line-height:1.36;
-        }
-        .paper-foot{
-          padding:10px 14px;
-          border-top: 1px solid rgba(0,0,0,.08);
-          display:flex; justify-content:space-between; align-items:center; gap:10px;
-          font-size:12px;
-          color: rgba(0,0,0,.62);
+          font-size: clamp(13px, 3.2vw, 15px);
+          line-height:1.35;
         }
 
-        .puzzle-grid{
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size:12px;
-          line-height:1.15;
-          letter-spacing: .5px;
-          color:#111;
+        .bb-grid pre{
+          margin:0;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: clamp(14px, 3.6vw, 17px);
+          line-height:1.22;
+          letter-spacing:.10em;
         }
-        .puzzle-words{
+
+        .bb-words{
+          column-count: 2;
+          column-gap: 18px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: clamp(11px, 2.8vw, 12px);
+          line-height: 1.12;
+        }
+        .bb-words div{ break-inside: avoid; margin: 0 0 6px 0; }
+
+        .bb-foot{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          font-size:12px;
+          opacity:.75;
+        }
+
+        .bb-actions{
+          display:flex; gap:10px; flex-wrap:wrap; justify-content:center;
+        }
+
+        .bb-mini{ font-size:12px; opacity:.78; }
+
+        /* spread (desktop) */
+        .bb-spread{
           display:grid;
           grid-template-columns: 1fr 1fr;
-          gap:6px 14px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size:12px;
-          color:#111;
-          opacity:.95;
+          gap:14px;
+          justify-content:center;
+          align-items:start;
+          width:100%;
+        }
+        .bb-spread .bb-paper{
+          width:min(460px, 46vw);
         }
 
-        .bb-footer{ display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12px; opacity:.86; }
-        .bb-mini{ font-size:12px; opacity:.78; }
-        .bb-empty{ display:grid; gap:10px; }
-        .bb-navbtn{ width:44px; min-width:44px; text-align:center; }
-        .bb-swipehint{ font-size:12px; opacity:.72; }
-        @media (max-width: 860px){ .bb-spread{ grid-template-columns: 1fr; } }
+        @media (max-width: 980px){
+          .bb-spread{ grid-template-columns: 1fr; }
+          .bb-spread .bb-paper{ width:min(520px, 96vw); }
+        }
       </style>
 
       <div class="bb-wrap">
         <div class="card">
           <h2>Livro Cultural — Builder</h2>
           <p class="muted">
-            Preview <b>visual</b> do livro (papel branco). Folheie e valide como produto final.
+            Preview visual do livro (papel branco). <b>Folheie</b> e valide como produto final.
           </p>
+
           <div id="bb_area"></div>
         </div>
       </div>
@@ -404,282 +506,287 @@ export class CulturalBookBuilderModule {
 
     const area = root.querySelector('#bb_area');
 
-    const saveSeed = () => Storage.set('cultural:builder_seed', seed);
-
-    const goView = (viewId) => {
-      const btn = document.querySelector(`.navitem[data-view="${viewId}"]`);
+    const goCulturalAgent = () => {
+      const btn = document.querySelector('.navitem[data-view="cultural"]');
       btn?.click?.();
     };
 
     const renderEmpty = () => {
       area.innerHTML = `
-        <div class="bb-empty">
+        <div style="display:grid; gap:10px;">
           <p class="muted"><b>Nenhum livro carregado.</b> Isso acontece quando o Safari limpa o armazenamento.</p>
           <div class="row">
             <button class="btn primary" id="bb_make">Criar Livro Minas (PADRÃO)</button>
             <button class="btn" id="bb_go_agent">Abrir Cultural Agent</button>
           </div>
-          <div class="row">
-            <button class="btn" id="bb_export">Baixar plano (JSON)</button>
-            <label class="btn" for="bb_import" style="cursor:pointer;">Importar plano</label>
-            <input id="bb_import" type="file" accept="application/json" style="display:none" />
-          </div>
-          <p class="bb-mini muted">Dica: exporte o plano em JSON pra nunca perder no Safari.</p>
+          <p class="bb-mini muted">Dica: depois baixe o plano (JSON) para backup.</p>
         </div>
       `;
-
       area.querySelector('#bb_make').onclick = () => {
-        plan = buildDefaultPlanMG(15, 20);
+        // Pocket por padrão (menos dor de cabeça, cabe melhor no papel)
+        plan = buildDefaultPlanMG(13, 16);
         Storage.set('cultural:book_plan', plan);
         seed.pageIndex = 0;
+        seed.mode = 'flip';
         saveSeed();
         this.app.toast?.('Livro Minas criado ✅');
         renderMain();
       };
+      area.querySelector('#bb_go_agent').onclick = () => goCulturalAgent();
+    };
 
-      area.querySelector('#bb_go_agent').onclick = () => goView('cultural');
+    const renderPaperText = (p) => {
+      const subtitle = p.subtitle ? `<div class="bb-sub">${esc(p.subtitle)}</div>` : '';
+      return `
+        <div class="bb-paper">
+          <div class="bb-paper-inner">
+            <div class="bb-head">
+              <div>
+                <div class="bb-title">${esc(p.title || '')}</div>
+                ${subtitle}
+              </div>
+              <div class="bb-pno">p.${esc(String(p.pageNo || ''))}</div>
+            </div>
 
-      area.querySelector('#bb_export').onclick = () => {
-        const p = plan || buildDefaultPlanMG(15, 20);
-        downloadText(`brightcup_plan_${p.meta?.id || 'book'}.json`, JSON.stringify(p, null, 2));
-        this.app.toast?.('Plano baixado ✅');
-      };
+            <div class="bb-body">
+              <pre>${esc(p.body || '')}</pre>
+            </div>
 
-      area.querySelector('#bb_import').onchange = async (e) => {
-        const f = e.target.files?.[0];
-        if (!f) return;
-        try{
-          const txt = await f.text();
-          const obj = JSON.parse(txt);
-          if (!obj || !obj.meta || !obj.sections) throw new Error('invalid');
-          plan = obj;
-          Storage.set('cultural:book_plan', plan);
-          seed.pageIndex = 0;
-          saveSeed();
-          this.app.toast?.('Plano importado ✅');
-          renderMain();
-        }catch{
-          this.app.toast?.('JSON inválido ❌');
-        }
-        e.target.value = '';
-      };
+            <div class="bb-foot">
+              <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
+              <span></span>
+            </div>
+          </div>
+        </div>
+      `;
+    };
+
+    const renderPaperPuzzle = (p, planRef) => {
+      const prev = buildPuzzlePreview(planRef, p);
+      const subtitle = p.subtitle ? `<div class="bb-sub">${esc(p.subtitle)}</div>` : '';
+
+      const wordsHtml = (p.words || []).map(w => `<div>${esc(w)}</div>`).join('');
+
+      return `
+        <div class="bb-paper">
+          <div class="bb-paper-inner">
+            <div class="bb-head">
+              <div>
+                <div class="bb-title">${esc(p.title || '')}</div>
+                ${subtitle}
+              </div>
+              <div class="bb-pno">p.${esc(String(p.pageNo || ''))}</div>
+            </div>
+
+            <div class="bb-body">
+              <div class="bb-mini" style="opacity:.70;">
+                Prévia visual (editorial).
+              </div>
+              <div class="bb-grid">
+                <pre>${esc(prev.gridText || '')}</pre>
+              </div>
+
+              <div style="height:4px;"></div>
+
+              <div class="bb-mini" style="opacity:.70;">Palavras</div>
+              <div class="bb-words">${wordsHtml}</div>
+            </div>
+
+            <div class="bb-foot">
+              <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
+              <button class="btn" data-send="1">Enviar p/ Caça-palavras</button>
+            </div>
+          </div>
+        </div>
+      `;
     };
 
     const renderMain = () => {
       if (!plan) return renderEmpty();
 
       const pages = buildPages(plan);
-      seed.pageIndex = Math.max(0, Math.min(seed.pageIndex || 0, pages.length - 1));
-      seed.mode = (seed.mode === 'folio' || seed.mode === 'spread') ? seed.mode : 'spread';
+
+      let idx = Math.max(0, Math.min(Number(seed.pageIndex || 0), pages.length - 1));
+      seed.pageIndex = idx;
       saveSeed();
 
+      const title = plan.meta?.title || 'LIVRO';
+
       area.innerHTML = `
-        <div class="bb-toolbar">
+        <div class="bb-top">
           <div class="left">
-            <span class="bb-mini"><b>${esc(plan.meta?.title || 'LIVRO')}</b></span>
-            <span class="bb-swipehint muted">No mobile: arraste para o lado (folhear).</span>
+            <span class="bb-mini"><b>${esc(title)}</b></span>
+            <span class="bb-mini muted">No mobile: arraste para o lado (folhear).</span>
           </div>
 
           <div class="right">
-            <div class="bb-mode">
-              <div class="chip ${seed.mode==='spread'?'active':''}" id="bb_mode_spread">Spread</div>
-              <div class="chip ${seed.mode==='folio'?'active':''}" id="bb_mode_folio">Folhear</div>
+            <div class="bb-seg" role="tablist" aria-label="Modo">
+              <button class="${seed.mode==='spread'?'active':''}" id="bb_mode_spread">Spread</button>
+              <button class="${seed.mode!=='spread'?'active':''}" id="bb_mode_flip">Folhear</button>
             </div>
-            <button class="btn bb-navbtn" id="bb_prev">◀</button>
-            <button class="btn bb-navbtn" id="bb_next">▶</button>
+            <button class="btn" id="bb_prev">◀</button>
+            <button class="btn" id="bb_next">▶</button>
           </div>
         </div>
 
-        <div id="bb_pages"></div>
+        <div class="bb-stage" id="bb_stage"></div>
 
-        <div class="bb-footer">
-          <span class="bb-mini">Página <b id="bb_pos"></b></span>
-          <div class="row" style="gap:8px;">
-            <button class="btn" id="bb_export2">Baixar plano (JSON)</button>
-            <button class="btn" id="bb_reset">Recriar Minas (PADRÃO)</button>
-          </div>
+        <div class="bb-actions">
+          <button class="btn" id="bb_json">Baixar plano (JSON)</button>
+          <button class="btn" id="bb_reset">Recriar Minas (PADRÃO)</button>
+        </div>
+
+        <div class="bb-mini muted" style="margin-top:6px;">
+          Página <b id="bb_pos"></b>
         </div>
       `;
 
-      const pagesHost = area.querySelector('#bb_pages');
+      const stage = area.querySelector('#bb_stage');
       const pos = area.querySelector('#bb_pos');
 
-      const renderPaper = (p) => {
-        const icon = iconLabel(p.icon);
-        const pageno = p.pageNo || '';
-        const title = p.title || '';
-        const meta = p.meta || '';
-        const isPuzzle = p.kind === 'puzzle';
+      const isWide = () => window.matchMedia && window.matchMedia('(min-width: 980px)').matches;
 
-        let bodyHtml = '';
-        if (!isPuzzle){
-          bodyHtml = `<pre>${esc(p.body || '')}</pre>`;
-        } else {
-          const gen = generateWordSearch({
-            size: Number(p.grid || 15),
-            words: p.words || [],
-            maxWords: (p.words || []).length,
-            allowDiagonal: true,
-            allowBackwards: true
-          });
+      const renderStage = () => {
+        const mode = (seed.mode === 'spread' && isWide()) ? 'spread' : 'flip';
+        pos.textContent = `${idx+1}/${pages.length}`;
 
-          const wordsHtml = (p.words || []).map(w => `<div>${esc(w)}</div>`).join('');
-          bodyHtml = `
-            <div class="bb-mini" style="margin-bottom:8px; color:rgba(0,0,0,.65)">
-              Grade real (preview) • ${esc(String(gen.size))}x${esc(String(gen.size))} • colocadas ${esc(String((gen.placed||[]).length))}
-              ${gen.skipped?.length ? `• não couberam ${esc(String(gen.skipped.length))}` : ''}
+        const p1 = pages[idx];
+        const p2 = pages[idx+1];
+
+        if (mode === 'spread' && p2){
+          stage.innerHTML = `
+            <div class="bb-spread" id="bb_spread">
+              <div>${p1.kind === 'puzzle' ? renderPaperPuzzle(p1, plan) : renderPaperText(p1)}</div>
+              <div>${p2.kind === 'puzzle' ? renderPaperPuzzle(p2, plan) : renderPaperText(p2)}</div>
             </div>
-            <pre class="puzzle-grid">${esc(gen.gridText)}</pre>
-            <div style="height:10px"></div>
-            <div class="bb-mini" style="margin:4px 0 6px 0; color:rgba(0,0,0,.65)">Palavras</div>
-            <div class="puzzle-words">${wordsHtml}</div>
+          `;
+        } else {
+          stage.innerHTML = `
+            <div id="bb_flip">
+              ${p1.kind === 'puzzle' ? renderPaperPuzzle(p1, plan) : renderPaperText(p1)}
+            </div>
           `;
         }
 
-        const footerRight = isPuzzle
-          ? `<button class="btn" data-send="1">Enviar p/ Caça-palavras</button>`
-          : `<span></span>`;
+        // bind send button(s)
+        stage.querySelectorAll('[data-send="1"]').forEach((btnEl) => {
+          btnEl.onclick = () => {
+            const page = pages[idx];
+            if (!page || page.kind !== 'puzzle') return;
 
-        return `
-          <div class="paper">
-            <div class="paper-head">
-              <div>
-                <div class="paper-title">${esc(title)}</div>
-                <div class="paper-meta">${esc(meta)}</div>
-              </div>
-              <div class="paper-pageno">p.${esc(String(pageno))}</div>
-            </div>
-            <div class="paper-body">${bodyHtml}</div>
-            <div class="paper-foot">
-              <span>Ilustração P&B: <b>${esc(icon)}</b></span>
-              ${footerRight}
-            </div>
-          </div>
-        `;
-      };
-
-      const render = () => {
-        const i = seed.pageIndex || 0;
-
-        if (seed.mode === 'folio'){
-          const p = pages[i];
-          pagesHost.className = 'bb-folio';
-          pagesHost.innerHTML = `
-            <div class="bb-page" id="bb_one"><div class="bb-inner">${renderPaper(p)}</div></div>
-          `;
-          pos.textContent = `${i+1}/${pages.length}`;
-
-          const sendBtn = pagesHost.querySelector('[data-send="1"]');
-          if (sendBtn){
-            sendBtn.onclick = () => {
-              const pz = pages[i];
-              const ws = {
-                title: pz.title || `Caça-Palavras — ${pz.sectionTitle || ''}`,
-                preset: 'BR_POCKET',
-                size: pz.grid,
-                includeKey: true,
-                words: (pz.words || []).join('\n'),
-                output: '',
-                ts: Date.now()
-              };
-              Storage.set('wordsearch:seed', ws);
-              this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar)');
-              this.app.log?.(`[BOOK] sent page=${pz.pageNo} section="${pz.sectionTitle||''}" grid=${pz.grid} words=${(pz.words||[]).length}`);
-              goView('wordsearch');
+            const ws = {
+              title: page.title || `Caça-Palavras`,
+              preset: (page.grid <= 13 ? 'BR_POCKET' : 'BR_PLUS'),
+              size: page.grid,
+              maxWords: (page.words || []).length,
+              includeKey: true,
+              words: (page.words || []).join('\n'),
+              output: '',
+              ts: Date.now()
             };
+
+            Storage.set('wordsearch:seed', ws);
+            this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar)');
+            this.app.log?.(`[BOOK] sent section="${page.sectionTitle}" grid=${page.grid} words=${(page.words||[]).length}`);
+          };
+        });
+
+        bindSwipe();
+      };
+
+      const bindSwipe = () => {
+        const paper = stage.querySelector('.bb-paper');
+        if (!paper) return;
+
+        let x0 = null, y0 = null;
+
+        paper.ontouchstart = (e) => {
+          const t = e.touches && e.touches[0];
+          if (!t) return;
+          x0 = t.clientX;
+          y0 = t.clientY;
+        };
+
+        paper.ontouchend = (e) => {
+          if (x0 == null || y0 == null) return;
+          const t = e.changedTouches && e.changedTouches[0];
+          if (!t) return;
+
+          const dx = t.clientX - x0;
+          const dy = t.clientY - y0;
+
+          x0 = null; y0 = null;
+
+          // só considera swipe horizontal forte
+          if (Math.abs(dx) < 70) return;
+          if (Math.abs(dy) > 70) return;
+
+          if (dx < 0) {
+            idx = Math.min(pages.length - 1, idx + 1);
+          } else {
+            idx = Math.max(0, idx - 1);
           }
-        } else {
-          const left = pages[i];
-          const right = pages[i+1] || { kind:'text', icon:'history', title:'', meta:'', body:'', pageNo: (left?.pageNo||i+1)+1 };
-          pagesHost.className = 'bb-spread';
-          pagesHost.innerHTML = `
-            <div class="bb-page" id="bb_left"><div class="bb-inner">${renderPaper(left)}</div></div>
-            <div class="bb-page" id="bb_right"><div class="bb-inner">${renderPaper(right)}</div></div>
-          `;
-          pos.textContent = `${i+1}/${pages.length}`;
-
-          const sendBtn = pagesHost.querySelector('#bb_right [data-send="1"]');
-          if (sendBtn){
-            sendBtn.onclick = () => {
-              const pz = right;
-              const ws = {
-                title: pz.title || `Caça-Palavras — ${pz.sectionTitle || ''}`,
-                preset: 'BR_POCKET',
-                size: pz.grid,
-                includeKey: true,
-                words: (pz.words || []).join('\n'),
-                output: '',
-                ts: Date.now()
-              };
-              Storage.set('wordsearch:seed', ws);
-              this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar)');
-              this.app.log?.(`[BOOK] sent page=${pz.pageNo} section="${pz.sectionTitle||''}" grid=${pz.grid} words=${(pz.words||[]).length}`);
-              goView('wordsearch');
-            };
-          }
-        }
-
-        saveSeed();
+          seed.pageIndex = idx;
+          saveSeed();
+          renderStage();
+        };
       };
 
-      const prev = () => {
-        if (seed.mode === 'spread') seed.pageIndex = Math.max(0, (seed.pageIndex||0) - 2);
-        else seed.pageIndex = Math.max(0, (seed.pageIndex||0) - 1);
-        render();
+      area.querySelector('#bb_prev').onclick = () => {
+        idx = Math.max(0, idx - 1);
+        seed.pageIndex = idx; saveSeed();
+        renderStage();
       };
 
-      const next = () => {
-        if (seed.mode === 'spread') seed.pageIndex = Math.min(pages.length - 1, (seed.pageIndex||0) + 2);
-        else seed.pageIndex = Math.min(pages.length - 1, (seed.pageIndex||0) + 1);
-        render();
+      area.querySelector('#bb_next').onclick = () => {
+        idx = Math.min(pages.length - 1, idx + 1);
+        seed.pageIndex = idx; saveSeed();
+        renderStage();
       };
-
-      area.querySelector('#bb_prev').onclick = prev;
-      area.querySelector('#bb_next').onclick = next;
 
       area.querySelector('#bb_mode_spread').onclick = () => {
-        seed.mode = 'spread';
-        seed.pageIndex = Math.max(0, (seed.pageIndex||0) - ((seed.pageIndex||0) % 2));
-        saveSeed();
-        renderMain();
+        seed.mode = 'spread'; saveSeed();
+        renderStage();
       };
-      area.querySelector('#bb_mode_folio').onclick = () => {
-        seed.mode = 'folio';
-        saveSeed();
-        renderMain();
-      };
-
-      // swipe (mobile)
-      let x0 = null;
-      const onTouchStart = (e) => { x0 = e.touches?.[0]?.clientX ?? null; };
-      const onTouchEnd = (e) => {
-        if (x0 == null) return;
-        const x1 = e.changedTouches?.[0]?.clientX ?? null;
-        if (x1 == null) { x0 = null; return; }
-        const dx = x1 - x0;
-        x0 = null;
-        if (Math.abs(dx) < 42) return;
-        if (dx > 0) prev(); else next();
-      };
-      pagesHost.addEventListener('touchstart', onTouchStart, { passive:true });
-      pagesHost.addEventListener('touchend', onTouchEnd, { passive:true });
-
-      area.querySelector('#bb_export2').onclick = () => {
-        downloadText(`brightcup_plan_${plan.meta?.id || 'book'}.json`, JSON.stringify(plan, null, 2));
-        this.app.toast?.('Plano baixado ✅');
+      area.querySelector('#bb_mode_flip').onclick = () => {
+        seed.mode = 'flip'; saveSeed();
+        renderStage();
       };
 
       area.querySelector('#bb_reset').onclick = () => {
-        plan = buildDefaultPlanMG(15, 20);
+        plan = buildDefaultPlanMG(13, 16);
         Storage.set('cultural:book_plan', plan);
         seed.pageIndex = 0;
-        seed.mode = 'folio';
-        saveSeed();
+        seed.mode = 'flip';
+        Storage.set('cultural:builder_seed', seed);
         this.app.toast?.('Livro recriado ✅');
         renderMain();
       };
 
-      render();
+      area.querySelector('#bb_json').onclick = () => {
+        try{
+          const data = JSON.stringify(plan, null, 2);
+          const blob = new Blob([data], { type:'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = (plan?.meta?.id || 'cultural_plan') + '.json';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(()=>URL.revokeObjectURL(url), 1500);
+          this.app.toast?.('Plano baixado ✅');
+        } catch(e){
+          this.app.toast?.('Falha ao baixar JSON');
+          this.app.log?.('[BOOK] json export failed: ' + (e?.message || e));
+        }
+      };
+
+      // re-render ao girar / mudar largura
+      const onResize = () => renderStage();
+      window.addEventListener('resize', onResize, { passive:true });
+
+      renderStage();
     };
 
     if (!plan) renderEmpty();
