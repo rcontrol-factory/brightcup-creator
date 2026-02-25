@@ -1,5 +1,5 @@
 /* FILE: /js/app.js */
-// Bright Cup Creator — /js/app.js (PADRÃO) + Cultural Agent + Book Builder
+// Bright Cup Creator — /js/app.js (PADRÃO) + Mobile Hamburger UX
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
@@ -87,7 +87,7 @@ function helpRender(root) {
       <div class="card">
         <h2>Ajuda rápida</h2>
         <p class="muted">
-          Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b> para validar layout →
+          Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b> para validar →
           depois Export PDF (KDP).
           <br/><br/>
           Linha Coloring (USA/Global) permanece separada.
@@ -97,15 +97,38 @@ function helpRender(root) {
   `;
 }
 
+/* === Mobile Hamburger UX === */
+function navOpen(on){
+  document.body.classList.toggle('nav-open', !!on);
+}
+function navToggle(){
+  navOpen(!document.body.classList.contains('nav-open'));
+}
+function navClose(){
+  navOpen(false);
+}
+
 function mountNav() {
-  $$('.navitem').forEach(btn => btn.addEventListener('click', () => routeTo(btn.dataset.view)));
-  $('#btnHelp')?.addEventListener('click', () => routeTo('help'));
+  // nav buttons
+  $$('.navitem').forEach(btn => btn.addEventListener('click', () => {
+    routeTo(btn.dataset.view);
+    navClose(); // no mobile, fecha após escolher
+  }));
+
+  // top actions
+  $('#btnHelp')?.addEventListener('click', () => { routeTo('help'); navClose(); });
   $('#btnExport')?.addEventListener('click', () => exportAll());
+
+  // logs
   $('#btnClear')?.addEventListener('click', () => { const el = $('#log'); if (el) el.textContent = ''; });
   $('#btnCopyLog')?.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText($('#log')?.textContent || ''); toast('Logs copiados ✅', 'ok'); }
     catch { toast('Falha ao copiar logs', 'err'); }
   });
+
+  // hamburger
+  $('#btnMenu')?.addEventListener('click', () => navToggle());
+  $('#navOverlay')?.addEventListener('click', () => navClose());
 }
 
 function setActiveNav(viewId) {
@@ -156,13 +179,14 @@ async function boot() {
       saveProject: (obj) => { Storage.set('project:last', obj); toast('Projeto salvo ✅', 'ok'); },
     };
 
+    // módulos
     State.modules.set('coloring', new ColoringModule(app));
     State.modules.set('covers', new CoversModule(app));
     State.modules.set('wordsearch', new WordSearchModule(app));
     State.modules.set('crossword', new CrosswordModule(app));
     State.modules.set('mandala', new MandalaModule(app));
 
-    // Linha Cultural Brasil
+    // Linha Cultural Brasil (separada do coloring)
     State.modules.set('cultural', new CulturalAgentModule(app));
     State.modules.set('book', new CulturalBookBuilderModule(app));
 
