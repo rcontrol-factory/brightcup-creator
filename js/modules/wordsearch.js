@@ -1,260 +1,224 @@
 /* FILE: /js/modules/wordsearch.js */
+// Bright Cup Creator — Caça-Palavras (PADRÃO Produção)
+// Gera grade REAL + gabarito (key) + salva puzzle completo para o Livro Cultural.
+
 import { Storage } from '../core/storage.js';
+import { generateWordSearch, normalizeWord } from '../core/wordsearch_gen.js';
 
-function randInt(n){ return Math.floor(Math.random()*n); }
-function shuffle(arr){
-  for(let i=arr.length-1;i>0;i--){
-    const j=randInt(i+1); [arr[i],arr[j]]=[arr[j],arr[i]];
-  }
-  return arr;
-}
+function nowISO(){ return new Date().toISOString(); }
 
-function normalizeWord(s){
+function normId(s){
   return String(s||'')
     .trim()
-    .toUpperCase()
-    .replace(/\s+/g,'')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
-    .replace(/[^A-Z0-9]/g,''); // keep A-Z 0-9
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,'_')
+    .replace(/^_+|_+$/g,'')
+    .slice(0,80) || ('puzzle_' + Date.now());
 }
 
-function placeWord(grid, word){
-  const N = grid.length;
-  const dirs = shuffle([
-    [1,0],[0,1],[1,1],[-1,0],[0,-1],[-1,-1],[1,-1],[-1,1]
-  ]);
-  word = normalizeWord(word);
-  if(!word) return null;
-
-  for(let attempt=0; attempt<350; attempt++){
-    const [dx,dy] = dirs[randInt(dirs.length)];
-    const x0 = randInt(N);
-    const y0 = randInt(N);
-
-    const x1 = x0 + dx*(word.length-1);
-    const y1 = y0 + dy*(word.length-1);
-    if(x1<0||x1>=N||y1<0||y1>=N) continue;
-
-    let ok=true;
-    for(let i=0;i<word.length;i++){
-      const x = x0 + dx*i;
-      const y = y0 + dy*i;
-      const c = grid[y][x];
-      if(c && c !== word[i]){ ok=false; break; }
-    }
-    if(!ok) continue;
-
-    for(let i=0;i<word.length;i++){
-      const x = x0 + dx*i;
-      const y = y0 + dy*i;
-      grid[y][x] = word[i];
-    }
-    return { word, start:{x:x0,y:y0}, dir:{dx,dy} };
-  }
-  return null;
+function getPuzzlesMap(){
+  return Storage.get('cultural:puzzles', {}); // {id: puzzleObj}
 }
-
-function fillRandom(grid){
-  const letters='ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  for(let y=0;y<grid.length;y++){
-    for(let x=0;x<grid.length;x++){
-      if(!grid[y][x]) grid[y][x]=letters[randInt(letters.length)];
-    }
-  }
+function setPuzzlesMap(map){
+  Storage.set('cultural:puzzles', map || {});
 }
-
-function gridToText(grid){
-  return grid.map(r=>r.join(' ')).join('\n');
-}
-
-function formatWordList(words){
-  const clean = words.map(normalizeWord).filter(Boolean);
-  const mid = Math.ceil(clean.length/2);
-  const left = clean.slice(0, mid);
-  const right = clean.slice(mid);
-  const rows = Math.max(left.length, right.length);
-  const colW = Math.max(...clean.map(w=>w.length), 8) + 2;
-
-  const pad = (s,n)=> (s||'').padEnd(n,' ');
-  let out = '';
-  for(let i=0;i<rows;i++){
-    out += pad(left[i]||'', colW) + (right[i]||'') + '\n';
-  }
-  return out.trimEnd();
-}
-
-const PRESETS = [
-  { id:'BR_POCKET', name:'Brasil • Revistinha pequena (padrão)', size:13, note:'13x13 • bom para livretos pequenos e rápidos' },
-  { id:'BR_MED', name:'Brasil • Médio', size:15, note:'15x15 • mais palavras / mais espaço' },
-  { id:'KDP_LETTER', name:'KDP • Letter 8.5×11 (futuro PDF)', size:17, note:'17x17 • pensado pra página grande' },
-];
 
 export class WordSearchModule {
   constructor(app){ this.app=app; this.id='wordsearch'; this.title='Caça-Palavras'; }
   async init(){}
 
   render(root){
-    const seed = Storage.get('wordsearch:seed', {
-      title: 'Caça-Palavras',
-      preset: 'BR_POCKET',
-      size: 13,
-      includeKey: true,
-      words: 'ELEFANTE\nLEAO\nJUNGLE\nFLORESTA\nTIGRE\nMACACO\nGIRAFA\nZEBRA\nPANTERA\nTUCANO\nCOBRA\nRINOCERONTE',
-      output: ''
-    });
-
-    const presetObj = PRESETS.find(p=>p.id===seed.preset) || PRESETS[0];
-    const defaultSize = parseInt(seed.size||presetObj.size,10);
-
     root.innerHTML = `
       <div class="grid">
         <div class="card">
-          <h2>Caça-Palavras</h2>
+          <h2>Caça-Palavras (Produção)</h2>
           <p class="muted">
-            Padrão pronto (Brasil) para você gerar e vender. Exportação PDF profissional entra na FASE 4.
+            Aqui é a <b>máquina</b> oficial: gera grade + gabarito e salva puzzle pronto para o livro.
+            <br/>Dois presets Brasil: <b>13x13</b> (revistinha) e <b>15x15</b> (plus).
           </p>
 
           <div class="row">
-            <label>Preset (padrão)
-              <select id="ws_preset">
-                ${PRESETS.map(p=>`<option value="${p.id}" ${p.id===presetObj.id?'selected':''}>${p.name}</option>`).join('')}
-              </select>
-              <div class="muted" style="margin-top:6px" id="ws_preset_note">${presetObj.note}</div>
-            </label>
+            <label>Preset</label>
+            <select id="ws_preset">
+              <option value="BR_POCKET">Brasil — Pocket (13x13 / 16 palavras)</option>
+              <option value="BR_PLUS" selected>Brasil — Plus (15x15 / 18 palavras)</option>
+              <option value="CUSTOM">Custom (manual)</option>
+            </select>
 
-            <label>Tamanho (grade)
-              <select id="ws_size">
-                ${[11,13,15,17,19].map(n=>`<option value="${n}" ${n===defaultSize?'selected':''}>${n}x${n}</option>`).join('')}
-              </select>
-            </label>
+            <label>Tamanho</label>
+            <select id="ws_size">
+              <option value="10">10x10</option>
+              <option value="12">12x12</option>
+              <option value="13">13x13</option>
+              <option value="15" selected>15x15</option>
+              <option value="18">18x18</option>
+            </select>
+
+            <label>Máx. palavras</label>
+            <select id="ws_max">
+              <option value="12">12</option>
+              <option value="16">16</option>
+              <option value="18" selected>18</option>
+              <option value="20">20</option>
+            </select>
+
+            <label>ID do puzzle (para livro)</label>
+            <input id="ws_pid" placeholder="ex: fe_religiosidade (ou deixa vazio)" />
+
+            <label>Título (opcional)</label>
+            <input id="ws_title" placeholder="ex: Caça-Palavras — Fé e religiosidade" />
           </div>
 
           <div class="row">
-            <label>Título do jogo
-              <input id="ws_title" value="${escapeHtml(seed.title||'Caça-Palavras')}" />
-            </label>
-
-            <label style="display:flex; align-items:center; gap:10px; margin-top:22px;">
-              <input type="checkbox" id="ws_key" ${seed.includeKey?'checked':''} />
-              <span>Incluir “Gabarito” (posições)</span>
-            </label>
+            <label>Palavras (uma por linha)</label>
+            <textarea id="ws_words" rows="10" placeholder="MINAS&#10;HISTORIA&#10;CULTURA&#10;..."></textarea>
           </div>
-
-          <label>Palavras (uma por linha)
-            <textarea id="ws_words" rows="9" placeholder="ELEFANTE&#10;LEAO&#10;...">${escapeHtml(seed.words||'')}</textarea>
-          </label>
 
           <div class="row">
-            <button class="btn primary" id="ws_make">Gerar</button>
-            <button class="btn" id="ws_save">Salvar Projeto</button>
+            <button class="btn primary" id="ws_make">Gerar (grade + gabarito)</button>
+            <button class="btn" id="ws_save_puzzle">Salvar Puzzle do Livro</button>
+            <button class="btn" id="ws_save_proj">Salvar Projeto</button>
           </div>
+
+          <p class="muted" id="ws_hint"></p>
         </div>
 
         <div class="card">
-          <h2>Resultado (pronto pra copiar)</h2>
+          <h2>Resultado (Grade)</h2>
           <pre id="ws_out" class="pre"></pre>
+        </div>
+
+        <div class="card">
+          <h2>Gabarito (Key)</h2>
+          <pre id="ws_key" class="pre"></pre>
         </div>
       </div>
     `;
 
     const $ = (sel)=>root.querySelector(sel);
     const out = $('#ws_out');
-    if(seed.output) out.textContent = seed.output;
+    const key = $('#ws_key');
+    const hint = $('#ws_hint');
 
-    function applyPreset(pid){
-      const p = PRESETS.find(x=>x.id===pid) || PRESETS[0];
-      $('#ws_preset_note').textContent = p.note;
-      $('#ws_size').value = String(p.size);
-    }
+    let last = null;
 
-    $('#ws_preset').addEventListener('change', (e)=>applyPreset(e.target.value));
-
-    $('#ws_make').onclick = () => {
-      const preset = $('#ws_preset').value;
-      const N = parseInt($('#ws_size').value,10);
-      const title = ($('#ws_title').value||'Caça-Palavras').trim();
-      const includeKey = !!$('#ws_key').checked;
-
-      const rawWords = ($('#ws_words').value||'')
-        .split(/\r?\n+/)
-        .map(s=>s.trim())
-        .filter(Boolean);
-
-      const words = rawWords.map(normalizeWord).filter(Boolean);
-
-      const grid = Array.from({length:N},()=>Array.from({length:N},()=>'')); 
-      const placedInfo=[]; const skipped=[];
-      for(const w of words){
-        const info = placeWord(grid,w);
-        if(info) placedInfo.push(info);
-        else skipped.push(normalizeWord(w));
+    const applyPreset = () => {
+      const p = $('#ws_preset').value;
+      if(p === 'BR_POCKET'){
+        $('#ws_size').value = '13';
+        $('#ws_max').value = '16';
+      } else if(p === 'BR_PLUS'){
+        $('#ws_size').value = '15';
+        $('#ws_max').value = '18';
       }
-
-      fillRandom(grid);
-
-      const listText = formatWordList(words);
-      let txt = '';
-      txt += title.toUpperCase() + '\n';
-      txt += '-'.repeat(Math.max(12, title.length)) + '\n\n';
-      txt += gridToText(grid) + '\n\n';
-      txt += 'PALAVRAS\n';
-      txt += listText + '\n';
-
-      if(skipped.filter(Boolean).length){
-        txt += '\n[NAO COUBE]: ' + skipped.filter(Boolean).join(', ') + '\n';
-      }
-
-      if(includeKey){
-        txt += '\nGABARITO (posicoes)\n';
-        const dirName = (d)=>{
-          const {dx,dy}=d;
-          if(dx===1&&dy===0) return '→';
-          if(dx===-1&&dy===0) return '←';
-          if(dx===0&&dy===1) return '↓';
-          if(dx===0&&dy===-1) return '↑';
-          if(dx===1&&dy===1) return '↘';
-          if(dx===-1&&dy===-1) return '↖';
-          if(dx===1&&dy===-1) return '↗';
-          if(dx===-1&&dy===1) return '↙';
-          return `${dx},${dy}`;
-        };
-        const keyLines = placedInfo.map(p=>`${p.word} @ (${p.start.x+1},${p.start.y+1}) ${dirName(p.dir)}`);
-        txt += keyLines.join('\n') + '\n';
-      }
-
-      out.textContent = txt;
-
-      const save = {
-        title, preset, size:N, includeKey,
-        words: $('#ws_words').value,
-        output: txt,
-        ts: Date.now()
-      };
-      Storage.set('wordsearch:seed', save);
-      this.app.toast('Gerado ✅');
-      this.app.log?.(`[WS] generated preset=${preset} size=${N} words=${words.length}`);
     };
 
-    $('#ws_save').onclick = () => {
+    $('#ws_preset').onchange = () => {
+      applyPreset();
+      hint.textContent = '';
+    };
+
+    // Seed vindo do Builder (ou de outro fluxo)
+    const seed = Storage.get('wordsearch:seed', null);
+    if(seed && typeof seed === 'object'){
+      // preset
+      const preset = seed.preset || 'BR_PLUS';
+      $('#ws_preset').value = (preset === 'BR_POCKET' || preset === 'BR_PLUS') ? preset : 'CUSTOM';
+      applyPreset();
+
+      if(seed.size) $('#ws_size').value = String(seed.size);
+      if(seed.maxWords) $('#ws_max').value = String(seed.maxWords);
+
+      if(seed.words){
+        $('#ws_words').value = String(seed.words).trim();
+      }
+
+      const t = seed.title || '';
+      const sid = seed.puzzleId || seed.sectionId || seed.sectionTitle || '';
+      $('#ws_title').value = t;
+      $('#ws_pid').value = sid ? normId(sid) : '';
+
+      hint.textContent = `Recebido do Builder ✅ (${seed.sectionTitle ? seed.sectionTitle : 'seed'}) — agora clique "Gerar".`;
+
+      // não apaga seed automaticamente (pra não perder se travar)
+    }
+
+    const generate = () => {
+      const N = parseInt($('#ws_size').value, 10);
+      const maxWords = parseInt($('#ws_max').value, 10);
+
+      const wordsRaw = $('#ws_words').value.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+      const gen = generateWordSearch({
+        size: N,
+        words: wordsRaw,
+        maxWords: maxWords,
+        allowDiagonal: true,
+        allowBackwards: true
+      });
+
+      last = gen;
+
+      out.textContent = gen.gridText + (gen.skipped && gen.skipped.length ? `\n\n[Não coube]: ${gen.skipped.join(', ')}` : '');
+      key.textContent = gen.keyText;
+
+      const placedCount = (gen.placed||[]).length;
+      hint.textContent = `OK ✅ size=${gen.size} • palavras usadas=${gen.words.length} • colocadas=${placedCount}` +
+        (gen.skipped.length ? ` • não couberam=${gen.skipped.length}` : '');
+
+      try { this.app.log?.(`[WS] gen size=${gen.size} words=${gen.words.length} placed=${placedCount} skipped=${gen.skipped.length}`); } catch {}
+    };
+
+    const savePuzzle = () => {
+      if(!last){
+        this.app.toast?.('Gere primeiro ✅');
+        return;
+      }
+
+      const title = ($('#ws_title').value || '').trim();
+      const pidIn = ($('#ws_pid').value || '').trim();
+      const puzzleId = pidIn ? normId(pidIn) : normId(title || ('puzzle_' + Date.now()));
+
+      const map = getPuzzlesMap();
+      map[puzzleId] = {
+        id: puzzleId,
+        title: title || `Caça-Palavras ${last.size}x${last.size}`,
+        size: last.size,
+        words: last.words,
+        placed: last.placed,
+        skipped: last.skipped,
+        gridText: last.gridText,
+        keyText: last.keyText,
+        createdAt: nowISO()
+      };
+      setPuzzlesMap(map);
+
+      this.app.toast?.('Puzzle salvo no Livro ✅');
+      try { this.app.log?.(`[WS] saved puzzle id=${puzzleId} size=${last.size} words=${last.words.length}`); } catch {}
+    };
+
+    $('#ws_make').onclick = () => generate();
+
+    $('#ws_save_puzzle').onclick = () => savePuzzle();
+
+    $('#ws_save_proj').onclick = () => {
       const proj = {
         type:'wordsearch',
         ts:Date.now(),
         preset: $('#ws_preset').value,
-        size: parseInt($('#ws_size').value,10),
-        title: ($('#ws_title').value||'Caça-Palavras').trim(),
-        includeKey: !!$('#ws_key').checked,
+        size: $('#ws_size').value,
+        maxWords: $('#ws_max').value,
+        puzzleId: ($('#ws_pid').value||'').trim(),
+        title: ($('#ws_title').value||'').trim(),
         words: $('#ws_words').value,
-        output: out.textContent
+        output: out.textContent,
+        key: key.textContent
       };
-      Storage.set('wordsearch:seed', proj);
-      this.app.saveProject(proj);
-      this.app.toast('Projeto salvo ✅');
+      this.app.saveProject?.(proj);
+      this.app.toast?.('Projeto salvo ✅');
     };
-  }
-}
 
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, c=>({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'
-  }[c]));
+    // default preset apply
+    applyPreset();
+  }
 }
