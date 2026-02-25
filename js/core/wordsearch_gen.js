@@ -19,7 +19,7 @@ export function normalizeWord(s){
     .toUpperCase()
     .replace(/\s+/g,'')
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'')   // remove acentos
-    .replace(/[^A-Z0-9]/g,'');                          // só A-Z0-9
+    .replace(/[^A-Z0-9]/g,'');                         // só A-Z0-9
 }
 
 export function uniqWords(list){
@@ -60,7 +60,6 @@ function placeWordWithTrace(grid, word, dirs, maxTries=240){
       }
       if(!ok) continue;
 
-      // apply
       const cells = [];
       for(let k=0;k<w.length;k++){
         const x = x0 + dx*k, y = y0 + dy*k;
@@ -94,48 +93,31 @@ export function makeKeyGrid(N, placed){
   const key = Array.from({length:N}, ()=>Array.from({length:N}, ()=>'.'));
   for(const p of placed || []){
     for(const [x,y] of p.cells || []){
-      key[y][x] = '#'; // marca posição de palavra
+      key[y][x] = '#';
     }
   }
   return key;
 }
 
-/**
- * generateWordSearch({
- *   size: 13|15|...,
- *   words: ['MINAS', ...],
- *   maxWords: number,
- *   allowDiagonal: true,
- *   allowBackwards: true
- * })
- */
 export function generateWordSearch(opts={}){
   const N = Math.max(8, Math.min(30, Number(opts.size || 15)));
   const allowDiagonal = opts.allowDiagonal !== false;
   const allowBackwards = opts.allowBackwards !== false;
 
-  const baseDirs = [
-    [1,0],[0,1],[-1,0],[0,-1]
-  ];
-  const diagDirs = [
-    [1,1],[-1,-1],[1,-1],[-1,1]
-  ];
+  const baseDirs = [[1,0],[0,1],[-1,0],[0,-1]];
+  const diagDirs = [[1,1],[-1,-1],[1,-1],[-1,1]];
 
   let dirs = baseDirs.slice();
   if(allowDiagonal) dirs = dirs.concat(diagDirs);
+
   if(!allowBackwards){
-    // remove dirs negativos (mantém só “pra frente”)
     dirs = dirs.filter(([dx,dy]) => dx>=0 && dy>=0 && !(dx===0 && dy===0));
     if(!dirs.length) dirs = [[1,0],[0,1],[1,1]];
   }
 
   const raw = Array.isArray(opts.words) ? opts.words : String(opts.words||'').split(/\n+/);
-  let words = uniqWords(raw);
+  let words = uniqWords(raw).filter(w => w.length >= 3 && w.length <= N);
 
-  // filtra por tamanho que cabe
-  words = words.filter(w => w.length >= 3 && w.length <= N);
-
-  // prioriza palavras maiores primeiro (melhor encaixe)
   words.sort((a,b)=> b.length - a.length);
 
   const maxWords = Math.max(6, Math.min(words.length, Number(opts.maxWords || words.length)));
@@ -157,7 +139,7 @@ export function generateWordSearch(opts={}){
 
   return {
     size: N,
-    words: words,
+    words,
     placed: placed.map(p => ({ word:p.word, x0:p.x0, y0:p.y0, dx:p.dx, dy:p.dy, cells:p.cells })),
     skipped,
     grid,
