@@ -1,8 +1,8 @@
+/* FILE: /js/modules/coloring.js */
 import { Storage } from '../core/storage.js';
 
 export class ColoringModule {
   constructor(app){ this.app = app; this.id='coloring'; this.title='Coloring Pages'; }
-
   async init(){}
 
   render(root){
@@ -14,6 +14,7 @@ export class ColoringModule {
       <div class="grid">
         <div class="card">
           <h2>Gerar páginas para colorir</h2>
+
           <div class="row">
             <div>
               <label>Tema</label>
@@ -70,6 +71,30 @@ export class ColoringModule {
             <button class="btn primary" id="btnSend">Enviar para ComfyUI</button>
             <button class="btn ghost" id="btnSave">Salvar projeto</button>
           </div>
+
+          <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:14px 0"/>
+
+          <h3>Batch (acelerar produção)</h3>
+          <p class="muted">Gera <b>N</b> variações do mesmo assunto (seeds automáticas). Seguro: bloqueia duplo clique.</p>
+          <div class="row">
+            <div>
+              <label>Quantidade (N)</label>
+              <select id="batchN">
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="20">20</option>
+              </select>
+            </div>
+            <div>
+              <label>Seed base (opcional)</label>
+              <input id="batchSeed" placeholder="vazio = aleatório" />
+            </div>
+          </div>
+          <div class="row">
+            <button class="btn" id="btnBatchPlan">Gerar Batch (só plano)</button>
+            <button class="btn primary" id="btnBatchSend">Enviar Batch (N)</button>
+          </div>
+
           <p class="muted">Dica: primeiro clique <b>Gerar Prompt</b>, revise. Depois envie.</p>
         </div>
 
@@ -89,13 +114,15 @@ export class ColoringModule {
           </div>
           <pre class="log" id="logBox"></pre>
           <div id="imgOut" class="imgout"></div>
-          <p class="muted">Se a imagem não aparecer aqui, você ainda pode baixar no próprio ComfyUI.</p>
+          <p class="muted">Se a imagem não aparecer aqui, pode baixar no próprio ComfyUI (CORS no Safari às vezes bloqueia preview).</p>
         </div>
       </div>
     `;
 
     const $ = (id)=>root.querySelector(id);
     const log = (m)=>{ const el=$('#logBox'); el.textContent += m + "\n"; el.scrollTop=el.scrollHeight; };
+
+    let sending = false;
 
     const loadLast = ()=>{
       const last = Storage.get('last_coloring', null);
@@ -122,12 +149,7 @@ export class ColoringModule {
       const seed = ($('#seedInput').value||'').trim();
 
       const out = this.app.promptEngine.buildColoringPrompt({
-        packId,
-        subject,
-        age,
-        style,
-        background,
-        size
+        packId, subject, age, style, background, size
       });
       $('#posOut').value = out.positive;
       $('#negOut').value = out.negative;
@@ -135,6 +157,33 @@ export class ColoringModule {
       Storage.set('last_coloring', { packId, age, subject, style, background, size, seed, pos: out.positive, neg: out.negative });
       log('✅ Prompt gerado.');
       return { packId, age, subject, style, background, size, seed, pos: out.positive, neg: out.negative };
+    };
+
+    const ensureComfyReady = ()=>{
+      const cfg = this.app.getConfig();
+      if(!cfg.baseUrl){ log('⚠️ Falta Base URL. Vá em Config e salve o ComfyUI Base URL.'); return null; }
+      if(!cfg.workflowJson){ log('⚠️ Falta Workflow JSON. Vá em Config e cole o Workflow (API).'); return null; }
+      let workflow = null;
+      try { workflow = JSON.parse(cfg.workflowJson); }
+      catch(e){ log('❌ Workflow JSON inválido: ' + (e?.message||e)); return null; }
+      return { cfg, workflow };
+    };
+
+    const sendOnce = async(st, seedOverride=null)=>{
+      const ready = ensureComfyReady();
+      if(!ready) return null;
+      const { cfg, workflow } = ready;
+      const map = cfg.workflowMap || null;
+
+      const patched = this.app.comfy.patchWorkflowText(workflow, {
+        positive: st.pos,
+        negative: st.neg,
+        seed: seedOverride != null ? String(seedOverride) : st.seed,
+        size: st.size
+      }, map);
+
+      const res = await this.app.comfy.enqueuePrompt(patched);
+      return res;
     };
 
     $('#btnBuild').addEventListener('click', ()=>build());
@@ -162,36 +211,68 @@ export class ColoringModule {
     $('#btnSend').addEventListener('click', async()=>{
       const st = build();
       if(!st) return;
-      const map = cfg.workflowMap || null;
-      if(!cfg.baseUrl){ log('⚠️ Configure o Base URL no Settings.'); return; }
-      if(!cfg.workflowJson){ log('⚠️ Cole o Workflow JSON no Settings.'); return; }
 
       try{
-        log('➡️ Preparando workflow...');
-        const workflow = JSON.parse(cfg.workflowJson);
-        const patched = this.app.comfy.patchWorkflowText(workflow, {
-          positive: st.pos,
-          negative: st.neg,
-          seed: st.seed,
-          size: st.size
-        }, map);
-
-        log('➡️ Enviando prompt...');
-        const res = await this.app.comfy.enqueuePrompt(patched);
+        log('➡️ Enviando (1)...');
+        const res = await sendOnce(st, null);
         log('✅ Enviado. prompt_id=' + (res?.prompt_id||'?'));
 
-        // Optional: try to fetch latest images
         const imgs = await this.app.comfy.tryGetLatestImages();
         if(imgs?.length){
-          const out = $('#imgOut');
-          out.innerHTML = imgs.map(u=>`<img src="${u}" alt="output" />`).join('');
-          log('🖼️ Imagem carregada (se CORS permitir).');
-        }else{
+          $('#imgOut').innerHTML = imgs.map(u=>`<img src="${u}" alt="output" />`).join('');
+          log('🖼️ Preview carregado (se CORS permitir).');
+        } else {
           log('ℹ️ Sem preview aqui. Veja no ComfyUI.');
         }
-
       }catch(e){
         log('❌ Erro ao enviar: ' + (e?.message||e));
+      }
+    });
+
+    const makeBatchPlan = ()=>{
+      const st = build();
+      if(!st) return null;
+      const N = parseInt($('#batchN').value,10);
+      const base = ($('#batchSeed').value||'').trim();
+      const baseSeed = base ? parseInt(base,10) : Math.floor(Math.random()*900000)+100000;
+
+      const plan = [];
+      for(let i=0;i<N;i++){
+        plan.push({
+          i,
+          seed: baseSeed + i,
+          subject: st.subject,
+          packId: st.packId,
+          size: st.size
+        });
+      }
+      Storage.set('coloring:batch_plan', { createdAt: new Date().toISOString(), N, baseSeed, state: st, plan });
+      log(`📦 Batch plan criado ✅ N=${N} baseSeed=${baseSeed}`);
+      return { st, plan };
+    };
+
+    $('#btnBatchPlan').addEventListener('click', ()=>makeBatchPlan());
+
+    $('#btnBatchSend').addEventListener('click', async()=>{
+      if(sending){ log('⏳ Já tem um envio em andamento...'); return; }
+      const built = makeBatchPlan();
+      if(!built) return;
+      const { st, plan } = built;
+
+      sending = true;
+      try{
+        log(`➡️ Enviando batch (${plan.length})...`);
+        for(const item of plan){
+          log(`• ${item.i+1}/${plan.length} seed=${item.seed}`);
+          const res = await sendOnce(st, item.seed);
+          log(`  ✅ prompt_id=${res?.prompt_id||'?'}`);
+          await new Promise(r=>setTimeout(r, 250)); // leve espaçamento (mobile-safe)
+        }
+        log('🎉 Batch enviado ✅');
+      }catch(e){
+        log('❌ Erro batch: ' + (e?.message||e));
+      }finally{
+        sending = false;
       }
     });
 
