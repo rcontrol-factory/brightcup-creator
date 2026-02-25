@@ -7,7 +7,6 @@ export class ColoringModule {
 
   render(root){
     const themes = this.app.themes;
-    const cfg = this.app.getConfig();
 
     const packOptions = (themes.packs||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
     root.innerHTML = `
@@ -114,7 +113,7 @@ export class ColoringModule {
           </div>
           <pre class="log" id="logBox"></pre>
           <div id="imgOut" class="imgout"></div>
-          <p class="muted">Se a imagem não aparecer aqui, pode baixar no próprio ComfyUI (CORS no Safari às vezes bloqueia preview).</p>
+          <p class="muted">Se a imagem não aparecer aqui, pode baixar no ComfyUI (Safari às vezes bloqueia preview/CORS).</p>
         </div>
       </div>
     `;
@@ -182,8 +181,7 @@ export class ColoringModule {
         size: st.size
       }, map);
 
-      const res = await this.app.comfy.enqueuePrompt(patched);
-      return res;
+      return await this.app.comfy.enqueuePrompt(patched);
     };
 
     $('#btnBuild').addEventListener('click', ()=>build());
@@ -238,13 +236,7 @@ export class ColoringModule {
 
       const plan = [];
       for(let i=0;i<N;i++){
-        plan.push({
-          i,
-          seed: baseSeed + i,
-          subject: st.subject,
-          packId: st.packId,
-          size: st.size
-        });
+        plan.push({ i, seed: baseSeed + i });
       }
       Storage.set('coloring:batch_plan', { createdAt: new Date().toISOString(), N, baseSeed, state: st, plan });
       log(`📦 Batch plan criado ✅ N=${N} baseSeed=${baseSeed}`);
@@ -266,7 +258,7 @@ export class ColoringModule {
           log(`• ${item.i+1}/${plan.length} seed=${item.seed}`);
           const res = await sendOnce(st, item.seed);
           log(`  ✅ prompt_id=${res?.prompt_id||'?'}`);
-          await new Promise(r=>setTimeout(r, 250)); // leve espaçamento (mobile-safe)
+          await new Promise(r=>setTimeout(r, 250));
         }
         log('🎉 Batch enviado ✅');
       }catch(e){
