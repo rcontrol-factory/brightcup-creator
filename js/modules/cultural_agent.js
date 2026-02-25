@@ -1,10 +1,10 @@
 /* FILE: /js/modules/cultural_agent.js */
-// Bright Cup Creator — Cultural Agent (Manual Mode) v0.1 SAFE
-// Objetivo: gerar estrutura cultural + lista de palavras (sem API) para revistinha.
-// - Input: lugar (ex: "Governador Valadares - MG") + modo (cidade/estado/brasil)
-// - Output: texto curto (curiosidades/estrutura) + word list pronta pro Caça-Palavras
-// - Botão "Aplicar no Caça-Palavras": salva em Storage no formato do wordsearch e pronto.
-// NOTE: sem depender de navegação automática (pra não quebrar). Você abre Caça-Palavras e gera.
+// Bright Cup Creator — Cultural Agent (Book Planner) v0.2 SAFE
+// Objetivo: planejar um livro cultural (6x9, 60p, PT-BR) com seções + palavras para puzzles 15x15.
+// - Sem API (por enquanto)
+// - Sem mexer no Coloring pipeline
+// - Salva plano em Storage: cultural:book_plan
+// - Pode aplicar uma seção no Caça-Palavras (wordsearch) para testar rápido
 
 import { Storage } from '../core/storage.js';
 
@@ -17,8 +17,8 @@ function normalizeWord(s){
     .trim()
     .toUpperCase()
     .replace(/\s+/g,'')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // remove acentos
-    .replace(/[^A-Z0-9]/g,''); // A-Z 0-9
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^A-Z0-9]/g,'');
 }
 
 function uniq(list){
@@ -34,90 +34,183 @@ function uniq(list){
   return out;
 }
 
-function pickWordsForGrid(words, gridSize){
-  // Regra prática: para 13x13, melhor 16-24 palavras, max len <= 13
+function pickWordsForGrid(words, gridSize, maxCount){
   const maxLen = gridSize;
   const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
-  // prioriza 4-11 letras
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
-  return filtered.slice(0, gridSize <= 13 ? 22 : 28);
+  return filtered.slice(0, maxCount);
 }
 
-// Pacotes internos (MVP) — expandimos depois via /data/wordbanks_br.json
-const PACKS = {
-  // Piloto: Governador Valadares / Rio Doce / Ibituruna
-  VALADARES_MG: {
-    label: 'Governador Valadares (MG) — Piloto',
-    words: [
-      'VALADARES','IBITURUNA','PICO','RIODOCE','MINAS','MINEIRO','CULTURA','HISTORIA',
-      'FERROVIA','TREM','TRILHO','MINERIO','VALE','ACOVALE','RIO','SERRA','PONTE',
-      'VIAGEM','ESTACAO','PORTO','VITORIA','LINHARES'
-    ],
-    facts: [
-      { t:'Pico do Ibituruna', p:'Símbolo da cidade e referência nacional para voo livre. Vista marcante do Vale do Rio Doce.' },
-      { t:'Vale do Rio Doce', p:'Região histórica ligada a rotas, economia e paisagens do leste de Minas Gerais.' },
-      { t:'Conexões e viagem', p:'Rodoviária, rotas regionais e deslocamentos fazem parte do cotidiano e do turismo local.' }
-    ]
-  },
-
-  MINAS_GERAIS: {
-    label: 'Minas Gerais (geral)',
-    words: [
-      'MINAS','MINEIRO','QUEIJO','CAFE','SERRAS','HISTORIA','CULTURA','ARTE','IGREJA',
-      'OURO','MINERIO','FERRO','TREM','ESTACAO','ESTRADA','PATRIMONIO','TRADICAO'
-    ],
-    facts: [
-      { t:'Cultura mineira', p:'Culinária, tradição e hospitalidade são marcas fortes. Queijo e café aparecem em muitas histórias do estado.' },
-      { t:'Patrimônio histórico', p:'Minas tem cidades históricas, igrejas e tradições que ajudam a contar a formação do Brasil.' }
-    ]
-  },
-
-  TRANSPORTE_BR: {
-    label: 'Brasil — Rodoviária & Viagem',
-    words: [
-      'ONIBUS','RODOVIARIA','VIAGEM','DESTINO','MAPA','BAGAGEM','PASSAGEM','PLATAFORMA',
-      'ESTACAO','TREM','TRILHO','ESTRADA','PONTE','TUNEL','RETORNO','ROTA'
-    ],
-    facts: [
-      { t:'Viagens no Brasil', p:'Rodoviárias e rotas regionais conectam cidades e estados — cenário perfeito para revistinhas de passatempo.' }
-    ]
-  }
-};
-
-function buildManualCultural({ place, scope, tone }) {
-  const placeClean = String(place || '').trim();
-  const title =
-    scope === 'cidade' ? `Revistinha Cultural — ${placeClean}` :
-    scope === 'estado' ? `Curiosidades do Estado — ${placeClean}` :
-    `Curiosidades do Brasil — edição ${placeClean || 'geral'}`;
-
-  const intro =
-    tone === 'nostalgico'
-      ? `Uma revistinha de curiosidades e passatempo para resgatar a cultura: fatos curtos, palavras e diversão.`
-      : `Edição cultural com curiosidades e passatempo. Conteúdo curto, objetivo e vendável em viagem, rodoviária e trem.`;
-
-  // Estrutura base (sem pesquisa)
-  const sections = [
-    { title:'Curiosidade 1', text:`Fato curto sobre ${placeClean || 'o tema'}. (MVP manual — depois entra modo IA/opcional)` },
-    { title:'Curiosidade 2', text:`Ponto histórico/turístico relacionado a ${placeClean || 'o tema'}.` },
-    { title:'Curiosidade 3', text:`Elemento cultural: comida típica, tradição, ou detalhe interessante de ${placeClean || 'o tema'}.` }
-  ];
-
-  return { title, intro, sections };
-}
-
-function renderCulturalText(doc){
+function wrapLines(text, max=78){
+  const words = String(text||'').split(/\s+/g);
   const lines = [];
-  lines.push(doc.title.toUpperCase());
-  lines.push('-'.repeat(Math.max(18, doc.title.length)));
-  lines.push('');
-  lines.push(doc.intro);
-  lines.push('');
-  for (const s of doc.sections){
-    lines.push(`• ${s.title}`);
-    lines.push(`  ${s.text}`);
-    lines.push('');
+  let line = '';
+  for (const w of words){
+    if (!line) { line = w; continue; }
+    if ((line + ' ' + w).length <= max) line += ' ' + w;
+    else { lines.push(line); line = w; }
   }
+  if (line) lines.push(line);
+  return lines.join('\n');
+}
+
+function bookDefaultPlanMG(){
+  // Livro 01 — Minas Gerais Cultural (PT-BR) — 6x9 — 60 páginas
+  // 10 puzzles 15x15, com gabarito no final (fase PDF depois)
+  return {
+    meta: {
+      id: 'MG_CULTURAL_BOOK_01',
+      title: 'MINAS GERAIS CULTURAL',
+      subtitle: 'História • Sabores • Tradições • Curiosidades • Caça-Palavras',
+      format: '6x9',
+      pages_target: 60,
+      language: 'pt-BR',
+      grid_default: 15,
+      words_per_puzzle: 20,
+      include_key: true,
+      createdAt: new Date().toISOString()
+    },
+    // Ícones (line art) — por enquanto só referência de “tipo”
+    // Depois podemos mapear isso para SVGs locais.
+    sections: [
+      {
+        id:'intro_minas',
+        icon:'mountain',
+        title:'O que é Minas?',
+        text:
+          'Minas é serra no horizonte e café passado na hora. É conversa na porta, ' +
+          'é tradição que atravessa gerações. Aqui, a cultura não é enfeite: é jeito de viver.',
+        wordHints:[
+          'MINAS','MINEIRO','SERRA','MONTANHA','CULTURA','HISTORIA','TRADICAO','ACOLHIMENTO','CAFE','FOGAO','INTERIOR'
+        ]
+      },
+      {
+        id:'origem_minas',
+        icon:'history',
+        title:'Como começou Minas',
+        text:
+          'A história de Minas se mistura com caminhos antigos, trabalho duro e cidades que cresceram ' +
+          'ao redor de rios, serras e rotas. O tempo aqui deixa marca: na pedra, na fé e nas histórias contadas.',
+        wordHints:[
+          'HISTORIA','CAMINHO','SERRA','RIO','CIDADE','PATRIMONIO','MEMORIA','ORIGEM','TRADICAO'
+        ]
+      },
+      {
+        id:'queijo_minas',
+        icon:'cheese',
+        title:'A cultura do queijo mineiro',
+        text:
+          'Em Minas, queijo é linguagem. Tem queijo fresco, meia-cura, curado. ' +
+          'E tem a Canastra, famosa no Brasil inteiro. Cada pedaço carrega clima, técnica e paciência.',
+        wordHints:[
+          'QUEIJO','CANASTRA','CURADO','MEIACURA','LEITE','FAZENDA','TRADICAO','SABOR','COALHO','CURA'
+        ]
+      },
+      {
+        id:'pao_de_queijo',
+        icon:'bread',
+        title:'Pão de queijo (receita mineira simples)',
+        text:
+          'Receita base: polvilho, leite, óleo, ovos, queijo e sal. Mistura, sovar, bolear e assar. ' +
+          'O segredo é o queijo e o ponto da massa — cada casa tem seu jeito.',
+        wordHints:[
+          'PAODEQUEIJO','POLVILHO','FORNO','MASSA','QUEIJO','LEITE','OVO','SAL','RECEITA','COZINHA'
+        ]
+      },
+      {
+        id:'cafe_minas',
+        icon:'coffee',
+        title:'Café e interior',
+        text:
+          'Café em Minas é ritual. Cheiro que acorda a casa, conversa que começa cedo, ' +
+          'e o interior que ensina a valorizar o simples. É parte da identidade mineira.',
+        wordHints:[
+          'CAFE','COADOR','CHEIRO','MANHA','FAZENDA','INTERIOR','TRADICAO','TORRA','XICARA'
+        ]
+      },
+      {
+        id:'ferrovia',
+        icon:'train',
+        title:'Ferrovia e o “trem” mineiro',
+        text:
+          'O “trem” em Minas é mais que vagão: é expressão, é memória e é caminho. ' +
+          'A ferrovia Vitória-Minas, por exemplo, marca a ligação entre regiões e histórias.',
+        wordHints:[
+          'FERROVIA','TREM','TRILHO','ESTACAO','VIAGEM','VITORIAMINAS','ROTA','PLATAFORMA','VAGAO'
+        ]
+      },
+      {
+        id:'pedras_preciosas',
+        icon:'gem',
+        title:'Pedras preciosas e brilho de Minas',
+        text:
+          'Minas também é conhecida por pedras e gemas. O brilho vem de longe: trabalho, comércio, ' +
+          'histórias de garimpo e tradição regional.',
+        wordHints:[
+          'PEDRA','GEMA','GARIMPO','CRISTAL','BRILHO','MINERIO','OURO','PRATA','JOIA'
+        ]
+      },
+      {
+        id:'fe_religiosidade',
+        icon:'church',
+        title:'Fé e religiosidade',
+        text:
+          'Em muitas cidades, a fé aparece nas festas, nas procissões e nas igrejas. ' +
+          'É uma cultura viva, que une famílias e mantém a história de pé.',
+        wordHints:[
+          'FE','IGREJA','SANTUARIO','PROCISSAO','TRADICAO','FESTA','DEVOTO','ROMARIA'
+        ]
+      },
+      {
+        id:'serras_paisagens',
+        icon:'landscape',
+        title:'Serras, paisagens e caminhos',
+        text:
+          'Minas é recorte de serra, estrada que sobe e desce, mirante e céu aberto. ' +
+          'É natureza que convida a respirar e seguir adiante.',
+        wordHints:[
+          'SERRA','MIRANTE','ESTRADA','PAISAGEM','NATUREZA','TRILHA','VALE','CACHOEIRA'
+        ]
+      },
+      {
+        id:'voo_livre_valadares',
+        icon:'paraglider',
+        title:'Governador Valadares e o voo livre',
+        text:
+          'Governador Valadares é conhecida como capital mundial do voo livre. ' +
+          'O Pico do Ibituruna virou símbolo: aventura, vento e gente do mundo inteiro olhando Minas do alto.',
+        wordHints:[
+          'VALADARES','IBITURUNA','VOOLIVRE','PARAPENTE','ASADELTA','PICO','VENTO','AVENTURA','MIRANTE'
+        ]
+      }
+    ]
+  };
+}
+
+function renderPlanText(plan){
+  const m = plan.meta || {};
+  const lines = [];
+  lines.push((m.title || 'LIVRO').toUpperCase());
+  if (m.subtitle) lines.push(m.subtitle);
+  lines.push('-'.repeat(46));
+  lines.push(`Formato: ${m.format} | Páginas: ${m.pages_target} | Idioma: ${m.language}`);
+  lines.push(`Puzzles: ${plan.sections.length} (1 por seção) | Grade: ${m.grid_default}x${m.grid_default} | Palavras/puzzle: ${m.words_per_puzzle}`);
+  lines.push('');
+  lines.push('SEÇÕES');
+  lines.push('-----');
+  plan.sections.forEach((s, i) => {
+    lines.push(`${String(i+1).padStart(2,'0')}. ${s.title}  [icon:${s.icon}]`);
+  });
+  return lines.join('\n');
+}
+
+function renderSectionText(s){
+  const lines = [];
+  lines.push(s.title.toUpperCase());
+  lines.push('-'.repeat(Math.max(18, s.title.length)));
+  lines.push('');
+  lines.push(wrapLines(s.text, 78));
+  lines.push('');
   return lines.join('\n').trimEnd();
 }
 
@@ -132,156 +225,202 @@ export class CulturalAgentModule {
 
   render(root){
     const seed = Storage.get('cultural:seed', {
-      place: 'Governador Valadares - MG',
-      scope: 'cidade',   // cidade | estado | brasil
-      tone: 'premium',   // premium | nostalgico
-      pack: 'VALADARES_MG',
-      grid: 13,
+      mode: 'BOOK', // BOOK | QUICK
+      grid: 15,
+      wordsPerPuzzle: 20,
       docText: '',
-      wordsText: ''
+      wordsText: '',
+      planText: '',
+      selectedSection: 0
     });
+
+    const existingPlan = Storage.get('cultural:book_plan', null);
 
     root.innerHTML = `
       <div class="grid">
         <div class="card">
           <h2>Cultural Agent</h2>
           <p class="muted">
-            Gere conteúdo + palavras para revistinha (sem API). Use como base para Caça-Palavras e depois (futuro) páginas explicativas.
+            Linha Cultural Brasil (PT-BR). Planeje livro 6x9 (60 páginas) com emoção + estrutura editorial.
+            Coloring/Comfy permanece separado.
           </p>
 
           <div class="row">
-            <label>Local / tema
-              <input id="ca_place" value="${$esc(seed.place)}" placeholder="ex: Governador Valadares - MG" />
-            </label>
-
-            <label>Escopo
-              <select id="ca_scope">
-                <option value="cidade" ${seed.scope==='cidade'?'selected':''}>Cidade / Município</option>
-                <option value="estado" ${seed.scope==='estado'?'selected':''}>Estado</option>
-                <option value="brasil" ${seed.scope==='brasil'?'selected':''}>Brasil (mix)</option>
-              </select>
-            </label>
-          </div>
-
-          <div class="row">
-            <label>Estilo do texto
-              <select id="ca_tone">
-                <option value="premium" ${seed.tone==='premium'?'selected':''}>Premium (objetivo)</option>
-                <option value="nostalgico" ${seed.tone==='nostalgico'?'selected':''}>Nostálgico (revistinha raiz)</option>
+            <label>Modo
+              <select id="ca_mode">
+                <option value="BOOK" ${seed.mode==='BOOK'?'selected':''}>Livro (Minas Gerais Cultural)</option>
+                <option value="QUICK" ${seed.mode==='QUICK'?'selected':''}>Rápido (teste de seção/palavras)</option>
               </select>
             </label>
 
-            <label>Pacote (MVP)
-              <select id="ca_pack">
-                ${Object.keys(PACKS).map(k => `<option value="${k}" ${seed.pack===k?'selected':''}>${$esc(PACKS[k].label)}</option>`).join('')}
-              </select>
-            </label>
-          </div>
-
-          <div class="row">
-            <label>Grade do caça-palavras
+            <label>Grade (padrão)
               <select id="ca_grid">
-                ${[11,13,15,17].map(n=>`<option value="${n}" ${Number(seed.grid)===n?'selected':''}>${n}x${n}</option>`).join('')}
+                ${[13,15,17].map(n=>`<option value="${n}" ${Number(seed.grid)===n?'selected':''}>${n}x${n}</option>`).join('')}
               </select>
-              <div class="muted" style="margin-top:6px">Obs: grade é quantidade de letras (não é cm/inch). PDF entra na FASE 4.</div>
+            </label>
+
+            <label>Palavras por puzzle
+              <select id="ca_wpp">
+                ${[18,20,22].map(n=>`<option value="${n}" ${Number(seed.wordsPerPuzzle)===n?'selected':''}>${n}</option>`).join('')}
+              </select>
             </label>
           </div>
 
           <div class="row">
-            <button class="btn primary" id="ca_generate">Gerar Conteúdo + Palavras</button>
-            <button class="btn" id="ca_apply_ws">Aplicar no Caça-Palavras</button>
+            <button class="btn primary" id="ca_build">Gerar Plano do Livro (MG)</button>
+            <button class="btn" id="ca_export_plan">Exportar Plano (JSON)</button>
           </div>
 
           <div class="row">
-            <button class="btn" id="ca_save">Salvar Projeto</button>
-            <button class="btn" id="ca_copy">Copiar Tudo</button>
+            <label>Seção (para testar no Caça-Palavras)
+              <select id="ca_section"></select>
+            </label>
+            <button class="btn" id="ca_apply_ws">Aplicar Seção no Caça-Palavras</button>
+          </div>
+
+          <div class="row">
+            <button class="btn" id="ca_copy">Copiar Seção (texto + palavras)</button>
+            <button class="btn" id="ca_save">Salvar</button>
           </div>
 
         </div>
 
         <div class="card">
-          <h2>Texto cultural (base)</h2>
+          <h2>Plano do livro</h2>
+          <pre id="ca_plan" class="pre"></pre>
+          <p class="muted">Isso vira o “roteiro” das 60 páginas. O PDF vem na fase do exportador.</p>
+        </div>
+
+        <div class="card">
+          <h2>Texto da seção</h2>
           <pre id="ca_doc" class="pre"></pre>
         </div>
 
         <div class="card">
-          <h2>Palavras (prontas)</h2>
-          <p class="muted">Uma por linha (normalizadas, sem acento). Ideal para revistinha.</p>
+          <h2>Palavras da seção</h2>
+          <p class="muted">Uma por linha, normalizadas (sem acento). Compatíveis com a grade escolhida.</p>
           <textarea id="ca_words" rows="12" style="width:100%"></textarea>
         </div>
       </div>
     `;
 
     const $ = (s)=>root.querySelector(s);
+    const planEl = $('#ca_plan');
     const docEl = $('#ca_doc');
     const wordsEl = $('#ca_words');
+    const sectionSel = $('#ca_section');
 
-    if (seed.docText) docEl.textContent = seed.docText;
-    if (seed.wordsText) wordsEl.value = seed.wordsText;
+    let plan = existingPlan;
+
+    const fillSections = () => {
+      sectionSel.innerHTML = '';
+      const secs = plan?.sections || [];
+      secs.forEach((s, idx) => {
+        const opt = document.createElement('option');
+        opt.value = String(idx);
+        opt.textContent = `${idx+1}. ${s.title} (icon:${s.icon})`;
+        sectionSel.appendChild(opt);
+      });
+      sectionSel.value = String(Math.min(seed.selectedSection || 0, Math.max(0, secs.length-1)));
+    };
+
+    const renderSelected = () => {
+      if (!plan?.sections?.length) return;
+      const idx = parseInt(sectionSel.value || '0', 10);
+      const s = plan.sections[idx];
+      docEl.textContent = renderSectionText(s);
+
+      const grid = parseInt($('#ca_grid').value, 10);
+      const wpp  = parseInt($('#ca_wpp').value, 10);
+      const picked = pickWordsForGrid(
+        []
+          .concat(s.wordHints || [])
+          .concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA']),
+        grid,
+        wpp
+      );
+      wordsEl.value = picked.join('\n');
+      saveSeed();
+    };
 
     const saveSeed = () => {
       const updated = {
-        place: $('#ca_place').value,
-        scope: $('#ca_scope').value,
-        tone: $('#ca_tone').value,
-        pack: $('#ca_pack').value,
+        mode: $('#ca_mode').value,
         grid: parseInt($('#ca_grid').value,10),
+        wordsPerPuzzle: parseInt($('#ca_wpp').value,10),
         docText: docEl.textContent || '',
-        wordsText: wordsEl.value || ''
+        wordsText: wordsEl.value || '',
+        planText: planEl.textContent || '',
+        selectedSection: parseInt(sectionSel.value || '0', 10)
       };
       Storage.set('cultural:seed', updated);
       return updated;
     };
 
-    $('#ca_generate').onclick = () => {
-      const place = $('#ca_place').value.trim();
-      const scope = $('#ca_scope').value;
-      const tone  = $('#ca_tone').value;
-      const packKey = $('#ca_pack').value;
+    // hydrate from seed
+    if (existingPlan) {
+      planEl.textContent = renderPlanText(existingPlan);
+      fillSections();
+      renderSelected();
+    } else {
+      planEl.textContent = seed.planText || 'Nenhum plano ainda. Clique “Gerar Plano do Livro (MG)”.';
+      docEl.textContent = seed.docText || '';
+      wordsEl.value = seed.wordsText || '';
+    }
+
+    sectionSel.addEventListener('change', () => renderSelected());
+
+    $('#ca_build').onclick = () => {
       const grid = parseInt($('#ca_grid').value,10);
+      const wpp  = parseInt($('#ca_wpp').value,10);
 
-      const base = buildManualCultural({ place, scope, tone });
+      plan = bookDefaultPlanMG();
+      plan.meta.grid_default = grid;
+      plan.meta.words_per_puzzle = wpp;
 
-      // Injeta fatos do pack (se existir) em vez de placeholders
-      const pack = PACKS[packKey];
-      if (pack?.facts?.length) {
-        base.sections = pack.facts.map(f => ({
-          title: f.t,
-          text: f.p
-        }));
-      }
+      Storage.set('cultural:book_plan', plan);
 
-      const docText = renderCulturalText(base);
+      planEl.textContent = renderPlanText(plan);
+      fillSections();
+      renderSelected();
 
-      // Palavras: mistura pack + tokens do local
-      const tokens = place.split(/[\s,;:\-_/]+/g).filter(Boolean);
-      const words = []
-        .concat(pack?.words || [])
-        .concat(tokens)
-        .concat(['CULTURA','HISTORIA','CURIOSIDADE','BRASIL']);
-
-      const picked = pickWordsForGrid(words, grid);
-      const wordsText = picked.join('\n');
-
-      docEl.textContent = docText;
-      wordsEl.value = wordsText;
-
+      this.app.toast?.('Plano do livro gerado ✅');
+      this.app.log?.(`[CULT] book_plan created grid=${grid} wpp=${wpp} sections=${plan.sections.length}`);
       saveSeed();
-      this.app.toast?.('Gerado ✅');
-      this.app.log?.(`[CULT] generated pack=${packKey} grid=${grid} words=${picked.length}`);
+    };
+
+    $('#ca_export_plan').onclick = () => {
+      if (!plan) {
+        this.app.toast?.('Gere o plano primeiro', 'err');
+        return;
+      }
+      const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `book-plan-minas-gerais-${Date.now()}.json`;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+      this.app.toast?.('Plano exportado ✅');
     };
 
     $('#ca_apply_ws').onclick = () => {
-      const place = $('#ca_place').value.trim();
+      if (!plan?.sections?.length) {
+        this.app.toast?.('Gere o plano primeiro', 'err');
+        return;
+      }
+      const idx = parseInt(sectionSel.value || '0', 10);
+      const s = plan.sections[idx];
+
       const grid = parseInt($('#ca_grid').value,10);
+      const wpp  = parseInt($('#ca_wpp').value,10);
 
-      const words = (wordsEl.value || '').split(/\r?\n+/).map(s=>s.trim()).filter(Boolean);
-      const picked = pickWordsForGrid(words, grid);
+      const words = (wordsEl.value || '')
+        .split(/\r?\n+/).map(x=>x.trim()).filter(Boolean);
+      const picked = pickWordsForGrid(words, grid, wpp);
 
-      // salva no formato que o wordsearch usa
       const ws = {
-        title: place ? `Caça-Palavras — ${place}` : 'Caça-Palavras',
-        preset: 'BR_POCKET',
+        title: `Caça-Palavras — ${s.title}`,
+        preset: 'BR_POCKET', // mantemos compatível; o “editorial 6x9” vem no export PDF
         size: grid,
         includeKey: true,
         words: picked.join('\n'),
@@ -290,37 +429,34 @@ export class CulturalAgentModule {
       };
       Storage.set('wordsearch:seed', ws);
 
+      this.app.toast?.('Aplicado ✅ (abra Caça-palavras e clique Gerar)');
+      this.app.log?.(`[CULT] applied section=${idx+1} grid=${grid} words=${picked.length}`);
       saveSeed();
-      this.app.toast?.('Aplicado no Caça-Palavras ✅ (abra o módulo Caça-palavras e clique Gerar)');
-      this.app.log?.(`[CULT] applied to wordsearch size=${grid} words=${picked.length}`);
-    };
-
-    $('#ca_save').onclick = () => {
-      const s = saveSeed();
-      const proj = {
-        type: 'cultural',
-        ts: Date.now(),
-        ...s
-      };
-      Storage.set('cultural:seed', s);
-      this.app.saveProject?.(proj);
-      this.app.toast?.('Projeto salvo ✅');
     };
 
     $('#ca_copy').onclick = async () => {
       const txt =
         (docEl.textContent || '').trim() +
-        '\n\n' +
-        'PALAVRAS\n' +
-        '-------\n' +
-        (wordsEl.value || '').trim() +
-        '\n';
+        '\n\nPALAVRAS\n-------\n' +
+        (wordsEl.value || '').trim() + '\n';
       try {
         await navigator.clipboard.writeText(txt);
         this.app.toast?.('Copiado ✅');
       } catch {
         this.app.toast?.('Falha ao copiar', 'err');
       }
+    };
+
+    $('#ca_save').onclick = () => {
+      saveSeed();
+      const proj = {
+        type:'cultural_book_planner',
+        ts: Date.now(),
+        plan: plan || null,
+        seed: Storage.get('cultural:seed', {})
+      };
+      this.app.saveProject?.(proj);
+      this.app.toast?.('Salvo ✅');
     };
   }
 }
