@@ -1,14 +1,15 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3 PADRÃO (1 ano)
-// Objetivo: preview editorial do livro cultural (6x9) de forma LIMPA e VISUAL no mobile.
+// Bright Cup Creator — Cultural Book Builder v0.4 PADRÃO (1 ano)
+// Objetivo: preview editorial do livro cultural (6x9) VISUAL no mobile.
 // - Se não existir plano (Safari limpou storage): gera plano padrão MG aqui mesmo.
 // - Esconde especificações técnicas da UI (specs ficam internas).
 // - Modo Folhear no mobile (1 página) + modo Spread (2 páginas).
-// - Puzzle com prévia VISÍVEL (grade simples) para validação editorial.
+// - Puzzle VISÍVEL usando o gerador OFICIAL (/js/core/wordsearch_gen.js).
 // - Backup anti-Safari: exportar/importar plano JSON aqui.
 // - Não gera PDF ainda (isso vem no Exporter).
 
 import { Storage } from '../core/storage.js';
+import { generateWordSearch } from '../core/wordsearch_gen.js';
 
 function esc(s){
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -72,87 +73,6 @@ function iconLabel(icon){
     paraglider: 'Voo livre'
   };
   return map[icon] || (icon || 'ilustração');
-}
-
-/* === PREVIEW PUZZLE (SIMPLES, RÁPIDO, VISUAL) ===========================
-   Isso NÃO substitui o gerador oficial do módulo Caça-palavras.
-   Aqui é só para você VER o livro “folheável” e validar editorial.
-======================================================================== */
-function makeRng(seed){
-  let x = (seed >>> 0) || 123456789;
-  return () => {
-    x ^= x << 13; x >>>= 0;
-    x ^= x >> 17; x >>>= 0;
-    x ^= x << 5;  x >>>= 0;
-    return (x >>> 0) / 4294967296;
-  };
-}
-
-function randomLetter(rng){
-  const A = 65;
-  return String.fromCharCode(A + Math.floor(rng()*26));
-}
-
-function tryPlaceWord(grid, word, rng){
-  const n = grid.length;
-  const dirs = [
-    [ 1, 0], [-1, 0],
-    [ 0, 1], [ 0,-1],
-    [ 1, 1], [-1,-1],
-    [ 1,-1], [-1, 1],
-  ];
-  const attempts = 160;
-  const w = word;
-  for (let t=0; t<attempts; t++){
-    const d = dirs[Math.floor(rng()*dirs.length)];
-    const dx = d[0], dy = d[1];
-    const x0 = Math.floor(rng()*n);
-    const y0 = Math.floor(rng()*n);
-    const x1 = x0 + dx*(w.length-1);
-    const y1 = y0 + dy*(w.length-1);
-    if (x1 < 0 || x1 >= n || y1 < 0 || y1 >= n) continue;
-
-    // check overlap compatibility
-    let ok = true;
-    for (let i=0; i<w.length; i++){
-      const x = x0 + dx*i;
-      const y = y0 + dy*i;
-      const cell = grid[y][x];
-      if (cell !== '.' && cell !== w[i]) { ok = false; break; }
-    }
-    if (!ok) continue;
-
-    // place
-    for (let i=0; i<w.length; i++){
-      const x = x0 + dx*i;
-      const y = y0 + dy*i;
-      grid[y][x] = w[i];
-    }
-    return true;
-  }
-  return false;
-}
-
-function buildPreviewGrid(size, words, seed){
-  const rng = makeRng(seed);
-  const grid = Array.from({length:size}, () => Array.from({length:size}, () => '.'));
-  const placed = [];
-  const list = (words || []).slice().sort((a,b)=>b.length-a.length);
-
-  for (const w of list){
-    if (!w) continue;
-    if (w.length > size) continue;
-    const ok = tryPlaceWord(grid, w, rng);
-    if (ok) placed.push(w);
-  }
-  // fill blanks
-  for (let y=0; y<size; y++){
-    for (let x=0; x<size; x++){
-      if (grid[y][x] === '.') grid[y][x] = randomLetter(rng);
-    }
-  }
-  const lines = grid.map(row => row.join(' ')).join('\n');
-  return { lines, placedCount: placed.length };
 }
 
 function buildDefaultPlanMG(grid=15, wpp=20){
@@ -370,8 +290,7 @@ export class CulturalBookBuilderModule {
 
   render(root){
     let plan = Storage.get('cultural:book_plan', null);
-    const seed = Storage.get('cultural:builder_seed', { pageIndex: 0, mode: 'spread' }); // mode: spread | folio
-    const ui = Storage.get('cultural:builder_ui', {});
+    const seed = Storage.get('cultural:builder_seed', { pageIndex: 0, mode: 'spread' }); // spread | folio
 
     root.innerHTML = `
       <style>
@@ -396,7 +315,6 @@ export class CulturalBookBuilderModule {
         .bb-spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
         .bb-folio{ display:grid; grid-template-columns: 1fr; gap:14px; }
 
-        /* ===== PAPER PAGE (VISUAL) ===== */
         .bb-page{
           border-radius:18px;
           border:1px solid rgba(255,255,255,.10);
@@ -410,6 +328,7 @@ export class CulturalBookBuilderModule {
         .bb-page::before{ content:""; display:block; padding-top:150%; } /* 6x9 ratio */
         .bb-page > .bb-inner{ position:absolute; inset:14px; display:flex; flex-direction:column; gap:10px; }
 
+        /* Paper */
         .paper{
           flex:1;
           border-radius:14px;
@@ -426,27 +345,10 @@ export class CulturalBookBuilderModule {
           border-bottom: 1px solid rgba(0,0,0,.08);
           display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
         }
-        .paper-title{
-          font-size:15px;
-          font-weight:900;
-          letter-spacing:.2px;
-          overflow-wrap:anywhere;
-        }
-        .paper-meta{
-          font-size:12px;
-          color: rgba(0,0,0,.62);
-          overflow-wrap:anywhere;
-          margin-top:2px;
-        }
-        .paper-pageno{
-          font-size:12px;
-          color: rgba(0,0,0,.55);
-          white-space:nowrap;
-        }
-        .paper-body{
-          padding:12px 14px;
-          overflow:auto;
-        }
+        .paper-title{ font-size:15px; font-weight:900; letter-spacing:.2px; overflow-wrap:anywhere; }
+        .paper-meta{ font-size:12px; color: rgba(0,0,0,.62); overflow-wrap:anywhere; margin-top:2px; }
+        .paper-pageno{ font-size:12px; color: rgba(0,0,0,.55); white-space:nowrap; }
+        .paper-body{ padding:12px 14px; overflow:auto; }
         .paper-body pre{
           margin:0;
           white-space:pre-wrap;
@@ -484,13 +386,9 @@ export class CulturalBookBuilderModule {
         .bb-footer{ display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12px; opacity:.86; }
         .bb-mini{ font-size:12px; opacity:.78; }
         .bb-empty{ display:grid; gap:10px; }
-
         .bb-navbtn{ width:44px; min-width:44px; text-align:center; }
         .bb-swipehint{ font-size:12px; opacity:.72; }
-
-        @media (max-width: 860px){
-          .bb-spread{ grid-template-columns: 1fr; }
-        }
+        @media (max-width: 860px){ .bb-spread{ grid-template-columns: 1fr; } }
       </style>
 
       <div class="bb-wrap">
@@ -617,15 +515,21 @@ export class CulturalBookBuilderModule {
         if (!isPuzzle){
           bodyHtml = `<pre>${esc(p.body || '')}</pre>`;
         } else {
-          const seedNum = (plan.meta?.id ? plan.meta.id.length : 7) * 1000 + (p.pageNo || 1) * 77 + (p.words?.length || 0);
-          const { lines, placedCount } = buildPreviewGrid(Number(p.grid||15), p.words || [], seedNum);
-          const wordsHtml = (p.words || []).map(w => `<div>${esc(w)}</div>`).join('');
+          const gen = generateWordSearch({
+            size: Number(p.grid || 15),
+            words: p.words || [],
+            maxWords: (p.words || []).length,
+            allowDiagonal: true,
+            allowBackwards: true
+          });
 
+          const wordsHtml = (p.words || []).map(w => `<div>${esc(w)}</div>`).join('');
           bodyHtml = `
             <div class="bb-mini" style="margin-bottom:8px; color:rgba(0,0,0,.65)">
-              Prévia visual (editorial) • grade ${esc(String(p.grid))}x${esc(String(p.grid))} • palavras colocadas ${esc(String(placedCount))}
+              Grade real (preview) • ${esc(String(gen.size))}x${esc(String(gen.size))} • colocadas ${esc(String((gen.placed||[]).length))}
+              ${gen.skipped?.length ? `• não couberam ${esc(String(gen.skipped.length))}` : ''}
             </div>
-            <pre class="puzzle-grid">${esc(lines)}</pre>
+            <pre class="puzzle-grid">${esc(gen.gridText)}</pre>
             <div style="height:10px"></div>
             <div class="bb-mini" style="margin:4px 0 6px 0; color:rgba(0,0,0,.65)">Palavras</div>
             <div class="puzzle-words">${wordsHtml}</div>
@@ -694,7 +598,6 @@ export class CulturalBookBuilderModule {
           `;
           pos.textContent = `${i+1}/${pages.length}`;
 
-          // botão enviar no RIGHT se for puzzle
           const sendBtn = pagesHost.querySelector('#bb_right [data-send="1"]');
           if (sendBtn){
             sendBtn.onclick = () => {
@@ -720,20 +623,14 @@ export class CulturalBookBuilderModule {
       };
 
       const prev = () => {
-        if (seed.mode === 'spread'){
-          seed.pageIndex = Math.max(0, (seed.pageIndex||0) - 2);
-        } else {
-          seed.pageIndex = Math.max(0, (seed.pageIndex||0) - 1);
-        }
+        if (seed.mode === 'spread') seed.pageIndex = Math.max(0, (seed.pageIndex||0) - 2);
+        else seed.pageIndex = Math.max(0, (seed.pageIndex||0) - 1);
         render();
       };
 
       const next = () => {
-        if (seed.mode === 'spread'){
-          seed.pageIndex = Math.min(pages.length - 1, (seed.pageIndex||0) + 2);
-        } else {
-          seed.pageIndex = Math.min(pages.length - 1, (seed.pageIndex||0) + 1);
-        }
+        if (seed.mode === 'spread') seed.pageIndex = Math.min(pages.length - 1, (seed.pageIndex||0) + 2);
+        else seed.pageIndex = Math.min(pages.length - 1, (seed.pageIndex||0) + 1);
         render();
       };
 
@@ -742,7 +639,6 @@ export class CulturalBookBuilderModule {
 
       area.querySelector('#bb_mode_spread').onclick = () => {
         seed.mode = 'spread';
-        // alinha pra par (página esquerda)
         seed.pageIndex = Math.max(0, (seed.pageIndex||0) - ((seed.pageIndex||0) % 2));
         saveSeed();
         renderMain();
