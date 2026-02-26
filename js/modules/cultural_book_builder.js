@@ -1,9 +1,9 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3 PADRÃO (1 ano)
+// Bright Cup Creator — Cultural Book Builder v0.3b PADRÃO (1 ano)
 // OBJETIVO:
 // - Preview editorial do livro cultural (6x9) em "papel branco" no mobile.
 // - Folhear como livro (sem scroll dentro da página).
-// - Puzzle com quadriculado (grid) e palavras em 2 colunas.
+// - Puzzle com quadriculado (grid) e palavras EM LINHA (horizontal wrap).
 // - Geração editorial determinística (mesma seção => mesma grade) SEM depender do wordsearch module.
 // - Botão "Enviar p/ Caça-palavras" mantém fluxo.
 
@@ -40,7 +40,6 @@ function uniq(list){
 function pickWords(words, gridSize, maxCount){
   const maxLen = gridSize;
   const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
-  // prioriza palavras "boas" (perto de 7) pra encaixar melhor
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
   return filtered.slice(0, maxCount);
 }
@@ -205,8 +204,6 @@ function buildDefaultPlanMG(grid=15, wpp=20){
 
 /* =========================
    PUZZLE EDITORIAL (determinístico)
-   - Mesma seção => mesma grade
-   - Sem depender de Math.random global
 ========================= */
 
 function hashStr(s){
@@ -286,7 +283,7 @@ function generateEditorialPuzzle({ seedKey, size, words, maxWords }){
 
   const baseDirs = [[1,0],[0,1],[-1,0],[0,-1]];
   const diagDirs = [[1,1],[-1,-1],[1,-1],[-1,1]];
-  const dirs = baseDirs.concat(diagDirs); // sempre diagonal + backwards (editorial fica mais "cheio")
+  const dirs = baseDirs.concat(diagDirs);
 
   let list = uniq(words || []).filter(w => w.length >= 3 && w.length <= N);
   list.sort((a,b)=> b.length - a.length);
@@ -306,10 +303,6 @@ function generateEditorialPuzzle({ seedKey, size, words, maxWords }){
   fillRandom(grid, rng);
   return { size:N, words:list, placedCount: placed.length, skipped, grid };
 }
-
-/* =========================
-   PÁGINAS / SPREADS
-========================= */
 
 function buildPages(plan){
   const m = plan.meta || {};
@@ -383,10 +376,6 @@ function buildSpreadsFromPages(pages){
   return spreads;
 }
 
-/* =========================
-   MODULE
-========================= */
-
 export class CulturalBookBuilderModule {
   constructor(app){
     this.app = app;
@@ -408,6 +397,7 @@ export class CulturalBookBuilderModule {
     root.innerHTML = `
       <style>
         .bb-wrap{ display:grid; gap:14px; }
+
         .bb-top{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
         .bb-top .title{ font-weight:900; letter-spacing:.2px; }
         .bb-top .hint{ opacity:.78; font-size:13px; }
@@ -441,6 +431,7 @@ export class CulturalBookBuilderModule {
           gap:10px;
           overflow:hidden; /* SEM scroll na página */
         }
+
         .bb-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
         .bb-hTitle{ font-size:clamp(18px, 3.2vw, 26px); font-weight:900; line-height:1.08; }
         .bb-hMeta{ font-size:13px; opacity:.78; margin-top:2px; }
@@ -478,6 +469,7 @@ export class CulturalBookBuilderModule {
           gap:10px;
           overflow:hidden; /* SEM scroll */
         }
+
         .bb-pRow{
           display:flex;
           align-items:center;
@@ -486,7 +478,10 @@ export class CulturalBookBuilderModule {
           opacity:.72;
           flex-wrap:wrap;
         }
-        .bb-gridWrap{
+
+        /* MAIS SIMPLES: sem "quadrado dentro do quadrado" exagerado */
+        .bb-gridArea{
+          flex:1;
           border-radius:14px;
           border:1px solid rgba(0,0,0,.10);
           background:#fbfbfb;
@@ -496,10 +491,10 @@ export class CulturalBookBuilderModule {
           justify-content:center;
           overflow:hidden;
         }
+
         .bb-grid{
           display:grid;
           gap:6px;
-          /* tamanho real setado por JS: --cell e --n */
           grid-template-columns: repeat(var(--n), var(--cell));
           grid-template-rows: repeat(var(--n), var(--cell));
         }
@@ -518,15 +513,28 @@ export class CulturalBookBuilderModule {
           line-height:1;
         }
 
-        .bb-words{
-          display:grid;
-          grid-template-columns: 1fr 1fr;
-          gap:6px 16px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size:clamp(12px, 2.2vw, 14px);
-          line-height:1.2;
-          opacity:.95;
+        /* PALAVRAS EM LINHA (horizontal) = sobra espaço */
+        .bb-wordsLine{
+          display:flex;
+          flex-wrap:wrap;
+          gap:8px;
+          align-items:center;
+          line-height:1.1;
+          overflow:hidden;
         }
+        .bb-word{
+          display:inline-flex;
+          padding:6px 10px;
+          border-radius:999px;
+          border:1px solid rgba(0,0,0,.14);
+          background:#fff;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size:clamp(11px, 2.1vw, 13px);
+          font-weight:800;
+          letter-spacing:.2px;
+          white-space:nowrap;
+        }
+
         .bb-foot{
           display:flex;
           justify-content:space-between;
@@ -540,7 +548,7 @@ export class CulturalBookBuilderModule {
           border:1px solid rgba(0,0,0,.10);
         }
 
-        /* Spread (2 folhas lado a lado) */
+        /* Spread */
         .bb-spread{
           display:grid;
           grid-template-columns: 1fr 1fr;
@@ -633,13 +641,13 @@ export class CulturalBookBuilderModule {
                       <span id="bb_pPlaced"></span>
                     </div>
 
-                    <div class="bb-gridWrap">
+                    <div class="bb-gridArea">
                       <div class="bb-grid" id="bb_grid"></div>
                     </div>
 
                     <div>
-                      <div style="font-weight:800; opacity:.75; margin:2px 0 8px 0">Palavras</div>
-                      <div class="bb-words" id="bb_words"></div>
+                      <div style="font-weight:900; opacity:.75; margin:2px 0 8px 0">Palavras</div>
+                      <div class="bb-wordsLine" id="bb_words"></div>
                     </div>
 
                     <div class="bb-foot">
@@ -658,7 +666,6 @@ export class CulturalBookBuilderModule {
       `;
 
       if (isPuzzle){
-        // gera puzzle editorial determinístico e encaixa o quadriculado sem scroll
         const seedKey = `${plan?.meta?.id||'BOOK'}::${page.sectionId||page.sectionTitle||page.title}::${page.grid}`;
         const gen = generateEditorialPuzzle({
           seedKey,
@@ -673,37 +680,32 @@ export class CulturalBookBuilderModule {
 
         placedEl.textContent = `palavras colocadas ${gen.placedCount}`;
 
-        // monta células
         const N = gen.size;
         gridEl.style.setProperty('--n', String(N));
-
         gridEl.innerHTML = gen.grid.flat().map(ch => `<div class="bb-cell">${esc(ch)}</div>`).join('');
 
-        // palavras
-        wordsEl.innerHTML = (gen.words || []).map(w => `<div>${esc(w)}</div>`).join('');
+        // Palavras em linha (chips)
+        wordsEl.innerHTML = (gen.words || []).map(w => `<span class="bb-word">${esc(w)}</span>`).join('');
 
-        // auto-fit do tamanho da célula (pra nunca cortar)
+        // Auto-fit do tamanho da célula (pra nunca cortar)
         const fit = () => {
-          const wrapEl = container.querySelector('.bb-gridWrap');
-          if (!wrapEl) return;
+          const areaEl = container.querySelector('.bb-gridArea');
+          if (!areaEl) return;
 
-          const r = wrapEl.getBoundingClientRect();
-          // padding interno + bordas: margem de segurança
-          const pad = 22;
-          const availW = Math.max(100, r.width - pad);
-          const availH = Math.max(100, r.height - pad);
+          const r = areaEl.getBoundingClientRect();
+          const pad = 24; // margem segura
+          const availW = Math.max(120, r.width - pad);
+          const availH = Math.max(120, r.height - pad);
 
-          // manter grid quadrado dentro do wrap
           const cell = Math.floor(Math.min(availW / N, availH / N));
-          const safeCell = Math.max(14, Math.min(30, cell)); // clamp seguro pra mobile
+          const safeCell = Math.max(14, Math.min(30, cell));
           gridEl.style.setProperty('--cell', `${safeCell}px`);
         };
 
-        // garante fit após layout
-        requestAnimationFrame(()=>{ fit(); setTimeout(fit, 50); });
+        requestAnimationFrame(()=>{ fit(); setTimeout(fit, 60); });
         window.addEventListener('resize', fit, { passive:true });
 
-        // enviar pro caça-palavras (produção)
+        // Enviar pro Caça-palavras (produção)
         const btn = container.querySelector('#bb_send_ws');
         btn.onclick = () => {
           const ws = {
