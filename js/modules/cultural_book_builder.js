@@ -1,11 +1,13 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3c PADRÃO (1 ano)
-// PATCH MINIMO (SEM QUEBRAR PADRÃO):
-// - Grade quadriculada não pode cortar: ajustar CSS pra “caber sempre” no papel branco.
-// - NÃO mexer em lógica, spreads, seed, cache, pipeline.
+// Bright Cup Creator — Cultural Book Builder v0.3 PADRÃO (1 ano)
+// OBJETIVO:
+// - Preview editorial do livro cultural (6x9) em "papel branco" no mobile.
+// - Folhear como livro (sem scroll dentro da página).
+// - Puzzle com quadriculado (grid) e palavras em 2 colunas.
+// - Geração editorial determinística (mesma seção => mesma grade) SEM depender do wordsearch module.
+// - Botão "Enviar p/ Caça-palavras" mantém fluxo.
 
 import { Storage } from '../core/storage.js';
-import { generateWordSearch } from '../core/wordsearch_gen.js';
 
 function esc(s){
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -38,6 +40,7 @@ function uniq(list){
 function pickWords(words, gridSize, maxCount){
   const maxLen = gridSize;
   const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
+  // prioriza palavras "boas" (perto de 7) pra encaixar melhor
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
   return filtered.slice(0, maxCount);
 }
@@ -200,76 +203,143 @@ function buildDefaultPlanMG(grid=15, wpp=20){
   };
 }
 
-function getCache(){
-  return Storage.get('cultural:builder_cache', {});
+/* =========================
+   PUZZLE EDITORIAL (determinístico)
+   - Mesma seção => mesma grade
+   - Sem depender de Math.random global
+========================= */
+
+function hashStr(s){
+  s = String(s || '');
+  let h = 2166136261 >>> 0;
+  for (let i=0;i<s.length;i++){
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
 }
-function setCache(cache){
-  Storage.set('cultural:builder_cache', cache || {});
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    a |= 0;
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randInt(rng, n){ return Math.floor(rng() * n); }
+function shuffle(rng, arr){
+  for (let i = arr.length - 1; i > 0; i--){
+    const j = randInt(rng, i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+function makeEmptyGrid(N){
+  return Array.from({length:N}, ()=>Array.from({length:N}, ()=>'')); // [y][x]
+}
+function placeWord(grid, word, dirs, rng, maxTries=260){
+  const N = grid.length;
+  const w = normalizeWord(word);
+  if (!w) return null;
+
+  const tryDirs = shuffle(rng, dirs.slice());
+  for (const [dx,dy] of tryDirs){
+    for (let tries=0; tries<maxTries; tries++){
+      const x0 = randInt(rng, N), y0 = randInt(rng, N);
+      const x1 = x0 + dx*(w.length-1);
+      const y1 = y0 + dy*(w.length-1);
+      if (x1<0||x1>=N||y1<0||y1>=N) continue;
+
+      let ok = true;
+      for (let k=0;k<w.length;k++){
+        const x = x0 + dx*k, y = y0 + dy*k;
+        const ch = grid[y][x];
+        if (ch !== '' && ch !== w[k]) { ok=false; break; }
+      }
+      if (!ok) continue;
+
+      const cells = [];
+      for (let k=0;k<w.length;k++){
+        const x = x0 + dx*k, y = y0 + dy*k;
+        grid[y][x] = w[k];
+        cells.push([x,y]);
+      }
+      return { word:w, cells };
+    }
+  }
+  return null;
+}
+function fillRandom(grid, rng){
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  for (let y=0;y<grid.length;y++){
+    for (let x=0;x<grid.length;x++){
+      if (!grid[y][x]) grid[y][x] = letters[randInt(rng, letters.length)];
+    }
+  }
+}
+function generateEditorialPuzzle({ seedKey, size, words, maxWords }){
+  const N = Math.max(8, Math.min(30, Number(size || 15)));
+  const seed = hashStr(seedKey || 'seed') ^ (N * 2654435761);
+  const rng = mulberry32(seed >>> 0);
+
+  const baseDirs = [[1,0],[0,1],[-1,0],[0,-1]];
+  const diagDirs = [[1,1],[-1,-1],[1,-1],[-1,1]];
+  const dirs = baseDirs.concat(diagDirs); // sempre diagonal + backwards (editorial fica mais "cheio")
+
+  let list = uniq(words || []).filter(w => w.length >= 3 && w.length <= N);
+  list.sort((a,b)=> b.length - a.length);
+  const limit = Math.max(6, Math.min(list.length, Number(maxWords || list.length)));
+  list = list.slice(0, limit);
+
+  const grid = makeEmptyGrid(N);
+  const placed = [];
+  const skipped = [];
+
+  for (const w of list){
+    const res = placeWord(grid, w, dirs, rng, 260);
+    if (res) placed.push(res);
+    else skipped.push(w);
+  }
+
+  fillRandom(grid, rng);
+  return { size:N, words:list, placedCount: placed.length, skipped, grid };
 }
 
-function parseGridText(gridText){
-  const rows = String(gridText || '').trim().split(/\n+/).map(r => r.trim()).filter(Boolean);
-  const grid = rows.map(r => {
-    const parts = r.split(/\s+/).filter(Boolean);
-    if (parts.length > 1) return parts.map(x => (x||'').slice(0,1));
-    return r.split('').filter(Boolean);
-  });
-  const N = grid.length ? grid.length : 0;
-  return { N, grid };
-}
+/* =========================
+   PÁGINAS / SPREADS
+========================= */
 
-function buildSpreads(plan){
+function buildPages(plan){
   const m = plan.meta || {};
   const grid = Number(m.grid_default || 15);
   const wpp  = Number(m.words_per_puzzle || 20);
 
-  const cache = getCache();
-  const spreads = [];
+  const pages = [];
 
-  spreads.push({
-    left: {
-      kind:'text',
-      icon:'history',
-      title: m.title || 'MINAS GERAIS CULTURAL',
-      meta: (m.subtitle || '').trim(),
-      body: wrap(
-        `Apresentação\n\n` +
-        `Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
-        `Cada seção traz um texto curto (com alma) e um caça-palavras temático.\n\n` +
-        `No final, você encontra o gabarito completo.\n\n` +
-        `Boa leitura e bom passatempo.`,
-        74
-      ),
-      pageNo: 1
-    },
-    right: {
-      kind:'text',
-      icon:'history',
-      title: 'Como usar',
-      meta: 'Preview editorial',
-      body: wrap(
-        `• Use ◀ ▶ para folhear.\n` +
-        `• Cada spread é: TEXTO (esq.) + PUZZLE (dir.).\n` +
-        `• A grade exibida aqui é preview visual.\n` +
-        `• O PDF final (KDP) entra no Exporter.\n\n` +
-        `Dica: se o Safari limpar o storage, recrie o livro e baixe o plano (JSON) para backup.`,
-        74
-      ),
-      pageNo: 2
-    }
+  pages.push({
+    kind:'text',
+    icon:'history',
+    title: m.title || 'MINAS GERAIS CULTURAL',
+    meta: (m.subtitle || '').trim(),
+    body: wrap(
+      `Apresentação\n\nEste livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
+      `Cada seção traz um texto curto (com alma) e um caça-palavras temático.\n\n` +
+      `No final, você encontra o gabarito completo. Boa leitura e bom passatempo.`,
+      78
+    )
   });
 
-  let pageNo = 3;
-
   (plan.sections || []).forEach((s) => {
-    const left = {
+    pages.push({
       kind:'text',
       icon: s.icon,
       title: s.title,
       meta: 'Texto cultural',
-      body: wrap(s.text || '', 74),
-      pageNo: pageNo++
-    };
+      body: wrap(s.text || '', 78),
+      sectionId: s.id
+    });
 
     const words = pickWords(
       [].concat(s.wordHints || []).concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA']),
@@ -277,72 +347,45 @@ function buildSpreads(plan){
       wpp
     );
 
-    const cacheKey = `${s.id || s.title || 'sec'}__${grid}__${words.join('|')}`;
-    let preview = cache[cacheKey];
-
-    if (!preview || !preview.gridText) {
-      const gen = generateWordSearch({
-        size: grid,
-        words,
-        maxWords: words.length,
-        allowDiagonal: true,
-        allowBackwards: true
-      });
-      preview = {
-        gridText: gen.gridText,
-        keyText: gen.keyText,
-        placedCount: (gen.placed || []).length,
-        words: gen.words
-      };
-      cache[cacheKey] = preview;
-
-      const keys = Object.keys(cache);
-      if (keys.length > 80) {
-        for (let i = 0; i < 20; i++) delete cache[keys[i]];
-      }
-      setCache(cache);
-    }
-
-    const right = {
+    pages.push({
       kind:'puzzle',
       icon: s.icon,
       title: `Caça-Palavras — ${s.title}`,
-      meta: `Prévia visual (editorial) • grade ${grid}x${grid} • palavras colocadas ${preview.placedCount ?? 0}`,
-      grid,
-      words: preview.words || words,
-      gridText: preview.gridText || '',
+      meta: 'Puzzle',
       sectionTitle: s.title,
-      pageNo: pageNo++
-    };
-
-    spreads.push({ left, right });
+      sectionId: s.id,
+      grid,
+      words
+    });
   });
 
-  spreads.push({
-    left: {
-      kind:'text',
-      icon:'history',
-      title:'Gabarito (no final)',
-      meta:'(entra completo no Export PDF)',
-      body: wrap(
-        `O gabarito completo entra na fase do Export PDF (KDP).\n\n` +
-        `Aqui no Builder a gente valida: ordem, texto, tema, palavras e padrão editorial.`,
-        74
-      ),
-      pageNo: pageNo++
-    },
-    right: {
-      kind:'text',
-      icon:'history',
-      title:'',
-      meta:'',
-      body:'',
-      pageNo: pageNo++
-    }
+  pages.push({
+    kind:'text',
+    icon:'history',
+    title:'Gabarito (no final)',
+    meta:'(entra completo no Export PDF)',
+    body: wrap(
+      `O gabarito completo entra na fase do Export PDF (KDP).\n\n` +
+      `Aqui no Builder a gente valida: ordem, texto, tema, palavras e padrão editorial.`,
+      78
+    )
   });
 
-  return { spreads };
+  pages.forEach((p, i) => p.pageNo = i + 1);
+  return pages;
 }
+
+function buildSpreadsFromPages(pages){
+  const spreads = [];
+  for (let i = 0; i < pages.length; i += 2){
+    spreads.push({ left: pages[i], right: pages[i+1] || null });
+  }
+  return spreads;
+}
+
+/* =========================
+   MODULE
+========================= */
 
 export class CulturalBookBuilderModule {
   constructor(app){
@@ -355,118 +398,173 @@ export class CulturalBookBuilderModule {
 
   render(root){
     let plan = Storage.get('cultural:book_plan', null);
+    const seed = Storage.get('cultural:builder_seed', { pageIndex: 0, mode: 'FOLHEAR' }); // mode: FOLHEAR|SPREAD
+
+    const saveSeed = (pageIndex, mode) => Storage.set('cultural:builder_seed', {
+      pageIndex: Number(pageIndex||0),
+      mode: mode || 'FOLHEAR'
+    });
 
     root.innerHTML = `
       <style>
         .bb-wrap{ display:grid; gap:14px; }
-        .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
-        .bb-toolbar .left, .bb-toolbar .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        .bb-top{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+        .bb-top .title{ font-weight:900; letter-spacing:.2px; }
+        .bb-top .hint{ opacity:.78; font-size:13px; }
 
-        .bb-mode{ display:flex; gap:8px; align-items:center; }
-        .bb-mode .btn{ padding:10px 12px; }
+        .bb-controls{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        .bb-controls .btn{ min-width:88px; }
 
-        .bb-stage{ display:grid; gap:12px; }
-        .bb-spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
-
-        .bb-page{
+        .bb-paperShell{
           border-radius:18px;
-          border:1px solid rgba(255,255,255,.14);
-          background:rgba(255,255,255,.92);
-          color:#0f1620;
-          box-shadow: 0 10px 34px rgba(0,0,0,.22);
+          border:1px solid rgba(255,255,255,.12);
+          background:rgba(0,0,0,.18);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
           padding:14px;
+        }
+
+        /* "folha" 6x9 */
+        .bb-paper{
           position:relative;
+          border-radius:18px;
+          background:#f7f7f7;
+          color:#111;
+          box-shadow: 0 10px 30px rgba(0,0,0,.25);
+          border:1px solid rgba(0,0,0,.08);
           overflow:hidden;
         }
-        .bb-page::before{ content:""; display:block; padding-top:150%; }
-        .bb-page > .bb-inner{ position:absolute; inset:14px; display:flex; flex-direction:column; gap:10px; }
-
-        .bb-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
-        .bb-title{ font-size:18px; font-weight:900; letter-spacing:.2px; overflow-wrap:anywhere; }
-        .bb-meta{ font-size:12px; opacity:.72; overflow-wrap:anywhere; }
-
-        .bb-body{
-          flex:1;
-          border-radius:14px;
-          border:1px solid rgba(15,22,32,.12);
-          background:rgba(255,255,255,.88);
-          padding:12px;
-          overflow:hidden;
-          display:flex;
-          flex-direction:column;
+        .bb-paper::before{ content:""; display:block; padding-top:150%; } /* 6x9 ratio */
+        .bb-paper > .bb-in{
+          position:absolute; inset:18px;
+          display:flex; flex-direction:column;
           gap:10px;
+          overflow:hidden; /* SEM scroll na página */
         }
-        .bb-body pre{
+        .bb-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+        .bb-hTitle{ font-size:clamp(18px, 3.2vw, 26px); font-weight:900; line-height:1.08; }
+        .bb-hMeta{ font-size:13px; opacity:.78; margin-top:2px; }
+        .bb-pageNo{ font-size:14px; opacity:.55; font-weight:700; }
+
+        .bb-bodyText{
+          flex:1;
+          border-radius:16px;
+          background:#fff;
+          border:1px solid rgba(0,0,0,.08);
+          padding:14px;
+          overflow:hidden; /* SEM scroll */
+          display:flex;
+        }
+        .bb-bodyText pre{
           margin:0;
           white-space:pre-wrap;
           overflow-wrap:anywhere;
           word-break:break-word;
           font-family: ui-serif, Georgia, "Times New Roman", serif;
-          font-size:15px;
-          line-height:1.28;
+          font-size:clamp(14px, 2.4vw, 16px);
+          line-height:1.35;
+          width:100%;
         }
 
-        /* ===== PATCH MINIMO: GRADE NÃO PODE CORTAR ===== */
-        .bb-gridwrap{
+        /* Puzzle layout (sem scroll) */
+        .bb-puzzleBox{
           flex:1;
-          border-radius:12px;
-          border:1px solid rgba(15,22,32,.14);
-          background:rgba(255,255,255,.98);
-          padding:6px;                 /* era 10px */
+          border-radius:16px;
+          background:#fff;
+          border:1px solid rgba(0,0,0,.08);
+          padding:12px;
           display:flex;
-          align-items:stretch;          /* era center */
-          justify-content:stretch;       /* era center */
-          overflow:hidden;
-          min-height: 0;                /* importante no iOS flex */
+          flex-direction:column;
+          gap:10px;
+          overflow:hidden; /* SEM scroll */
         }
-        .bb-grid{
-          display:grid;
-          gap:1px;                      /* era 2px */
-          width:100%;
-          height:100%;
-          max-width:100%;
-          max-height:100%;
-          aspect-ratio: 1 / 1;
+        .bb-pRow{
+          display:flex;
+          align-items:center;
+          gap:10px;
+          font-size:13px;
+          opacity:.72;
+          flex-wrap:wrap;
         }
-        .bb-cell{
+        .bb-gridWrap{
+          border-radius:14px;
+          border:1px solid rgba(0,0,0,.10);
+          background:#fbfbfb;
+          padding:10px;
           display:flex;
           align-items:center;
           justify-content:center;
-          border:1px solid rgba(15,22,32,.22);
-          border-radius:2px;            /* era 3px */
+          overflow:hidden;
+        }
+        .bb-grid{
+          display:grid;
+          gap:6px;
+          /* tamanho real setado por JS: --cell e --n */
+          grid-template-columns: repeat(var(--n), var(--cell));
+          grid-template-rows: repeat(var(--n), var(--cell));
+        }
+        .bb-cell{
+          width:var(--cell);
+          height:var(--cell);
+          border-radius:6px;
+          border:1px solid rgba(0,0,0,.18);
+          background:#fff;
+          display:flex;
+          align-items:center;
+          justify-content:center;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight:800;
-          color:#0f1620;
-          background:rgba(255,255,255,1);
-          user-select:none;
+          font-size: calc(var(--cell) * 0.58);
           line-height:1;
         }
-        /* ============================================== */
 
         .bb-words{
           display:grid;
           grid-template-columns: 1fr 1fr;
-          gap:4px 14px;
+          gap:6px 16px;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size:12px;
-          opacity:.92;
-          overflow:hidden;
+          font-size:clamp(12px, 2.2vw, 14px);
+          line-height:1.2;
+          opacity:.95;
+        }
+        .bb-foot{
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+          gap:10px;
+          font-size:13px;
+          opacity:.78;
+        }
+        .bb-foot .btn{
+          background:#e9e9e9;
+          border:1px solid rgba(0,0,0,.10);
         }
 
-        .bb-footer{ display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12px; opacity:.82; }
-        .bb-mini{ font-size:12px; opacity:.78; }
-
-        .bb-empty{ display:grid; gap:10px; }
-
+        /* Spread (2 folhas lado a lado) */
+        .bb-spread{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap:14px;
+        }
         @media (max-width: 860px){
           .bb-spread{ grid-template-columns: 1fr; }
         }
+
+        .bb-bottomBar{
+          display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px;
+          margin-top:10px;
+          opacity:.9;
+        }
+        .bb-mini{ font-size:12px; opacity:.78; }
       </style>
 
       <div class="bb-wrap">
         <div class="card">
           <h2>Livro Cultural — Builder</h2>
-          <p class="muted">Preview visual do livro (<b>papel branco</b>). Folheie e valide como produto final.</p>
+          <p class="muted">
+            Preview visual do livro (<b>papel branco</b>). Folheie e valide como produto final.
+          </p>
+
           <div id="bb_area"></div>
         </div>
       </div>
@@ -474,263 +572,275 @@ export class CulturalBookBuilderModule {
 
     const area = root.querySelector('#bb_area');
 
-    const gotoAgent = () => {
-      const btn = document.querySelector('.navitem[data-view="cultural"]');
-      btn?.click?.();
-    };
-
     const renderEmpty = () => {
       area.innerHTML = `
-        <div class="bb-empty">
-          <p class="muted"><b>Nenhum livro carregado.</b> Isso acontece quando o Safari limpa o armazenamento.</p>
-          <div class="row">
+        <div class="bb-paperShell">
+          <div class="bb-top">
+            <div>
+              <div class="title">Nenhum livro carregado</div>
+              <div class="hint">Isso acontece quando o Safari limpa o armazenamento.</div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
             <button class="btn primary" id="bb_make">Criar Livro Minas (PADRÃO)</button>
             <button class="btn" id="bb_go_agent">Abrir Cultural Agent</button>
           </div>
-          <p class="bb-mini muted">Dica: depois exporte o plano em JSON no Cultural Agent para backup.</p>
+
+          <p class="bb-mini" style="margin-top:10px">
+            Dica: depois exporte o plano em JSON no Cultural Agent pra backup.
+          </p>
         </div>
       `;
 
       area.querySelector('#bb_make').onclick = () => {
         plan = buildDefaultPlanMG(15, 20);
         Storage.set('cultural:book_plan', plan);
-        Storage.set('cultural:builder_seed', { mode:'SPREAD', pos:0 });
-        Storage.set('cultural:builder_cache', {});
+        saveSeed(0, 'FOLHEAR');
         this.app.toast?.('Livro Minas criado ✅');
         renderMain();
       };
 
-      area.querySelector('#bb_go_agent').onclick = () => gotoAgent();
+      area.querySelector('#bb_go_agent').onclick = () => {
+        const btn = document.querySelector('.navitem[data-view="cultural"]');
+        btn?.click?.();
+      };
     };
 
-    const saveSeed = (patch={}) => {
-      const next = Object.assign({}, Storage.get('cultural:builder_seed', { mode:'SPREAD', pos:0 }), patch);
-      Storage.set('cultural:builder_seed', next);
-      return next;
-    };
+    const renderPaper = (container, page) => {
+      const isPuzzle = page.kind === 'puzzle';
+      const icon = iconLabel(page.icon);
 
-    const renderGridHTML = (gridText, gridN) => {
-      const parsed = parseGridText(gridText);
-      const N = gridN || parsed.N || 15;
-      const grid = parsed.grid;
+      container.innerHTML = `
+        <div class="bb-paper">
+          <div class="bb-in">
+            <div class="bb-head">
+              <div>
+                <div class="bb-hTitle">${esc(page.title || '')}</div>
+                <div class="bb-hMeta">${esc(page.meta || '')}</div>
+              </div>
+              <div class="bb-pageNo">p.${esc(String(page.pageNo || ''))}</div>
+            </div>
 
-      if (!grid || !grid.length) {
-        return `<div class="bb-gridwrap"><div class="bb-mini muted">Sem grade (preview)</div></div>`;
-      }
+            ${
+              isPuzzle
+                ? `<div class="bb-puzzleBox">
+                    <div class="bb-pRow">
+                      <span>Prévia visual (editorial)</span>
+                      <span>•</span>
+                      <span>grade ${esc(String(page.grid))}x${esc(String(page.grid))}</span>
+                      <span>•</span>
+                      <span id="bb_pPlaced"></span>
+                    </div>
 
-      // PATCH MINIMO: fonte levemente menor pra não estourar no iPhone (e não cortar)
-      const fontPx = (N <= 13) ? 15 : (N <= 15) ? 13 : 11;
+                    <div class="bb-gridWrap">
+                      <div class="bb-grid" id="bb_grid"></div>
+                    </div>
 
-      const cells = [];
-      for (let y = 0; y < grid.length; y++){
-        for (let x = 0; x < grid[y].length; x++){
-          const ch = grid[y][x] || '';
-          cells.push(`<div class="bb-cell" style="font-size:${fontPx}px">${esc(ch)}</div>`);
-        }
-      }
+                    <div>
+                      <div style="font-weight:800; opacity:.75; margin:2px 0 8px 0">Palavras</div>
+                      <div class="bb-words" id="bb_words"></div>
+                    </div>
 
-      return `
-        <div class="bb-gridwrap">
-          <div class="bb-grid" style="grid-template-columns:repeat(${N}, 1fr)">
-            ${cells.join('')}
+                    <div class="bb-foot">
+                      <span>Ilustração P&B: <b>${esc(icon)}</b></span>
+                      <button class="btn" id="bb_send_ws">Enviar p/ Caça-palavras</button>
+                    </div>
+                  </div>`
+                : `<div class="bb-bodyText"><pre>${esc(page.body || '')}</pre></div>
+                   <div class="bb-foot">
+                     <span>Ilustração P&B: <b>${esc(icon)}</b></span>
+                     <span></span>
+                   </div>`
+            }
           </div>
         </div>
       `;
+
+      if (isPuzzle){
+        // gera puzzle editorial determinístico e encaixa o quadriculado sem scroll
+        const seedKey = `${plan?.meta?.id||'BOOK'}::${page.sectionId||page.sectionTitle||page.title}::${page.grid}`;
+        const gen = generateEditorialPuzzle({
+          seedKey,
+          size: page.grid,
+          words: page.words || [],
+          maxWords: (page.words || []).length
+        });
+
+        const gridEl = container.querySelector('#bb_grid');
+        const wordsEl = container.querySelector('#bb_words');
+        const placedEl = container.querySelector('#bb_pPlaced');
+
+        placedEl.textContent = `palavras colocadas ${gen.placedCount}`;
+
+        // monta células
+        const N = gen.size;
+        gridEl.style.setProperty('--n', String(N));
+
+        gridEl.innerHTML = gen.grid.flat().map(ch => `<div class="bb-cell">${esc(ch)}</div>`).join('');
+
+        // palavras
+        wordsEl.innerHTML = (gen.words || []).map(w => `<div>${esc(w)}</div>`).join('');
+
+        // auto-fit do tamanho da célula (pra nunca cortar)
+        const fit = () => {
+          const wrapEl = container.querySelector('.bb-gridWrap');
+          if (!wrapEl) return;
+
+          const r = wrapEl.getBoundingClientRect();
+          // padding interno + bordas: margem de segurança
+          const pad = 22;
+          const availW = Math.max(100, r.width - pad);
+          const availH = Math.max(100, r.height - pad);
+
+          // manter grid quadrado dentro do wrap
+          const cell = Math.floor(Math.min(availW / N, availH / N));
+          const safeCell = Math.max(14, Math.min(30, cell)); // clamp seguro pra mobile
+          gridEl.style.setProperty('--cell', `${safeCell}px`);
+        };
+
+        // garante fit após layout
+        requestAnimationFrame(()=>{ fit(); setTimeout(fit, 50); });
+        window.addEventListener('resize', fit, { passive:true });
+
+        // enviar pro caça-palavras (produção)
+        const btn = container.querySelector('#bb_send_ws');
+        btn.onclick = () => {
+          const ws = {
+            title: `Caça-Palavras — ${page.sectionTitle || page.title || ''}`,
+            preset: (Number(page.grid) === 13 ? 'BR_POCKET' : 'BR_PLUS'),
+            size: page.grid,
+            includeKey: true,
+            words: (page.words || []).join('\n'),
+            output: '',
+            ts: Date.now()
+          };
+          Storage.set('wordsearch:seed', ws);
+          this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar)');
+          this.app.log?.(`[BOOK] sent section="${page.sectionTitle||''}" grid=${page.grid} words=${(page.words||[]).length}`);
+        };
+      }
     };
 
     const renderMain = () => {
       if (!plan) return renderEmpty();
 
-      const built = buildSpreads(plan);
-      const spreads = built.spreads;
+      const pages = buildPages(plan);
+      const spreads = buildSpreadsFromPages(pages);
 
-      let state = Storage.get('cultural:builder_seed', { mode:'SPREAD', pos: 0 });
-      let mode = (state.mode === 'FOLIO') ? 'FOLIO' : 'SPREAD';
-      let pos = Number(state.pos || 0);
+      let mode = seed.mode === 'SPREAD' ? 'SPREAD' : 'FOLHEAR';
+      let pageIndex = Math.max(0, Math.min(Number(seed.pageIndex||0), pages.length - 1));
 
-      const clamp = () => {
-        if (mode === 'SPREAD') {
-          pos = Math.max(0, Math.min(pos, spreads.length - 1));
-        } else {
-          const maxPage = spreads.length * 2 - 1;
-          pos = Math.max(0, Math.min(pos, maxPage));
-        }
+      const setMode = (m) => {
+        mode = (m === 'SPREAD') ? 'SPREAD' : 'FOLHEAR';
+        saveSeed(pageIndex, mode);
+        draw();
       };
 
-      const totalPages = spreads[spreads.length-1]?.right?.pageNo || (spreads.length*2);
+      const clampPage = () => {
+        pageIndex = Math.max(0, Math.min(pageIndex, pages.length - 1));
+        saveSeed(pageIndex, mode);
+      };
 
-      area.innerHTML = `
-        <div class="bb-toolbar">
-          <div class="left">
-            <span class="bb-mini"><b>${esc(plan.meta?.title || 'LIVRO')}</b></span>
-            <span class="bb-mini muted">No mobile: arraste a tela, ou use ◀ ▶.</span>
-          </div>
-          <div class="right">
-            <div class="bb-mode">
-              <button class="btn ${mode==='SPREAD'?'primary':''}" id="bb_mode_sp">Spread</button>
-              <button class="btn ${mode==='FOLIO'?'primary':''}" id="bb_mode_fo">Folhear</button>
+      const next = () => { pageIndex++; clampPage(); draw(); };
+      const prev = () => { pageIndex--; clampPage(); draw(); };
+
+      const draw = () => {
+        area.innerHTML = `
+          <div class="bb-top">
+            <div>
+              <div class="title">${esc(plan.meta?.title || 'LIVRO')}</div>
+              <div class="hint">No mobile: arraste a tela, ou use ◀ ▶.</div>
             </div>
-            <button class="btn" id="bb_prev">◀</button>
-            <button class="btn" id="bb_next">▶</button>
+
+            <div class="bb-controls">
+              <button class="btn ${mode==='SPREAD'?'primary':''}" id="bb_mode_spread">Spread</button>
+              <button class="btn ${mode==='FOLHEAR'?'primary':''}" id="bb_mode_folhear">Folhear</button>
+              <button class="btn" id="bb_prev">◀</button>
+              <button class="btn" id="bb_next">▶</button>
+            </div>
           </div>
-        </div>
 
-        <div class="bb-stage" id="bb_stage"></div>
+          <div class="bb-paperShell">
+            <div id="bb_view"></div>
 
-        <div class="bb-footer">
-          <span class="bb-mini">Página <b id="bb_pos"></b></span>
-          <div class="row" style="gap:10px">
-            <button class="btn" id="bb_json">Baixar plano (JSON)</button>
-            <button class="btn" id="bb_reset">Recriar Minas (PADRÃO)</button>
-          </div>
-        </div>
-      `;
-
-      const stage = area.querySelector('#bb_stage');
-      const posEl = area.querySelector('#bb_pos');
-
-      const pageHtml = (p) => {
-        if (!p) return '';
-        const isPuzzle = p.kind === 'puzzle';
-
-        const body = isPuzzle
-          ? `
-              <div class="bb-body">
-                ${renderGridHTML(p.gridText || '', p.grid || 15)}
-                <div>
-                  <div class="bb-meta" style="margin:4px 0 6px 0">Palavras</div>
-                  <div class="bb-words">${(p.words||[]).map(w=>`<div>${esc(w)}</div>`).join('')}</div>
-                </div>
+            <div class="bb-bottomBar">
+              <div class="bb-mini">Página <b id="bb_pos"></b></div>
+              <div class="bb-controls">
+                <button class="btn" id="bb_download">Baixar plano (JSON)</button>
+                <button class="btn" id="bb_reset">Recriar Minas (PADRÃO)</button>
               </div>
-            `
-          : `
-              <div class="bb-body">
-                <pre>${esc(p.body || '')}</pre>
-              </div>
-            `;
-
-        const footer = isPuzzle
-          ? `
-              <div class="bb-footer">
-                <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
-                <button class="btn" data-send="1">Enviar p/ Caça-palavras</button>
-              </div>
-            `
-          : `
-              <div class="bb-footer">
-                <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
-                <span></span>
-              </div>
-            `;
-
-        return `
-          <div class="bb-page">
-            <div class="bb-inner">
-              <div class="bb-head">
-                <div>
-                  <div class="bb-title">${esc(p.title || '')}</div>
-                  <div class="bb-meta">${esc(p.meta || '')}</div>
-                </div>
-                <div class="bb-meta">p.${esc(String(p.pageNo || ''))}</div>
-              </div>
-              ${body}
-              ${footer}
             </div>
           </div>
         `;
-      };
 
-      const render = () => {
-        clamp();
-        saveSeed({ mode, pos });
+        area.querySelector('#bb_mode_spread').onclick = () => setMode('SPREAD');
+        area.querySelector('#bb_mode_folhear').onclick = () => setMode('FOLHEAR');
+        area.querySelector('#bb_prev').onclick = prev;
+        area.querySelector('#bb_next').onclick = next;
 
-        stage.innerHTML = '';
+        area.querySelector('#bb_reset').onclick = () => {
+          plan = buildDefaultPlanMG(15, 20);
+          Storage.set('cultural:book_plan', plan);
+          pageIndex = 0;
+          saveSeed(pageIndex, mode);
+          this.app.toast?.('Livro recriado ✅');
+          draw();
+        };
 
-        if (mode === 'SPREAD') {
-          const sp = spreads[pos];
-          stage.innerHTML = `<div class="bb-spread">${pageHtml(sp.left)}${pageHtml(sp.right)}</div>`;
-          posEl.textContent = `${sp.left.pageNo}/${totalPages}`;
+        area.querySelector('#bb_download').onclick = () => {
+          const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `book-plan-${(plan.meta?.id||'book')}-${Date.now()}.json`;
+          a.click();
+          setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+          this.app.toast?.('Plano baixado ✅');
+        };
+
+        const view = area.querySelector('#bb_view');
+        const pos = area.querySelector('#bb_pos');
+
+        // Swipe (folhear)
+        let x0 = null;
+        view.addEventListener('touchstart', (e)=>{
+          x0 = e.touches?.[0]?.clientX ?? null;
+        }, { passive:true });
+        view.addEventListener('touchend', (e)=>{
+          if (x0 == null) return;
+          const x1 = e.changedTouches?.[0]?.clientX ?? x0;
+          const dx = x1 - x0;
+          x0 = null;
+          if (Math.abs(dx) < 45) return;
+          if (dx < 0) next(); else prev();
+        }, { passive:true });
+
+        if (mode === 'SPREAD'){
+          const spreadIndex = Math.floor(pageIndex / 2);
+          const sp = spreads[spreadIndex] || spreads[0];
+          view.innerHTML = `
+            <div class="bb-spread">
+              <div id="bb_left"></div>
+              <div id="bb_right"></div>
+            </div>
+          `;
+          const left = view.querySelector('#bb_left');
+          const right = view.querySelector('#bb_right');
+
+          renderPaper(left, sp.left);
+          if (sp.right) renderPaper(right, sp.right);
+          else right.innerHTML = `<div class="bb-paper"><div class="bb-in"></div></div>`;
+
+          pos.textContent = `${pageIndex+1}/${pages.length}`;
         } else {
-          const spreadIndex = Math.floor(pos / 2);
-          const isRight = (pos % 2) === 1;
-          const sp = spreads[spreadIndex];
-          const p = isRight ? sp.right : sp.left;
-          stage.innerHTML = pageHtml(p);
-          posEl.textContent = `${p.pageNo}/${totalPages}`;
+          view.innerHTML = `<div id="bb_one"></div>`;
+          const one = view.querySelector('#bb_one');
+          renderPaper(one, pages[pageIndex]);
+          pos.textContent = `${pageIndex+1}/${pages.length}`;
         }
-
-        stage.querySelectorAll('[data-send]').forEach((btn) => {
-          btn.onclick = () => {
-            let pz = null;
-            if (mode === 'SPREAD') {
-              const sp = spreads[pos];
-              pz = (sp.right && sp.right.kind === 'puzzle') ? sp.right : null;
-            } else {
-              const sp = spreads[Math.floor(pos/2)];
-              const p = (pos%2) ? sp.right : sp.left;
-              pz = (p && p.kind === 'puzzle') ? p : null;
-            }
-            if (!pz) { this.app.toast?.('Abra uma página de puzzle ✅'); return; }
-
-            const ws = {
-              title: pz.title || `Caça-Palavras — ${pz.sectionTitle || ''}`,
-              preset: (pz.grid === 13) ? 'BR_POCKET' : 'BR_PLUS',
-              size: pz.grid,
-              includeKey: true,
-              words: (pz.words || []).join('\n'),
-              output: '',
-              ts: Date.now()
-            };
-            Storage.set('wordsearch:seed', ws);
-            this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar)');
-            this.app.log?.(`[BOOK] sent section="${pz.sectionTitle}" grid=${pz.grid} words=${(pz.words||[]).length}`);
-          };
-        });
       };
 
-      area.querySelector('#bb_mode_sp').onclick = () => { mode='SPREAD'; pos = Math.floor(pos/2); render(); };
-      area.querySelector('#bb_mode_fo').onclick = () => {
-        if (mode === 'SPREAD') pos = pos * 2;
-        mode='FOLIO';
-        render();
-      };
-
-      area.querySelector('#bb_prev').onclick = () => { pos = pos - 1; render(); };
-      area.querySelector('#bb_next').onclick = () => { pos = pos + 1; render(); };
-
-      area.querySelector('#bb_reset').onclick = () => {
-        plan = buildDefaultPlanMG(15, 20);
-        Storage.set('cultural:book_plan', plan);
-        Storage.set('cultural:builder_seed', { mode:'SPREAD', pos:0 });
-        Storage.set('cultural:builder_cache', {});
-        this.app.toast?.('Livro recriado ✅');
-        renderMain();
-      };
-
-      area.querySelector('#bb_json').onclick = () => {
-        if (!plan) return;
-        const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `book-plan-${(plan.meta?.id||'book')}-${Date.now()}.json`;
-        a.click();
-        setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-        this.app.toast?.('Plano baixado ✅');
-      };
-
-      // swipe no mobile
-      let x0 = null;
-      stage.addEventListener('touchstart', (e)=>{ x0 = e.touches?.[0]?.clientX ?? null; }, { passive:true });
-      stage.addEventListener('touchend', (e)=>{
-        const x1 = e.changedTouches?.[0]?.clientX ?? null;
-        if (x0 == null || x1 == null) return;
-        const dx = x1 - x0;
-        if (Math.abs(dx) < 40) return;
-        pos = (dx < 0) ? (pos + 1) : (pos - 1);
-        render();
-      }, { passive:true });
-
-      render();
+      draw();
     };
 
     if (!plan) renderEmpty();
