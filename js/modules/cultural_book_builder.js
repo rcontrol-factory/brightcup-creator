@@ -1,11 +1,6 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3 PADRÃO (1 ano)
-// OBJETIVO: Preview editorial do livro (6x9) NO PADRÃO LIVRO, bonito no mobile.
-// ✅ Puzzle com grade quadriculada (sem cortar)
-// ✅ Lista de palavras horizontal (wrap) para caber na página
-// ✅ Modos: Spread (2 páginas) e Folhear (1 página)
-// ✅ Seed persistido (modo + página)
-// ✅ Fallback: se Safari limpar storage, cria livro Minas (PADRÃO)
+// Bright Cup Creator — Cultural Book Builder v0.3a PADRÃO (1 ano)
+// PATCH: ortografia correta na LISTA de palavras (acentos/ç) + grade normalizada (sem acento/ç)
 
 import { Storage } from '../core/storage.js';
 import { generateWordSearch } from '../core/wordsearch_gen.js';
@@ -23,27 +18,6 @@ function normalizeWord(s){
     .replace(/\s+/g,'')
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/[^A-Z0-9]/g,'');
-}
-
-function uniq(list){
-  const seen = new Set();
-  const out = [];
-  for (const it of list){
-    const w = normalizeWord(it);
-    if (!w) continue;
-    if (seen.has(w)) continue;
-    seen.add(w);
-    out.push(w);
-  }
-  return out;
-}
-
-function pickWords(words, gridSize, maxCount){
-  const maxLen = gridSize;
-  const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
-  // prioriza perto de 7 letras (boa distribuição)
-  filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
-  return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
 
 function wrap(text, max=72){
@@ -81,6 +55,38 @@ function presetFromGrid(grid){
   return 'BR_PLUS';
 }
 
+// ✅ cria mapa: NORMALIZADA -> DISPLAY (com acento/ç)
+// prioridade: primeira ocorrência
+function buildDisplayMap(rawList){
+  const map = new Map(); // norm -> display
+  for (const it of (rawList || [])){
+    const disp = String(it || '').trim();
+    if (!disp) continue;
+    const dispUp = disp.toUpperCase(); // mantém acentos/ç
+    const norm = normalizeWord(dispUp);
+    if (!norm) continue;
+    if (!map.has(norm)) map.set(norm, dispUp);
+  }
+  return map;
+}
+
+// ✅ seleciona palavras equilibradas, mas devolve (gridWords normalizadas) + (displayWords corretas)
+function pickWordsDual(rawList, gridSize, maxCount){
+  const maxLen = gridSize;
+
+  const map = buildDisplayMap(rawList);
+  let norms = Array.from(map.keys()).filter(w => w.length >= 3 && w.length <= maxLen);
+
+  // prioriza perto de 7 letras (boa distribuição)
+  norms.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
+
+  const take = Math.max(6, Math.min(norms.length, Number(maxCount || norms.length)));
+  norms = norms.slice(0, take);
+
+  const display = norms.map(n => map.get(n) || n);
+  return { gridWords: norms, displayWords: display };
+}
+
 function buildDefaultPlanMG(grid=13, wpp=16){
   return {
     meta: {
@@ -105,8 +111,9 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'é tradição que atravessa gerações. Aqui, cultura não é enfeite: é jeito de viver.\n\n' +
           'E tem um detalhe: mineiro fala pouco, mas entende muito.\n' +
           'Se alguém te oferecer café e pão de queijo… você aceitou a amizade sem perceber.',
+        // ✅ aqui você pode colocar com acento/ç quando quiser
         wordHints:[
-          'MINAS','MINEIRO','SERRA','MONTANHA','CULTURA','HISTORIA','TRADICAO','ACOLHIMENTO','CAFE','FOGAO','INTERIOR'
+          'Minas','Mineiro','Serra','Montanha','Cultura','História','Tradição','Acolhimento','Café','Fogão','Interior'
         ]
       },
       {
@@ -118,7 +125,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'ao redor de rios, serras e rotas. O tempo deixa marca: na pedra, na fé e nas histórias contadas.\n\n' +
           'E por aqui história não fica só em livro: fica na conversa — e na memória do povo.',
         wordHints:[
-          'HISTORIA','CAMINHO','SERRA','RIO','CIDADE','PATRIMONIO','MEMORIA','ORIGEM','TRADICAO'
+          'História','Caminho','Serra','Rio','Cidade','Patrimônio','Memória','Origem','Tradição'
         ]
       },
       {
@@ -129,7 +136,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Em Minas, queijo é linguagem. Tem queijo fresco, meia-cura, curado. ' +
           'E tem a Canastra, famosa no Brasil inteiro. Cada pedaço carrega clima, técnica e paciência.',
         wordHints:[
-          'QUEIJO','CANASTRA','CURADO','MEIACURA','LEITE','FAZENDA','TRADICAO','SABOR','COALHO','CURA'
+          'Queijo','Canastra','Curado','Meia-cura','Leite','Fazenda','Tradição','Sabor','Coalho','Cura'
         ]
       },
       {
@@ -142,7 +149,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Causo real: cada família diz que a dela é “a receita certa”.\n' +
           'O mais mineiro disso tudo é que… todo mundo está “certo” ao mesmo tempo.',
         wordHints:[
-          'PAODEQUEIJO','POLVILHO','FORNO','MASSA','QUEIJO','LEITE','OVO','SAL','RECEITA','COZINHA','CANASTRA'
+          'Pão de queijo','Polvilho','Forno','Massa','Queijo','Leite','Ovo','Sal','Receita','Cozinha','Canastra'
         ]
       },
       {
@@ -155,7 +162,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'E o café em Minas não é só bebida: é convite.\n' +
           'Se ouvir “passa aqui rapidinho”… pode saber: vai ter café e prosa.',
         wordHints:[
-          'CAFE','COADOR','CHEIRO','MANHA','FAZENDA','INTERIOR','TRADICAO','TORRA','XICARA','PROSA'
+          'Café','Coador','Cheiro','Manhã','Fazenda','Interior','Tradição','Torra','Xícara','Prosa'
         ]
       },
       {
@@ -169,7 +176,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'E existe o trem de verdade: trilho, estação, viagem e história. A ferrovia Vitória–Minas marcou caminhos e memórias.\n\n' +
           'Agora me diz: o “trem” é o objeto… ou é a desculpa perfeita pra prosear?',
         wordHints:[
-          'FERROVIA','TREM','TRILHO','ESTACAO','VIAGEM','VITORIAMINAS','ROTA','PLATAFORMA','VAGAO','PROSEAR'
+          'Ferrovia','Trem','Trilho','Estação','Viagem','Vitória–Minas','Rota','Plataforma','Vagão','Prosear'
         ]
       },
       {
@@ -180,7 +187,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Minas também é conhecida por pedras e gemas. O brilho vem de longe: trabalho, comércio, ' +
           'histórias de garimpo e tradição regional.',
         wordHints:[
-          'PEDRA','GEMA','GARIMPO','CRISTAL','BRILHO','MINERIO','OURO','PRATA','JOIA'
+          'Pedra','Gema','Garimpo','Cristal','Brilho','Minério','Ouro','Prata','Joia'
         ]
       },
       {
@@ -193,7 +200,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Festa, procissão, igreja antiga… fé misturada com comunidade.\n' +
           'Em cidade pequena, isso vira calendário do ano — e memória da vida inteira.',
         wordHints:[
-          'FE','IGREJA','SANTUARIO','PROCISSAO','TRADICAO','FESTA','DEVOTO','ROMARIA'
+          'Fé','Igreja','Santuário','Procissão','Tradição','Festa','Devoto','Romaria'
         ]
       },
       {
@@ -207,7 +214,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Tem gente que fala “uai é de Minas”, tem gente que fala “uai é de Goiás”.\n' +
           'A verdade? O uai é do Brasil — mas o mineiro usa com uma calma que é só dele.',
         wordHints:[
-          'SERRA','MIRANTE','ESTRADA','PAISAGEM','NATUREZA','TRILHA','VALE','CACHOEIRA','UAI'
+          'Serra','Mirante','Estrada','Paisagem','Natureza','Trilha','Vale','Cachoeira','Uai'
         ]
       },
       {
@@ -220,7 +227,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Lá de cima, Minas parece mapa vivo: serra, rio, cidade e horizonte.\n' +
           'É liberdade com aquele “uai” quando o vento muda.',
         wordHints:[
-          'VALADARES','IBITURUNA','VOOLIVRE','PARAPENTE','ASADELTA','PICO','VENTO','AVENTURA','MIRANTE'
+          'Valadares','Ibituruna','Voo livre','Parapente','Asa-delta','Pico','Vento','Aventura','Mirante'
         ]
       }
     ]
@@ -234,7 +241,6 @@ function buildPages(plan){
 
   const pages = [];
 
-  // capa/apresentação
   pages.push({
     kind:'text',
     icon:'history',
@@ -259,27 +265,25 @@ function buildPages(plan){
       sectionId: s.id
     });
 
-    const words = pickWords(
-      []
-        .concat(s.wordHints || [])
-        .concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA', 'UAI']),
-      grid,
-      wpp
-    );
+    const rawWords = []
+      .concat(s.wordHints || [])
+      .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
+
+    const dual = pickWordsDual(rawWords, grid, wpp);
 
     pages.push({
       kind:'puzzle',
       icon: s.icon,
       title: `Caça-Palavras — ${s.title}`,
-      meta: `Prévia visual (editorial) • grade ${grid}x${grid} • palavras ${words.length}`,
+      meta: `Prévia visual (editorial) • grade ${grid}x${grid} • palavras ${dual.gridWords.length}`,
       sectionTitle: s.title,
       sectionId: s.id,
       grid,
-      words
+      words: dual.gridWords,              // ✅ SEM acento/ç (para grade)
+      displayWords: dual.displayWords     // ✅ COM acento/ç (para lista)
     });
   });
 
-  // gabarito placeholder (fase export)
   pages.push({
     kind:'text',
     icon:'history',
@@ -299,18 +303,13 @@ function buildPages(plan){
 function makePuzzlePreview(puzzle){
   const grid = puzzle.grid || 13;
   const words = puzzle.words || [];
-
-  // gera grade real (determinística leve) — seed baseado no título/sectionId
-  // (não precisa ser “o final” aqui; é visual editorial)
-  const gen = generateWordSearch({
+  return generateWordSearch({
     size: grid,
     words,
     maxWords: words.length,
     allowDiagonal: true,
     allowBackwards: true
   });
-
-  return gen;
 }
 
 export class CulturalBookBuilderModule {
@@ -324,35 +323,18 @@ export class CulturalBookBuilderModule {
 
   render(root){
     let plan = Storage.get('cultural:book_plan', null);
-
-    const seed = Storage.get('cultural:builder_seed', {
-      mode: 'FOLHEAR', // FOLHEAR | SPREAD
-      pageIndex: 0
-    });
+    const seed = Storage.get('cultural:builder_seed', { mode: 'FOLHEAR', pageIndex: 0 });
 
     root.innerHTML = `
       <style>
         .bb-wrap{ display:grid; gap:14px; }
-        .bb-top{
-          display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
-          gap:10px;
-        }
+        .bb-top{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
         .bb-top h2{ margin:0; }
         .bb-help{ opacity:.82; }
-        .bb-controls{
-          display:flex; gap:10px; flex-wrap:wrap; align-items:center;
-        }
-        .bb-toggle{
-          display:flex; gap:8px; padding:6px; border-radius:999px;
-          border:1px solid rgba(255,255,255,.14);
-          background: rgba(0,0,0,.18);
-        }
-        .bb-toggle button{
-          border-radius:999px;
-          padding:8px 12px;
-        }
+        .bb-controls{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        .bb-toggle{ display:flex; gap:8px; padding:6px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.18); }
+        .bb-toggle button{ border-radius:999px; padding:8px 12px; }
 
-        /* "papel branco" */
         .bb-paper{
           background:#f2f3f5;
           color:#101214;
@@ -361,24 +343,10 @@ export class CulturalBookBuilderModule {
           box-shadow: 0 10px 30px rgba(0,0,0,.18);
           overflow:hidden;
         }
-        .bb-paper-head{
-          padding:14px 16px 10px 16px;
-          border-bottom:1px solid rgba(0,0,0,.10);
-        }
-        .bb-paper-title{
-          font-weight:900;
-          font-size:24px;
-          line-height:1.05;
-          letter-spacing:-.2px;
-        }
-        .bb-paper-meta{
-          margin-top:6px;
-          font-size:14px;
-          opacity:.76;
-        }
-        .bb-paper-body{
-          padding:14px 16px 14px 16px;
-        }
+        .bb-paper-head{ padding:14px 16px 10px 16px; border-bottom:1px solid rgba(0,0,0,.10); }
+        .bb-paper-title{ font-weight:900; font-size:24px; line-height:1.05; letter-spacing:-.2px; }
+        .bb-paper-meta{ margin-top:6px; font-size:14px; opacity:.76; }
+        .bb-paper-body{ padding:14px 16px 14px 16px; }
 
         .bb-textbox{
           border-radius:14px;
@@ -396,17 +364,8 @@ export class CulturalBookBuilderModule {
           line-height:1.35;
         }
 
-        /* puzzle */
-        .bb-puzzle{
-          display:grid;
-          gap:12px;
-        }
-        .bb-gridwrap{
-          border-radius:14px;
-          border:1px solid rgba(0,0,0,.14);
-          background: rgba(255,255,255,.76);
-          padding:10px;
-        }
+        .bb-puzzle{ display:grid; gap:12px; }
+        .bb-gridwrap{ border-radius:14px; border:1px solid rgba(0,0,0,.14); background: rgba(255,255,255,.76); padding:10px; }
         .bb-grid{
           display:grid;
           width:100%;
@@ -431,11 +390,7 @@ export class CulturalBookBuilderModule {
           background: rgba(255,255,255,.70);
           padding:12px 14px;
         }
-        .bb-words .label{
-          font-size:14px;
-          opacity:.75;
-          margin-bottom:8px;
-        }
+        .bb-words .label{ font-size:14px; opacity:.75; margin-bottom:8px; }
         .bb-wordsline{
           display:flex;
           flex-wrap:wrap;
@@ -444,9 +399,7 @@ export class CulturalBookBuilderModule {
           font-size:14px;
           line-height:1.2;
         }
-        .bb-wordsline span{
-          white-space:nowrap;
-        }
+        .bb-wordsline span{ white-space:nowrap; }
 
         .bb-paper-foot{
           display:flex;
@@ -460,19 +413,9 @@ export class CulturalBookBuilderModule {
         .bb-foot-left{ font-size:14px; opacity:.85; }
         .bb-foot-right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 
-        .bb-pages{
-          display:grid;
-          gap:14px;
-        }
-        .bb-spread{
-          display:grid;
-          grid-template-columns: 1fr 1fr;
-          gap:14px;
-          align-items:start;
-        }
-        @media (max-width: 860px){
-          .bb-spread{ grid-template-columns: 1fr; }
-        }
+        .bb-pages{ display:grid; gap:14px; }
+        .bb-spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; align-items:start; }
+        @media (max-width: 860px){ .bb-spread{ grid-template-columns: 1fr; } }
       </style>
 
       <div class="bb-wrap">
@@ -545,7 +488,6 @@ export class CulturalBookBuilderModule {
       if (page.kind === 'puzzle') {
         const gen = makePuzzlePreview(page);
 
-        // cell sizing: calcula fonte pela N (13/15/17)
         const N = gen.size;
         const fontPx = (N >= 17) ? 12 : (N >= 15 ? 13 : 14);
 
@@ -558,7 +500,9 @@ export class CulturalBookBuilderModule {
           }
         }
 
-        const wordsLine = (gen.words || []).map(w => `<span>${esc(w)}</span>`).join('');
+        // ✅ lista com ortografia correta (acentos/ç)
+        const list = (page.displayWords && page.displayWords.length) ? page.displayWords : (gen.words || []);
+        const wordsLine = (list || []).map(w => `<span>${esc(w)}</span>`).join('');
 
         bodyHtml = `
           <div class="bb-puzzle">
@@ -642,7 +586,7 @@ export class CulturalBookBuilderModule {
             size: p.grid,
             maxWords: (p.words || []).length,
             includeKey: true,
-            words: (p.words || []).join('\n'),
+            words: (p.words || []).join('\n'), // ✅ grade sem acento/ç
             puzzleId: p.sectionId || '',
             sectionId: p.sectionId || '',
             sectionTitle: p.sectionTitle || ''
@@ -655,13 +599,11 @@ export class CulturalBookBuilderModule {
 
       const render = () => {
         setModeButtons();
-
         bookname.textContent = String(plan.meta?.title || 'LIVRO');
 
         if (mode === 'SPREAD') {
           const left = pages[pageIndex];
           const right = pages[pageIndex + 1] || null;
-
           area.innerHTML = `
             <div class="bb-spread">
               <div>${renderPaper(left)}</div>
@@ -677,7 +619,6 @@ export class CulturalBookBuilderModule {
         updatePos();
       };
 
-      // controls
       root.querySelector('#bb_mode_spread').onclick = () => { mode = 'SPREAD'; render(); };
       root.querySelector('#bb_mode_folhear').onclick = () => { mode = 'FOLHEAR'; render(); };
 
