@@ -1,12 +1,11 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4a PADRÃO (1 ano)
-// V0.4a:
-// - Builder = só folhear/aprovar (layout vem do Agent via plan.meta.layout)
-// - Visual “folha de papel” (sem bolhas/cápsulas)
-// - Grade estilo revistinha: quadrado/linhas (sem cápsula)
-// - Palavras sem chips/cápsulas (colunas simples)
-// - Ilustração aparece só nas páginas de TEXTO (não no puzzle)
-// - Swipe mobile mais confiável (bind no container + touch-action)
+// Bright Cup Creator — Cultural Book Builder v0.3d PADRÃO (1 ano)
+// PATCH "FOLHA FIXA + GRADE CLÁSSICA":
+// - Folha (paper) com tamanho FIXO (aspect-ratio 6x9) — não cresce com conteúdo
+// - Conteúdo interno rola (quando precisar), sem estourar o tamanho da folha
+// - Grade do caça-palavras estilo “revistinha clássica” (quadrado, sem cápsulas)
+// - Lista de palavras em linha (separador), sem chips/cápsulas
+// - Swipe para folhear (iPhone) volta a funcionar no card da folha
 
 import { Storage } from '../core/storage.js';
 import { generateWordSearch, normalizeWord as wsNormalizeWord } from '../core/wordsearch_gen.js';
@@ -27,14 +26,7 @@ function normalizeWord(s){
     .replace(/[^A-Z0-9]/g,'');
 }
 
-function displayWord(s){
-  return String(s || '')
-    .trim()
-    .replace(/\s+/g,' ')
-    .toUpperCase();
-}
-
-function uniqNorm(list){
+function uniq(list){
   const seen = new Set();
   const out = [];
   for (const it of list){
@@ -45,6 +37,13 @@ function uniqNorm(list){
     out.push(w);
   }
   return out;
+}
+
+function pickWords(words, gridSize, maxCount){
+  const maxLen = gridSize;
+  const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
+  filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
+  return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
 
 function wrap(text, max=72){
@@ -76,30 +75,53 @@ function iconLabel(icon){
   return map[icon] || (icon || 'ilustração');
 }
 
-function buildPagesFromPlan(plan){
+function displayWord(w){
+  // DISPLAY pode manter acento/ç (só normaliza espaços)
+  return String(w || '').trim().replace(/\s+/g,' ').toUpperCase();
+}
+
+function buildDefaultPlanMG(grid=15, wpp=20){
+  // fallback: se storage limpar
+  return {
+    meta: {
+      id: 'MG_CULTURAL_BOOK_01',
+      title: 'MINAS GERAIS CULTURAL',
+      subtitle: 'História • Sabores • Tradições • Curiosidades • Caça-Palavras',
+      format: '6x9',
+      pages_target: 60,
+      language: 'pt-BR',
+      grid_default: grid,
+      words_per_puzzle: wpp,
+      include_key: true,
+      createdAt: new Date().toISOString()
+    },
+    sections: [
+      { id:'intro_minas', icon:'mountain', title:'O que é Minas?', text:'Minas é serra no horizonte e café passado na hora.', wordHints:['MINAS','SERRA','CAFÉ','TRADIÇÃO','CULTURA'] }
+    ]
+  };
+}
+
+function buildPages(plan){
   const m = plan.meta || {};
   const gridDefault = Number(m.grid_default || 15);
   const wppDefault  = Number(m.words_per_puzzle || 20);
 
   const pages = [];
 
-  // capa/apresentação
   pages.push({
     kind:'text',
     icon:'history',
-    title: m.title || 'MINAS GERAIS CULTURAL',
+    title: m.title || 'LIVRO',
     meta: (m.subtitle || '').trim(),
     body: wrap(
       `Apresentação\n\nEste livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
       `Cada seção traz um texto curto e um caça-palavras temático.\n\n` +
       `No final, você encontra o gabarito completo. Boa leitura e bom passatempo.`,
       72
-    ),
-    sectionId: 'intro'
+    )
   });
 
   (plan.sections || []).forEach((s) => {
-    // página de texto (tem ilustração)
     pages.push({
       kind:'text',
       icon: s.icon,
@@ -109,47 +131,30 @@ function buildPagesFromPlan(plan){
       sectionId: s.id
     });
 
-    // página de puzzle (SEM ilustração)
     const rawHints = []
       .concat(s.wordHints || [])
       .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
 
-    // palavras normalizadas p/ grade
-    const wordsNorm = uniqNorm(rawHints)
-      .filter(w => w.length >= 3 && w.length <= gridDefault)
-      .slice(0, Math.max(6, wppDefault));
+    const wordsNorm = pickWords(rawHints, gridDefault, wppDefault);
 
-    // palavras display (com ortografia se existir)
-    // aqui o plan normalmente já tem as wordHints “bonitas”
-    const wordsDisplay = rawHints
-      .map(displayWord)
-      .map(w => w.trim())
-      .filter(Boolean);
-
-    // map display por norm (preferir a versão com acento/ç se existir)
-    const mapDisp = {};
-    for (const d of wordsDisplay){
-      const n = normalizeWord(d);
-      if (!n) continue;
-      const hasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(d);
-      if (!mapDisp[n]) mapDisp[n] = d;
-      else {
-        const prevHas = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(mapDisp[n]);
-        if (!prevHas && hasAccent) mapDisp[n] = d;
-      }
-    }
-    const wordsDisplayPicked = wordsNorm.map(n => mapDisp[n] || n);
+    // DISPLAY: tenta preservar ortografia (acentos/ç) quando couber na grade
+    const wordsDisplay = uniq(rawHints.map(displayWord))
+      .filter(w => {
+        const n = normalizeWord(w);
+        return n.length >= 3 && n.length <= gridDefault;
+      })
+      .slice(0, Math.max(wordsNorm.length, 6));
 
     pages.push({
       kind:'puzzle',
       icon: s.icon,
       title: `Caça-Palavras — ${s.title}`,
-      meta: `Prévia visual (editorial) • grade ${gridDefault}x${gridDefault}`,
+      meta: `Grade ${gridDefault}x${gridDefault} • (preview editorial)`,
       sectionId: s.id,
       sectionTitle: s.title,
       grid: gridDefault,
       wordsNorm,
-      wordsDisplay: wordsDisplayPicked
+      wordsDisplay
     });
   });
 
@@ -162,8 +167,7 @@ function buildPagesFromPlan(plan){
       `O gabarito completo entra na fase do Export PDF (KDP).\n\n` +
       `Aqui no Builder a gente valida: ordem, texto, tema, grade e padrão editorial.`,
       72
-    ),
-    sectionId: 'key'
+    )
   });
 
   pages.forEach((p,i)=> p.pageNo = i+1);
@@ -179,7 +183,6 @@ function seedKeyForPlan(plan){
 function getPuzzleCache(plan){
   return Storage.get(seedKeyForPlan(plan), { puzzles:{} });
 }
-
 function setPuzzleCache(plan, cache){
   Storage.set(seedKeyForPlan(plan), cache || { puzzles:{} });
 }
@@ -212,28 +215,26 @@ function ensurePuzzleGenerated(plan, page){
   return payload;
 }
 
+// ✅ grid render 1-container (sem rows) — evita corte no iPhone
 function renderGridHTML(grid){
   const N = grid?.length || 0;
   if (!N) return '<div class="ws-empty">Grade vazia</div>';
 
-  let html = '<table class="ws-table" aria-label="Caça-palavras"><tbody>';
+  let html = `<div class="ws-grid" style="--n:${N}" role="img" aria-label="Caça-palavras">`;
   for (let y=0;y<N;y++){
-    html += '<tr>';
     for (let x=0;x<N;x++){
-      html += `<td>${esc(grid[y][x] || '')}</td>`;
+      html += `<div class="ws-cell">${esc(grid[y][x] || '')}</div>`;
     }
-    html += '</tr>';
   }
-  html += '</tbody></table>';
+  html += '</div>';
   return html;
 }
 
-function renderWordsColumns(wordsDisplay){
+function renderWordsInline(wordsDisplay){
   const list = (wordsDisplay || []).map(displayWord).filter(Boolean);
   if (!list.length) return '';
-
-  // 2 colunas no mobile, 3 colunas no desktop
-  return list.map(w => `<div class="ws-w">${esc(w)}</div>`).join('');
+  // separador “ — ” (clássico, ocupa menos altura)
+  return list.map(w => `<span class="w">${esc(w)}</span>`).join('<span class="sep"> — </span>');
 }
 
 function bindSwipe(el, onPrev, onNext){
@@ -246,8 +247,6 @@ function bindSwipe(el, onPrev, onNext){
     if (!tracking) return;
     const dx = x - startX;
     const dy = y - startY;
-
-    // quando detectar swipe horizontal, trava e impede scroll
     if (!locked && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.2) locked = true;
     if (locked) { try { ev.preventDefault(); } catch {} }
   };
@@ -264,7 +263,7 @@ function bindSwipe(el, onPrev, onNext){
     else onNext?.();
   };
 
-  // touch
+  // ⚠️ touchstart PASSIVE true, touchmove PASSIVE false (para allow preventDefault)
   el.addEventListener('touchstart', (e)=>{
     const t = e.touches?.[0];
     if (!t) return;
@@ -302,172 +301,173 @@ export class CulturalBookBuilderModule {
   render(root){
     let plan = Storage.get('cultural:book_plan', null);
     const seed = Storage.get('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
-
     const saveSeed = (next) => Storage.set('cultural:builder_seed', next);
 
     root.innerHTML = `
       <style>
+        /* ===== Builder layout ===== */
         .bb-wrap{ display:grid; gap:14px; }
+        .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+        .bb-toolbar .left, .bb-toolbar .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 
-        /* folha (sem bolha) */
+        .bb-top{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-top:6px; }
+        .bb-tabs{ display:flex; gap:8px; align-items:center; }
+        .bb-mini{ font-size:12px; opacity:.78; }
+
+        /* ===== PAPER (folha fixa) ===== */
         .paper{
-          width: 100%;
-          display:flex;
-          justify-content:center;
-        }
-
-        .page{
-          background: #f7f7f5;
-          color: #0b0f16;
-          border-radius: 14px;
-          border: 1px solid rgba(0,0,0,.18);
-          box-shadow: 0 14px 44px rgba(0,0,0,.22);
-          overflow:hidden;
-          position:relative;
-          width: min(100%, var(--page-maxw, 560px));
-          touch-action: pan-y; /* ajuda swipe horizontal */
-        }
-
-        .page-inner{
-          padding: 16px;
-          display:grid;
-          gap:10px;
-        }
-
-        .page-head{
-          display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
-          border-bottom: 1px solid rgba(0,0,0,.12);
-          padding-bottom: 10px;
-        }
-        .page-title{
-          font-size: clamp(22px, 6.0vw, 32px);
-          line-height: 1.06;
-          font-weight: 900;
-          letter-spacing: -0.2px;
-        }
-        .page-meta{
-          font-size: clamp(13px, 3.7vw, 16px);
-          opacity: .72;
-          margin-top: 6px;
-        }
-        .page-no{
-          font-size: 14px;
-          opacity:.7;
-          font-weight: 900;
-          min-width: 52px;
-          text-align:right;
-          padding-top: 6px;
-        }
-
-        /* texto */
-        .page-body{
-          border: 1px solid rgba(0,0,0,.12);
+          width: min(560px, 100%);
+          aspect-ratio: 2 / 3; /* 6x9 */
           background: #ffffff;
-          padding: 14px;
-          border-radius: 12px;
+          color: #111;
+          border: 1px solid rgba(0,0,0,.18);
+          box-shadow: 0 14px 45px rgba(0,0,0,.22);
+          border-radius: 10px;
+          overflow: hidden;
+          margin: 0 auto;
+          position: relative;
         }
-        .page-body pre{
+        .paper-inner{
+          height: 100%;
+          display:flex;
+          flex-direction:column;
+          padding: 14px 14px 12px 14px;
+          gap: 10px;
+        }
+
+        .paper-head{
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap:12px;
+          border-bottom: 1px solid rgba(0,0,0,.12);
+          padding-bottom: 8px;
+        }
+        .paper-title{
+          font-size: clamp(20px, 5.4vw, 30px);
+          line-height: 1.05;
+          font-weight: 900;
+          letter-spacing: -0.3px;
+        }
+        .paper-meta{
+          font-size: clamp(12px, 3.4vw, 15px);
+          opacity: .72;
+          margin-top: 4px;
+        }
+        .paper-no{
+          font-size: 14px;
+          opacity:.65;
+          font-weight: 900;
+          padding-top: 6px;
+          min-width: 54px;
+          text-align:right;
+        }
+
+        /* ===== Content area (scroll inside paper) ===== */
+        .paper-body{
+          flex: 1;
+          min-height: 0;
+          overflow: auto;
+          padding: 8px 2px 2px 2px;
+        }
+        .paper-body pre{
           margin:0;
           white-space:pre-wrap;
           overflow-wrap:anywhere;
           word-break:break-word;
           font-family: ui-serif, Georgia, "Times New Roman", serif;
-          font-size: clamp(16px, 4.2vw, 19px);
-          line-height: 1.42;
+          font-size: clamp(15px, 4.0vw, 19px);
+          line-height: 1.35;
         }
 
-        /* caça-palavras: grade quadriculada (revistinha) */
-        .ws-box{
-          border: 1px solid rgba(0,0,0,.14);
-          background: #ffffff;
-          padding: 12px;
-          border-radius: 12px;
-          overflow:auto;
+        /* ===== Puzzle ===== */
+        .puzzle{
+          display:flex;
+          flex-direction:column;
+          gap:10px;
+          height: 100%;
         }
-        .ws-table{
-          border-collapse: collapse;
-          margin: 0 auto;
+        .ws-frame{
+          border: 1px solid rgba(0,0,0,.18);
+          padding: 8px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          overflow:hidden;
         }
-        .ws-table td{
-          border: 1px solid rgba(0,0,0,.35);
-          width: 22px;
-          height: 22px;
-          text-align:center;
-          vertical-align:middle;
+
+        /* ✅ grade clássica, sem cápsulas e SEM corte */
+        .ws-grid{
+          --n: 15;
+          width: 100%;
+          max-width: 100%;
+          display:grid;
+          grid-template-columns: repeat(var(--n), 1fr);
+          gap: 1px;
+        }
+        .ws-cell{
+          aspect-ratio: 1 / 1;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border: 1px solid #111;
+          background: transparent;
+          border-radius: 0;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-weight: 900;
-          font-size: 14px;
+          font-weight: 800;
+          font-size: clamp(10px, 2.35vw, 15px);
           line-height: 1;
-          padding: 0;
-        }
-        @media (max-width: 420px){
-          .ws-table td{ width: 20px; height: 20px; font-size: 13px; }
         }
 
-        /* palavras: simples, sem cápsula */
+        /* ===== Words (inline, compacto) ===== */
         .words-box{
-          border: 1px solid rgba(0,0,0,.14);
-          background: #ffffff;
-          padding: 12px;
-          border-radius: 12px;
+          border-top: 1px solid rgba(0,0,0,.12);
+          padding-top: 8px;
         }
         .words-title{
+          font-size: 13px;
           font-weight: 900;
-          font-size: 16px;
-          margin-bottom: 10px;
+          opacity: .85;
+          margin-bottom: 6px;
         }
-        .words-grid{
-          display:grid;
-          grid-template-columns: repeat(2, minmax(0,1fr));
-          gap: 6px 18px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-weight: 900;
-          font-size: 14px;
+        .words-line{
+          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+          font-size: clamp(12px, 3.3vw, 15px);
+          line-height: 1.25;
+          font-weight: 800;
+          opacity: .92;
+          word-break: break-word;
         }
-        @media (min-width: 920px){
-          .words-grid{ grid-template-columns: repeat(3, minmax(0,1fr)); }
-        }
-        .ws-w{ white-space:nowrap; }
+        .words-line .w{ white-space: nowrap; }
+        .words-line .sep{ opacity:.55; }
 
-        /* ilustração (só no TEXTO) */
-        .illus{
-          border: 1px dashed rgba(0,0,0,.35);
-          background: #ffffff;
-          padding: 10px 12px;
-          border-radius: 12px;
+        /* ===== Foot ===== */
+        .paper-foot{
           display:flex;
           align-items:center;
           justify-content:space-between;
           gap:12px;
-        }
-        .illus .t{ font-weight: 900; }
-        .illus .s{ opacity:.7; font-size: 12px; margin-top: 2px; }
-        .illus .badge{
-          border: 1px solid rgba(0,0,0,.25);
-          border-radius: 10px;
-          padding: 7px 10px;
-          font-weight: 900;
+          padding-top: 2px;
           font-size: 12px;
-          opacity:.85;
+          opacity:.8;
         }
 
-        .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
-        .bb-toolbar .left, .bb-toolbar .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-        .bb-top{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-top:6px; }
-        .bb-tabs{ display:flex; gap:8px; align-items:center; }
-        .bb-mini{ font-size:12px; opacity:.78; }
-
-        .spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+        /* spread */
+        .spread{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap:14px;
+          align-items:start;
+        }
         @media (max-width: 860px){
           .spread{ grid-template-columns: 1fr; }
-          .page-inner{ padding: 14px; }
         }
       </style>
 
       <div class="bb-wrap">
         <div class="card">
           <h2>Livro Cultural — Builder</h2>
-          <p class="muted">Preview visual do livro (<b>folha limpa</b>). <b>O Agent define layout</b>. Aqui é só folhear e aprovar.</p>
+          <p class="muted">Preview visual do livro (folha fixa). Folheie e valide como produto final.</p>
           <div id="bb_area"></div>
         </div>
       </div>
@@ -480,45 +480,46 @@ export class CulturalBookBuilderModule {
         <div class="bb-empty">
           <p class="muted"><b>Nenhum livro carregado.</b> Isso pode acontecer se o Safari limpar o armazenamento.</p>
           <div class="row">
-            <button class="btn primary" id="bb_go_agent">Abrir Cultural Agent</button>
+            <button class="btn primary" id="bb_make">Criar Livro Minas (PADRÃO)</button>
+            <button class="btn" id="bb_go_agent">Abrir Cultural Agent</button>
           </div>
-          <p class="bb-mini muted">Dica: no Agent, clique “Gerar Plano” e volte pra cá.</p>
+          <p class="bb-mini muted">Dica: exporte o plano em JSON no Cultural Agent para backup.</p>
         </div>
       `;
+
+      area.querySelector('#bb_make').onclick = () => {
+        plan = buildDefaultPlanMG(15, 20);
+        Storage.set('cultural:book_plan', plan);
+        this.app.toast?.('Livro Minas criado ✅');
+        renderMain();
+      };
+
       area.querySelector('#bb_go_agent').onclick = () => {
         const btn = document.querySelector('.navitem[data-view="cultural"]');
         btn?.click?.();
       };
     };
 
-    const renderPage = (page, plan, withSend=true) => {
+    const renderPaper = (page, plan, withButton=true) => {
       if (!page) return '';
-      const layout = plan?.meta?.layout || {};
-      const pageSize = layout.pageSize || plan?.meta?.format || '6x9';
-      const maxw = (String(pageSize) === '8.5x11') ? '720px' : '560px';
 
       if (page.kind === 'text') {
         return `
-          <div class="paper" style="--page-maxw:${esc(maxw)}">
-            <div class="page">
-              <div class="page-inner">
-                <div class="page-head">
-                  <div>
-                    <div class="page-title">${esc(page.title || '')}</div>
-                    <div class="page-meta">${esc(page.meta || '')}</div>
-                  </div>
-                  <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
+          <div class="paper">
+            <div class="paper-inner">
+              <div class="paper-head">
+                <div>
+                  <div class="paper-title">${esc(page.title || '')}</div>
+                  <div class="paper-meta">${esc(page.meta || '')}</div>
                 </div>
+                <div class="paper-no">p.${esc(String(page.pageNo || ''))}</div>
+              </div>
 
-                <div class="page-body"><pre>${esc(page.body || '')}</pre></div>
+              <div class="paper-body"><pre>${esc(page.body || '')}</pre></div>
 
-                <div class="illus">
-                  <div>
-                    <div class="t">Ilustração P&B: ${esc(iconLabel(page.icon))}</div>
-                    <div class="s">Slot reservado (entra no Export/IA) — nesta página de texto.</div>
-                  </div>
-                  <div class="badge">Imagem</div>
-                </div>
+              <div class="paper-foot">
+                <span>Ilustração P&B: <b>${esc(iconLabel(page.icon))}</b></span>
+                <span></span>
               </div>
             </div>
           </div>
@@ -529,31 +530,34 @@ export class CulturalBookBuilderModule {
       const gridHtml = renderGridHTML(gen?.grid);
 
       return `
-        <div class="paper" style="--page-maxw:${esc(maxw)}">
-          <div class="page">
-            <div class="page-inner">
-              <div class="page-head">
-                <div>
-                  <div class="page-title">${esc(page.title || '')}</div>
-                  <div class="page-meta">${esc(page.meta || '')} • palavras colocadas ${esc(String(gen?.placedCount || 0))}</div>
+        <div class="paper">
+          <div class="paper-inner">
+            <div class="paper-head">
+              <div>
+                <div class="paper-title">${esc(page.title || '')}</div>
+                <div class="paper-meta">${esc(page.meta || '')} • palavras ${esc(String(gen?.placedCount || 0))}</div>
+              </div>
+              <div class="paper-no">p.${esc(String(page.pageNo || ''))}</div>
+            </div>
+
+            <div class="paper-body">
+              <div class="puzzle">
+                <div class="ws-frame">${gridHtml}</div>
+
+                <div class="words-box">
+                  <div class="words-title">Palavras (ortografia)</div>
+                  <div class="words-line">${renderWordsInline(page.wordsDisplay || page.wordsNorm || [])}</div>
                 </div>
-                <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
+
+                <div style="margin-top:auto; font-size:12px; opacity:.72;">
+                  Ilustração P&B (no PDF): <b>${esc(iconLabel(page.icon))}</b>
+                </div>
               </div>
+            </div>
 
-              <div class="ws-box">${gridHtml}</div>
-
-              <div class="words-box">
-                <div class="words-title">Palavras</div>
-                <div class="words-grid">${renderWordsColumns(page.wordsDisplay || page.wordsNorm || [])}</div>
-              </div>
-
-              ${
-                withSend
-                  ? `<div style="display:flex; justify-content:flex-end;">
-                      <button class="btn" data-send="ws">Enviar p/ Caça-Palavras</button>
-                    </div>`
-                  : ``
-              }
+            <div class="paper-foot">
+              ${withButton ? `<button class="btn" data-send="ws">Enviar p/ Caça-palavras</button>` : `<span></span>`}
+              <span></span>
             </div>
           </div>
         </div>
@@ -568,7 +572,7 @@ export class CulturalBookBuilderModule {
         size: page.grid || 15,
         maxWords: (page.wordsNorm || []).length || 16,
         includeKey: true,
-        words: (page.wordsNorm || []).join('\n'), // normalizado
+        words: (page.wordsNorm || []).join('\n'),
         puzzleId: page.sectionId || '',
         sectionId: page.sectionId || '',
         sectionTitle: page.sectionTitle || '',
@@ -576,29 +580,26 @@ export class CulturalBookBuilderModule {
         ts: Date.now()
       };
       Storage.set('wordsearch:seed', ws);
-      this.app.toast?.('Enviado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
+      this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar+Salvar)');
       try { this.app.log?.(`[BOOK] sent section="${page.sectionTitle || ''}" grid=${ws.size} words=${(page.wordsNorm||[]).length}`); } catch {}
     };
 
     const renderMain = () => {
-      plan = Storage.get('cultural:book_plan', null);
       if (!plan) return renderEmpty();
 
-      const pages = buildPagesFromPlan(plan);
+      const pages = buildPages(plan);
       let mode = seed.mode === 'SPREAD' ? 'SPREAD' : 'FOLHEAR';
       let pageIndex = Math.max(0, Math.min(seed.pageIndex || 0, pages.length - 1));
 
       const save = () => saveSeed({ mode, pageIndex });
 
-      const goPrev = () => { pageIndex = Math.max(0, pageIndex - 1); save(); paint(); };
-      const goNext = () => { pageIndex = Math.min(pages.length - 1, pageIndex + 1); save(); paint(); };
+      const goPrev = () => { pageIndex = Math.max(0, pageIndex - (mode==='SPREAD'?2:1)); save(); paint(); };
+      const goNext = () => { pageIndex = Math.min(pages.length - 1, pageIndex + (mode==='SPREAD'?2:1)); save(); paint(); };
 
       area.innerHTML = `
         <div class="bb-toolbar">
           <div class="left">
             <span class="bb-mini"><b>${esc(plan.meta?.title || 'LIVRO')}</b></span>
-            <span class="bb-mini">• estilo <b>${esc(plan.meta?.layout?.style || 'RETRO')}</b></span>
-            <span class="bb-mini">• formato <b>${esc(plan.meta?.layout?.pageSize || plan.meta?.format || '6x9')}</b></span>
           </div>
           <div class="right">
             <button class="btn" id="bb_prev">◀</button>
@@ -611,7 +612,7 @@ export class CulturalBookBuilderModule {
             <button class="btn ${mode==='SPREAD'?'primary':''}" id="bb_mode_spread">Spread</button>
             <button class="btn ${mode==='FOLHEAR'?'primary':''}" id="bb_mode_folhear">Folhear</button>
           </div>
-          <div class="bb-mini">Página <b id="bb_pos"></b> • <span class="bb-mini muted">No mobile: arraste pro lado (folhear)</span></div>
+          <div class="bb-mini">Página <b id="bb_pos"></b></div>
         </div>
 
         <div id="bb_view"></div>
@@ -619,6 +620,7 @@ export class CulturalBookBuilderModule {
         <div class="bb-toolbar" style="margin-top:10px;">
           <div class="left">
             <button class="btn" id="bb_download_plan">Baixar plano (JSON)</button>
+            <button class="btn" id="bb_reset">Recriar Minas (PADRÃO)</button>
           </div>
           <div class="right">
             <button class="btn" id="bb_go_agent">Abrir Agent</button>
@@ -633,10 +635,10 @@ export class CulturalBookBuilderModule {
 
         if (mode === 'FOLHEAR') {
           const p = pages[pageIndex];
-          view.innerHTML = renderPage(p, plan, true);
+          view.innerHTML = renderPaper(p, plan, true);
 
-          // swipe no container (mais confiável)
-          bindSwipe(view, goPrev, goNext);
+          const paper = view.querySelector('.paper');
+          bindSwipe(paper, goPrev, goNext);
 
           const btn = view.querySelector('[data-send="ws"]');
           if (btn) btn.onclick = () => sendPageToWordSearch(p, plan);
@@ -648,29 +650,35 @@ export class CulturalBookBuilderModule {
 
         view.innerHTML = `
           <div class="spread">
-            <div>${renderPage(left, plan, true)}</div>
-            <div>${right ? renderPage(right, plan, true) : ''}</div>
+            <div>${renderPaper(left, plan, true)}</div>
+            <div>${right ? renderPaper(right, plan, true) : ''}</div>
           </div>
         `;
 
-        bindSwipe(
-          view,
-          ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); },
-          ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); }
-        );
+        // swipe no container do spread
+        bindSwipe(view, goPrev, goNext);
 
-        const sendBtns = view.querySelectorAll('[data-send="ws"]');
-        sendBtns.forEach((b, i)=>{
-          const page = i===0 ? left : right;
-          b.onclick = () => sendPageToWordSearch(page, plan);
+        const papers = view.querySelectorAll('.paper');
+        papers.forEach((paperEl, idxPaper)=>{
+          const page = idxPaper===0 ? left : right;
+          const btn = paperEl.querySelector('[data-send="ws"]');
+          if (btn && page) btn.onclick = () => sendPageToWordSearch(page, plan);
         });
       };
 
       area.querySelector('#bb_prev').onclick = goPrev;
       area.querySelector('#bb_next').onclick = goNext;
 
-      area.querySelector('#bb_mode_spread').onclick = () => { mode='SPREAD'; save(); renderMain(); };
+      area.querySelector('#bb_mode_spread').onclick = () => { mode='SPREAD'; pageIndex = Math.max(0, Math.min(pageIndex, pages.length-1)); save(); renderMain(); };
       area.querySelector('#bb_mode_folhear').onclick = () => { mode='FOLHEAR'; save(); renderMain(); };
+
+      area.querySelector('#bb_reset').onclick = () => {
+        plan = buildDefaultPlanMG(15, 20);
+        Storage.set('cultural:book_plan', plan);
+        Storage.set('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
+        this.app.toast?.('Livro recriado ✅');
+        renderMain();
+      };
 
       area.querySelector('#bb_go_agent').onclick = () => {
         const btn = document.querySelector('.navitem[data-view="cultural"]');
@@ -695,6 +703,7 @@ export class CulturalBookBuilderModule {
       paint();
     };
 
-    renderMain();
+    if (!plan) renderEmpty();
+    else renderMain();
   }
 }
