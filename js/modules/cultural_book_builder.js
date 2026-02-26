@@ -1,14 +1,14 @@
 /* FILE: /js/modules/cultural_book_builder.js */
 /**
  * Bright Cup Creator — Cultural Book Builder (Preview + PDF Export)
- * v0.8g FIX (words 3 columns default + more space for grid)
+ * v0.8h FIX (words from wordHints + header compact)
  *
  * Ajustes:
- * - Folha/página FIXA (não cresce)
- * - Sem “rolagem dentro da folha”
- * - Swipe 1 passo por gesto (sem pular 2 páginas)
- * - Palavras: 3 COLUNAS por padrão (ex.: 12 palavras = 3x4)
- * - Caixa de palavras menor (sobra espaço pro caça-palavras)
+ * - Palavras do puzzle vêm de: section.wordHints (sempre tem)
+ * - Header compacto: título menor + referência pequena (sem “prévia visual”, sem divisor)
+ * - Folha fixa (não cresce) e sem rolagem dentro da folha
+ * - Swipe 1 passo por gesto
+ * - Palavras em 3 colunas por padrão (dinâmico por quantidade)
  */
 
 import { Storage } from '../core/storage.js';
@@ -30,25 +30,24 @@ function renderWordsColumns(items){
 }
 
 /**
- * Queremos:
- * - Poucas palavras: 2 colunas
- * - Normal (9–15): 3 colunas (fica 3x4 quando 12)
- * - Muitas: 4 colunas
+ * Layout colunas:
+ * - <=6 palavras: 2 colunas
+ * - 7..15: 3 colunas (PADRÃO)
+ * - >15: 4 colunas
  */
 function wordsGridVars(items){
   const n = Array.isArray(items) ? items.length : 0;
 
-  let cols = 3; // PADRÃO (pedido)
+  let cols = 3;
   if (n <= 6) cols = 2;
   else if (n <= 15) cols = 3;
   else cols = 4;
 
-  // fonte reduz conforme colunas sobem
-  let wfs = 14;
-  if (cols === 3) wfs = 13;
+  let wfs = 13;
+  if (cols === 2) wfs = 13;
+  if (cols === 3) wfs = 12.5;
   if (cols === 4) wfs = 12;
 
-  // gap mais compacto pra caber mais
   let gx = 14;
   let gy = 5;
   if (cols === 4) { gx = 12; gy = 4; }
@@ -59,10 +58,8 @@ function wordsGridVars(items){
 function bindSwipe(el, onPrev, onNext){
   if (!el) return;
 
-  // atualiza callbacks
   el.__bbSwipeHandlers = { onPrev, onNext };
 
-  // binda 1 vez
   if (el.__bbSwipeBound) return;
   el.__bbSwipeBound = true;
 
@@ -72,17 +69,9 @@ function bindSwipe(el, onPrev, onNext){
   const callPrev = () => { try { getH().onPrev?.(); } catch {} };
   const callNext = () => { try { getH().onNext?.(); } catch {} };
 
-  const onStart = (x, y, pointerId) => {
-    sx = x; sy = y; dx = 0; dy = 0; dragging = true; pid = pointerId ?? null;
-  };
-
-  const onMove = (x, y) => {
-    if (!dragging) return;
-    dx = x - sx;
-    dy = y - sy;
-  };
-
-  const onEnd = () => {
+  const onStart = (x, y, pointerId) => { sx = x; sy = y; dx = 0; dy = 0; dragging = true; pid = pointerId ?? null; };
+  const onMove  = (x, y) => { if (!dragging) return; dx = x - sx; dy = y - sy; };
+  const onEnd   = () => {
     if (!dragging) return;
     dragging = false;
 
@@ -107,7 +96,6 @@ function bindSwipe(el, onPrev, onNext){
 
   el.addEventListener('touchend', () => onEnd(), { passive:true });
 
-  // mouse fallback
   el.addEventListener('mousedown', (e) => onStart(e.clientX, e.clientY, 'mouse'));
   window.addEventListener('mousemove', (e) => {
     if (!dragging || pid !== 'mouse') return;
@@ -145,14 +133,16 @@ function getBookPages(plan){
       number: p++
     });
 
+    // ✅ PALAVRAS DO PUZZLE VÊM DE wordHints (sempre existe no plano)
+    const wordsDisplay = Array.isArray(s.wordHints) ? s.wordHints : [];
+
     pages.push({
       kind:'puzzle',
       title: `Caça-Palavras — ${s.title || ''}`,
       gridSize: Number(m.grid_default || 15),
-      placed: Number(s?.placedCount || 0),
-      grid: s?.grid || null,
-      wordsDisplay: s?.wordsDisplay || null,
-      wordsNorm: s?.wordsNorm || null,
+      grid: s?.grid || null, // se tiver, usa; senão gera fake (preview)
+      wordsDisplay,          // ✅ agora não some
+      placed: wordsDisplay.length,
       illoHint: (s?.illoHint || s?.title || ''),
       number: p++
     });
@@ -187,16 +177,11 @@ function ensureGrid(page){
 }
 
 function renderGridTable(grid){
-  const size = grid?.length || 0;
   const rows = (grid || []).map(row => {
     const tds = row.map(ch => `<td>${$esc(ch)}</td>`).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
-  return `
-    <table class="ws-table" style="--grid:${size}">
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+  return `<table class="ws-table"><tbody>${rows}</tbody></table>`;
 }
 
 export class CulturalBookBuilderModule {
@@ -218,9 +203,7 @@ export class CulturalBookBuilderModule {
       <div class="grid">
         <div class="card">
           <h2>Book Builder</h2>
-          <p class="muted">
-            Folha fixa (preview editorial). Folheie e valide como produto final.
-          </p>
+          <p class="muted">Folha fixa (preview). Folheie e valide.</p>
 
           <div class="row">
             <button class="btn" id="bb_spread">Spread</button>
@@ -244,7 +227,10 @@ export class CulturalBookBuilderModule {
 
       <style>
         .bb-view{ padding: 8px 0; user-select:none; }
+
         .paper{ width: 100%; display:flex; justify-content:center; }
+
+        /* ✅ folha fixa */
         .page{
           background: #f7f7f5;
           color: #0b0f16;
@@ -253,26 +239,49 @@ export class CulturalBookBuilderModule {
           box-shadow: 0 14px 44px rgba(0,0,0,.22);
           overflow:hidden;
           position:relative;
-          width: min(100%, var(--page-maxw, 560px));
-          aspect-ratio: var(--page-ar, 2 / 3);
-          height:auto; max-height:min(78vh,780px);
+          width: min(100%, 560px);
+          aspect-ratio: 2 / 3;
+          max-height:min(78vh,780px);
+          height:auto;
           touch-action: pan-y;
         }
+
         .page-inner{
-          padding: 16px;
+          padding: 14px;
           height:100%;
           display:flex;
           flex-direction:column;
           gap:10px;
         }
-        .page-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
-        .page-title{
-          font-size: 34px; line-height: 1.05; font-weight: 900;
-          letter-spacing:-.02em; margin:0;
+
+        /* ✅ HEADER COMPACTO */
+        .page-head{
+          display:flex;
+          justify-content:space-between;
+          align-items:flex-start;
+          gap:10px;
         }
-        .page-sub{ margin-top: 6px; font-size: 18px; opacity:.78; }
-        .pnum{ opacity:.55; font-weight:900; font-size: 18px; margin-top: 6px; }
-        .divider{ height:1px; background: rgba(0,0,0,.12); margin: 2px 0 0 0; }
+        .page-title{
+          font-size: 26px;     /* ✅ menor (pedido) */
+          line-height: 1.05;
+          font-weight: 900;
+          letter-spacing:-.02em;
+          margin:0;
+        }
+        .pnum{
+          opacity:.55;
+          font-weight:900;
+          font-size: 16px;
+          margin-top: 2px;
+          white-space:nowrap;
+        }
+        .refline{
+          margin-top: 4px;
+          font-size: 14px;     /* ✅ pequeno */
+          opacity:.72;
+        }
+
+        /* TEXT */
         .page-body{
           border: 1px solid rgba(0,0,0,.12);
           background: #ffffff;
@@ -282,7 +291,6 @@ export class CulturalBookBuilderModule {
           min-height:0;
           overflow:hidden;
         }
-
         .text-body{
           font-family: Georgia, serif;
           font-size: 22px;
@@ -294,7 +302,7 @@ export class CulturalBookBuilderModule {
         .ws-box{
           border: 1px solid rgba(0,0,0,.14);
           background: #ffffff;
-          padding: 10px;            /* um pouco menor */
+          padding: 10px;
           border-radius: 12px;
           overflow:hidden;
           flex: 1;
@@ -317,18 +325,18 @@ export class CulturalBookBuilderModule {
           padding: 0;
         }
 
-        /* WORDS — MAIS COMPACTO + 3 COLUNAS PADRÃO */
+        /* WORDS */
         .words-box{
           border: 1px solid rgba(0,0,0,.14);
           background: #ffffff;
-          padding: 10px;            /* menor */
+          padding: 10px;
           border-radius: 12px;
-          max-height: 28%;          /* menor -> sobra espaço pro grid */
+          max-height: 28%;
           overflow:hidden;
         }
         .words-title{
           font-weight: 900;
-          font-size: 20px;          /* menor */
+          font-size: 18px;
           margin: 0;
         }
         .words-grid{
@@ -337,7 +345,7 @@ export class CulturalBookBuilderModule {
           gap: var(--gy, 5px) var(--gx, 14px);
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: var(--wfs, 13px);
+          font-size: var(--wfs, 12.5px);
           margin-top: 8px;
         }
         .ws-w{
@@ -387,7 +395,9 @@ export class CulturalBookBuilderModule {
 
       if (page.kind === 'puzzle'){
         const grid = ensureGrid(page);
-        const words = page.wordsDisplay || page.wordsNorm || [];
+        const words = Array.isArray(page.wordsDisplay) ? page.wordsDisplay : [];
+        const placed = words.length;
+
         return `
           <div class="paper">
             <div class="page">
@@ -395,11 +405,10 @@ export class CulturalBookBuilderModule {
                 <div class="page-head">
                   <div>
                     <h1 class="page-title">${$esc(page.title || '')}</h1>
-                    <div class="page-sub">Prévia visual (editorial) • grade ${grid.length}x${grid.length} • palavras colocadas ${Number(page.placed || words.length || 0)}</div>
+                    <div class="refline">grade ${grid.length}x${grid.length} • palavras ${placed}</div>
                   </div>
                   <div class="pnum">p.${$esc(page.number || '')}</div>
                 </div>
-                <div class="divider"></div>
 
                 <div class="ws-box">
                   ${renderGridTable(grid)}
@@ -426,11 +435,10 @@ export class CulturalBookBuilderModule {
               <div class="page-head">
                 <div>
                   <h1 class="page-title">${$esc(page.title || '')}</h1>
-                  <div class="page-sub">Texto cultural</div>
+                  <div class="refline">Texto cultural</div>
                 </div>
                 <div class="pnum">p.${$esc(page.number || '')}</div>
               </div>
-              <div class="divider"></div>
 
               <div class="page-body">
                 <div class="text-body">${$esc(page.body || '')}</div>
@@ -449,7 +457,6 @@ export class CulturalBookBuilderModule {
         view.innerHTML = `<div class="paper"><div class="page"><div class="page-inner"><p class="muted">Nenhum plano carregado. Abra o Agent e gere um plano.</p></div></div></div>`;
         return;
       }
-
       view.innerHTML = renderPage(pages[this._pageIndex]);
 
       bindSwipe(view,
