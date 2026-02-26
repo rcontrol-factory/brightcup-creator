@@ -1,10 +1,11 @@
 /* FILE: /js/modules/cultural_agent.js */
-// Bright Cup Creator — Cultural Agent (Book Planner) v0.2 SAFE
-// Objetivo: planejar um livro cultural (6x9, 60p, PT-BR) com seções + palavras para puzzles 15x15.
+// Bright Cup Creator — Cultural Agent (Book Planner) v0.3 PADRÃO (1 ano)
+// Objetivo: planejar livro cultural (6x9) com emoção + padrão editorial.
 // - Sem API (por enquanto)
 // - Sem mexer no Coloring pipeline
 // - Salva plano em Storage: cultural:book_plan
-// - Pode aplicar uma seção no Caça-Palavras (wordsearch) para testar rápido
+// - Pode aplicar seção no Caça-Palavras (wordsearch) para produzir puzzle rápido
+// - Presets BR: Pocket (13x13/16) e Plus (15x15/20)
 
 import { Storage } from '../core/storage.js';
 
@@ -37,11 +38,12 @@ function uniq(list){
 function pickWordsForGrid(words, gridSize, maxCount){
   const maxLen = gridSize;
   const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
+  // prioriza perto de 7 letras (boa distribuição)
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
-  return filtered.slice(0, maxCount);
+  return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
 
-function wrapLines(text, max=78){
+function wrapLines(text, max=72){
   const words = String(text||'').split(/\s+/g);
   const lines = [];
   let line = '';
@@ -54,10 +56,107 @@ function wrapLines(text, max=78){
   return lines.join('\n');
 }
 
-function bookDefaultPlanMG(){
+const PRESETS = {
+  BR_POCKET: { label:'Brasil — Pocket (13x13 / 16 palavras)', grid:13, wpp:16 },
+  BR_PLUS:   { label:'Brasil — Plus (15x15 / 20 palavras)',   grid:15, wpp:20 }
+};
+
+function presetFromGrid(grid){
+  const g = Number(grid||0);
+  if (g <= 13) return 'BR_POCKET';
+  return 'BR_PLUS';
+}
+
+function enrichSectionText(id, base){
+  // Aqui é a “camada humana”: mineirês + curiosidade + mini-causo.
+  // Curto e vendável (não vira textão chato).
+  const t = String(base || '').trim();
+
+  if (id === 'ferrovia') {
+    return [
+      'Em Minas, “trem” não é só vagão: é quase um idioma.',
+      'Você fala “pega aquele trem ali” e pronto — serve pra chave, sacola, panela, controle, documento… tudo vira “trem”.',
+      '',
+      'Tem gente que diz que é economia de palavras. Outros juram que é só pra sobrar tempo de passar um café e puxar uma prosa.',
+      '',
+      'E existe o trem de verdade: trilho, estação, viagem e história. A ferrovia Vitória–Minas marcou caminhos e memórias.',
+      '',
+      'Agora me diz: o “trem” é o objeto… ou é a desculpa perfeita pra prosear?'
+    ].join('\n');
+  }
+
+  if (id === 'intro_minas') {
+    return [
+      t,
+      '',
+      'E tem um detalhe: mineiro fala pouco, mas entende muito.',
+      'Se alguém te oferecer café e pão de queijo, você aceitou a amizade sem perceber.'
+    ].join('\n');
+  }
+
+  if (id === 'origem_minas') {
+    return [
+      t,
+      '',
+      'Minas cresceu entre serras, caminhos e trabalho duro.',
+      'E por aqui história não fica só em livro: fica na conversa — e na memória do povo.'
+    ].join('\n');
+  }
+
+  if (id === 'pao_de_queijo') {
+    return [
+      t,
+      '',
+      'Causo real: cada família diz que a dela é “a receita certa”.',
+      'O mais mineiro disso tudo é que… todo mundo está “certo” ao mesmo tempo.'
+    ].join('\n');
+  }
+
+  if (id === 'cafe_minas') {
+    return [
+      t,
+      '',
+      'E o café em Minas não é só bebida: é convite.',
+      'Se ouvir “passa aqui rapidinho”, pode saber… vai ter café e conversa.'
+    ].join('\n');
+  }
+
+  if (id === 'fe_religiosidade') {
+    return [
+      t,
+      '',
+      'Festa, procissão, igreja antiga… é fé misturada com cultura e comunidade.',
+      'Em cidade pequena, isso vira calendário do ano — e memória da vida inteira.'
+    ].join('\n');
+  }
+
+  if (id === 'voo_livre_valadares') {
+    return [
+      t,
+      '',
+      'Lá do alto, Minas parece mapa vivo: serra, rio, cidade e horizonte.',
+      'É aventura com cheiro de liberdade — e com aquele “uai” quando o vento muda.'
+    ].join('\n');
+  }
+
+  // UAI “de quem é?”
+  if (id === 'serras_paisagens') {
+    return [
+      t,
+      '',
+      'E tem o “uai”… que dá discussão boa.',
+      'Tem gente que fala “uai é de Minas”, tem gente que fala “uai é de Goiás”.',
+      'A verdade? O uai é do Brasil — mas o mineiro usa com uma calma que é só dele.'
+    ].join('\n');
+  }
+
+  return t;
+}
+
+function bookDefaultPlanMG(grid=13, wpp=16){
   // Livro 01 — Minas Gerais Cultural (PT-BR) — 6x9 — 60 páginas
-  // 10 puzzles 15x15, com gabarito no final (fase PDF depois)
-  return {
+  // 10 puzzles (1 por seção), gabarito no final (fase export depois)
+  const plan = {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
       title: 'MINAS GERAIS CULTURAL',
@@ -65,13 +164,11 @@ function bookDefaultPlanMG(){
       format: '6x9',
       pages_target: 60,
       language: 'pt-BR',
-      grid_default: 15,
-      words_per_puzzle: 20,
+      grid_default: grid,
+      words_per_puzzle: wpp,
       include_key: true,
       createdAt: new Date().toISOString()
     },
-    // Ícones (line art) — por enquanto só referência de “tipo”
-    // Depois podemos mapear isso para SVGs locais.
     sections: [
       {
         id:'intro_minas',
@@ -100,8 +197,8 @@ function bookDefaultPlanMG(){
         icon:'cheese',
         title:'A cultura do queijo mineiro',
         text:
-          'Em Minas, queijo é linguagem. Tem queijo fresco, meia-cura, curado. ' +
-          'E tem a Canastra, famosa no Brasil inteiro. Cada pedaço carrega clima, técnica e paciência.',
+          'Em Minas, queijo é linguagem. Tem queijo fresco, meia-cura, curado — e tem a Canastra, famosa no Brasil inteiro. ' +
+          'Cada pedaço carrega clima, técnica e paciência.',
         wordHints:[
           'QUEIJO','CANASTRA','CURADO','MEIACURA','LEITE','FAZENDA','TRADICAO','SABOR','COALHO','CURA'
         ]
@@ -134,9 +231,9 @@ function bookDefaultPlanMG(){
         title:'Ferrovia e o “trem” mineiro',
         text:
           'O “trem” em Minas é mais que vagão: é expressão, é memória e é caminho. ' +
-          'A ferrovia Vitória-Minas, por exemplo, marca a ligação entre regiões e histórias.',
+          'A ferrovia Vitória–Minas, por exemplo, marca a ligação entre regiões e histórias.',
         wordHints:[
-          'FERROVIA','TREM','TRILHO','ESTACAO','VIAGEM','VITORIAMINAS','ROTA','PLATAFORMA','VAGAO'
+          'FERROVIA','TREM','TRILHO','ESTACAO','VIAGEM','VITORIAMINAS','ROTA','PLATAFORMA','VAGAO','PROSEAR'
         ]
       },
       {
@@ -169,7 +266,7 @@ function bookDefaultPlanMG(){
           'Minas é recorte de serra, estrada que sobe e desce, mirante e céu aberto. ' +
           'É natureza que convida a respirar e seguir adiante.',
         wordHints:[
-          'SERRA','MIRANTE','ESTRADA','PAISAGEM','NATUREZA','TRILHA','VALE','CACHOEIRA'
+          'SERRA','MIRANTE','ESTRADA','PAISAGEM','NATUREZA','TRILHA','VALE','CACHOEIRA','UAI'
         ]
       },
       {
@@ -185,6 +282,14 @@ function bookDefaultPlanMG(){
       }
     ]
   };
+
+  // aplica “camada humana” (mineirês + mini-causo) sem mexer na estrutura
+  plan.sections = (plan.sections || []).map(s => ({
+    ...s,
+    text: enrichSectionText(s.id, s.text)
+  }));
+
+  return plan;
 }
 
 function renderPlanText(plan){
@@ -194,12 +299,12 @@ function renderPlanText(plan){
   if (m.subtitle) lines.push(m.subtitle);
   lines.push('-'.repeat(46));
   lines.push(`Formato: ${m.format} | Páginas: ${m.pages_target} | Idioma: ${m.language}`);
-  lines.push(`Puzzles: ${plan.sections.length} (1 por seção) | Grade: ${m.grid_default}x${m.grid_default} | Palavras/puzzle: ${m.words_per_puzzle}`);
+  lines.push(`Seções: ${plan.sections.length} | Grade: ${m.grid_default}x${m.grid_default} | Palavras/puzzle: ${m.words_per_puzzle}`);
   lines.push('');
   lines.push('SEÇÕES');
   lines.push('-----');
   plan.sections.forEach((s, i) => {
-    lines.push(`${String(i+1).padStart(2,'0')}. ${s.title}  [icon:${s.icon}]`);
+    lines.push(`${String(i+1).padStart(2,'0')}. ${s.title}  [id:${s.id}] [icon:${s.icon}]`);
   });
   return lines.join('\n');
 }
@@ -209,7 +314,7 @@ function renderSectionText(s){
   lines.push(s.title.toUpperCase());
   lines.push('-'.repeat(Math.max(18, s.title.length)));
   lines.push('');
-  lines.push(wrapLines(s.text, 78));
+  lines.push(wrapLines(s.text, 72));
   lines.push('');
   return lines.join('\n').trimEnd();
 }
@@ -226,8 +331,9 @@ export class CulturalAgentModule {
   render(root){
     const seed = Storage.get('cultural:seed', {
       mode: 'BOOK', // BOOK | QUICK
-      grid: 15,
-      wordsPerPuzzle: 20,
+      preset: 'BR_POCKET',
+      grid: 13,
+      wordsPerPuzzle: 16,
       docText: '',
       wordsText: '',
       planText: '',
@@ -241,34 +347,38 @@ export class CulturalAgentModule {
         <div class="card">
           <h2>Cultural Agent</h2>
           <p class="muted">
-            Linha Cultural Brasil (PT-BR). Planeje livro 6x9 (60 páginas) com emoção + estrutura editorial.
-            Coloring/Comfy permanece separado.
+            Linha Cultural Brasil (PT-BR). Planeje o livro com emoção + padrão editorial.
+            <br/>Fluxo rápido: <b>Gerar Plano → Abrir Builder → Enviar p/ Caça-Palavras → Gerar+Salvar</b>.
           </p>
 
           <div class="row">
             <label>Modo
               <select id="ca_mode">
-                <option value="BOOK" ${seed.mode==='BOOK'?'selected':''}>Livro (Minas Gerais Cultural)</option>
+                <option value="BOOK" ${seed.mode==='BOOK'?'selected':''}>Livro (Minas Cultural)</option>
                 <option value="QUICK" ${seed.mode==='QUICK'?'selected':''}>Rápido (teste de seção/palavras)</option>
               </select>
             </label>
 
-            <label>Grade (padrão)
-              <select id="ca_grid">
-                ${[13,15,17].map(n=>`<option value="${n}" ${Number(seed.grid)===n?'selected':''}>${n}x${n}</option>`).join('')}
+            <label>Preset Brasil
+              <select id="ca_preset">
+                <option value="BR_POCKET" ${seed.preset==='BR_POCKET'?'selected':''}>${$esc(PRESETS.BR_POCKET.label)}</option>
+                <option value="BR_PLUS" ${seed.preset==='BR_PLUS'?'selected':''}>${$esc(PRESETS.BR_PLUS.label)}</option>
               </select>
             </label>
 
+            <label>Grade (padrão)
+              <select id="ca_grid"></select>
+            </label>
+
             <label>Palavras por puzzle
-              <select id="ca_wpp">
-                ${[18,20,22].map(n=>`<option value="${n}" ${Number(seed.wordsPerPuzzle)===n?'selected':''}>${n}</option>`).join('')}
-              </select>
+              <select id="ca_wpp"></select>
             </label>
           </div>
 
           <div class="row">
             <button class="btn primary" id="ca_build">Gerar Plano do Livro (MG)</button>
             <button class="btn" id="ca_export_plan">Exportar Plano (JSON)</button>
+            <button class="btn" id="ca_open_builder">Abrir Builder</button>
           </div>
 
           <div class="row">
@@ -276,19 +386,19 @@ export class CulturalAgentModule {
               <select id="ca_section"></select>
             </label>
             <button class="btn" id="ca_apply_ws">Aplicar Seção no Caça-Palavras</button>
+            <button class="btn" id="ca_open_ws">Abrir Caça-Palavras</button>
           </div>
 
           <div class="row">
             <button class="btn" id="ca_copy">Copiar Seção (texto + palavras)</button>
             <button class="btn" id="ca_save">Salvar</button>
           </div>
-
         </div>
 
         <div class="card">
           <h2>Plano do livro</h2>
           <pre id="ca_plan" class="pre"></pre>
-          <p class="muted">Isso vira o “roteiro” das 60 páginas. O PDF vem na fase do exportador.</p>
+          <p class="muted">Isso vira o “roteiro” do livro. O Builder mostra o livro folheando.</p>
         </div>
 
         <div class="card">
@@ -312,40 +422,25 @@ export class CulturalAgentModule {
 
     let plan = existingPlan;
 
-    const fillSections = () => {
-      sectionSel.innerHTML = '';
-      const secs = plan?.sections || [];
-      secs.forEach((s, idx) => {
-        const opt = document.createElement('option');
-        opt.value = String(idx);
-        opt.textContent = `${idx+1}. ${s.title} (icon:${s.icon})`;
-        sectionSel.appendChild(opt);
-      });
-      sectionSel.value = String(Math.min(seed.selectedSection || 0, Math.max(0, secs.length-1)));
-    };
+    const fillPresetDerived = () => {
+      const p = $('#ca_preset').value;
+      const cfg = PRESETS[p] || PRESETS.BR_POCKET;
 
-    const renderSelected = () => {
-      if (!plan?.sections?.length) return;
-      const idx = parseInt(sectionSel.value || '0', 10);
-      const s = plan.sections[idx];
-      docEl.textContent = renderSectionText(s);
+      // grid select
+      const gridEl = $('#ca_grid');
+      const wppEl  = $('#ca_wpp');
 
-      const grid = parseInt($('#ca_grid').value, 10);
-      const wpp  = parseInt($('#ca_wpp').value, 10);
-      const picked = pickWordsForGrid(
-        []
-          .concat(s.wordHints || [])
-          .concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA']),
-        grid,
-        wpp
-      );
-      wordsEl.value = picked.join('\n');
-      saveSeed();
+      const gridOptions = [13,15,17];
+      gridEl.innerHTML = gridOptions.map(n => `<option value="${n}" ${n===cfg.grid?'selected':''}>${n}x${n}</option>`).join('');
+
+      const wppOptions = [16,18,20,22];
+      wppEl.innerHTML = wppOptions.map(n => `<option value="${n}" ${n===cfg.wpp?'selected':''}>${n}</option>`).join('');
     };
 
     const saveSeed = () => {
       const updated = {
         mode: $('#ca_mode').value,
+        preset: $('#ca_preset').value,
         grid: parseInt($('#ca_grid').value,10),
         wordsPerPuzzle: parseInt($('#ca_wpp').value,10),
         docText: docEl.textContent || '',
@@ -357,8 +452,54 @@ export class CulturalAgentModule {
       return updated;
     };
 
-    // hydrate from seed
+    const fillSections = () => {
+      sectionSel.innerHTML = '';
+      const secs = plan?.sections || [];
+      secs.forEach((s, idx) => {
+        const opt = document.createElement('option');
+        opt.value = String(idx);
+        opt.textContent = `${idx+1}. ${s.title} (id:${s.id})`;
+        sectionSel.appendChild(opt);
+      });
+      sectionSel.value = String(Math.min(seed.selectedSection || 0, Math.max(0, secs.length-1)));
+    };
+
+    const renderSelected = () => {
+      if (!plan?.sections?.length) return;
+      const idx = parseInt(sectionSel.value || '0', 10);
+      const s = plan.sections[idx];
+
+      docEl.textContent = renderSectionText(s);
+
+      const grid = parseInt($('#ca_grid').value, 10);
+      const wpp  = parseInt($('#ca_wpp').value, 10);
+
+      const picked = pickWordsForGrid(
+        []
+          .concat(s.wordHints || [])
+          .concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA', 'UAI']),
+        grid,
+        wpp
+      );
+
+      wordsEl.value = picked.join('\n');
+      saveSeed();
+    };
+
+    // init preset-derived fields
+    fillPresetDerived();
+
+    $('#ca_preset').onchange = () => {
+      fillPresetDerived();
+      // se já existe plano, mantém coerência
+      renderSelected();
+      saveSeed();
+    };
+
+    // if existing plan
     if (existingPlan) {
+      // se existir plano mas o preset mudou, a gente não “remenda” o plano sem querer.
+      // O botão "Gerar Plano" é quem recria o padrão.
       planEl.textContent = renderPlanText(existingPlan);
       fillSections();
       renderSelected();
@@ -369,14 +510,14 @@ export class CulturalAgentModule {
     }
 
     sectionSel.addEventListener('change', () => renderSelected());
+    $('#ca_grid').addEventListener('change', () => renderSelected());
+    $('#ca_wpp').addEventListener('change', () => renderSelected());
 
     $('#ca_build').onclick = () => {
       const grid = parseInt($('#ca_grid').value,10);
       const wpp  = parseInt($('#ca_wpp').value,10);
 
-      plan = bookDefaultPlanMG();
-      plan.meta.grid_default = grid;
-      plan.meta.words_per_puzzle = wpp;
+      plan = bookDefaultPlanMG(grid, wpp);
 
       Storage.set('cultural:book_plan', plan);
 
@@ -385,29 +526,39 @@ export class CulturalAgentModule {
       renderSelected();
 
       this.app.toast?.('Plano do livro gerado ✅');
-      this.app.log?.(`[CULT] book_plan created grid=${grid} wpp=${wpp} sections=${plan.sections.length}`);
+      try { this.app.log?.(`[CULT] book_plan created grid=${grid} wpp=${wpp} sections=${plan.sections.length}`); } catch {}
       saveSeed();
     };
 
     $('#ca_export_plan').onclick = () => {
-      if (!plan) {
-        this.app.toast?.('Gere o plano primeiro', 'err');
-        return;
+      if (!plan) { this.app.toast?.('Gere o plano primeiro'); return; }
+      try{
+        const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `book-plan-${(plan?.meta?.id||'cultural')}-${Date.now()}.json`;
+        a.click();
+        setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+        this.app.toast?.('Plano exportado ✅');
+      } catch(e){
+        this.app.toast?.('Falha ao exportar');
+        try { this.app.log?.('[CULT] export failed: ' + (e?.message || e)); } catch {}
       }
-      const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `book-plan-minas-gerais-${Date.now()}.json`;
-      a.click();
-      setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-      this.app.toast?.('Plano exportado ✅');
+    };
+
+    $('#ca_open_builder').onclick = () => {
+      const btn = document.querySelector('.navitem[data-view="book"]');
+      btn?.click?.();
+    };
+
+    $('#ca_open_ws').onclick = () => {
+      const btn = document.querySelector('.navitem[data-view="wordsearch"]');
+      btn?.click?.();
     };
 
     $('#ca_apply_ws').onclick = () => {
-      if (!plan?.sections?.length) {
-        this.app.toast?.('Gere o plano primeiro', 'err');
-        return;
-      }
+      if (!plan?.sections?.length) { this.app.toast?.('Gere o plano primeiro'); return; }
+
       const idx = parseInt(sectionSel.value || '0', 10);
       const s = plan.sections[idx];
 
@@ -416,34 +567,44 @@ export class CulturalAgentModule {
 
       const words = (wordsEl.value || '')
         .split(/\r?\n+/).map(x=>x.trim()).filter(Boolean);
+
       const picked = pickWordsForGrid(words, grid, wpp);
+      const preset = presetFromGrid(grid);
 
       const ws = {
         title: `Caça-Palavras — ${s.title}`,
-        preset: 'BR_POCKET', // mantemos compatível; o “editorial 6x9” vem no export PDF
+        preset,                 // ✅ certo (Pocket/Plus)
         size: grid,
+        maxWords: wpp,
         includeKey: true,
         words: picked.join('\n'),
+        puzzleId: s.id,         // ✅ link oficial
+        sectionId: s.id,
+        sectionTitle: s.title,
         output: '',
         ts: Date.now()
       };
+
       Storage.set('wordsearch:seed', ws);
 
-      this.app.toast?.('Aplicado ✅ (abra Caça-palavras e clique Gerar)');
-      this.app.log?.(`[CULT] applied section=${idx+1} grid=${grid} words=${picked.length}`);
+      this.app.toast?.('Aplicado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
+      try { this.app.log?.(`[CULT] applied section=${idx+1} id=${s.id} grid=${grid} wpp=${wpp} words=${picked.length}`); } catch {}
       saveSeed();
     };
 
     $('#ca_copy').onclick = async () => {
+      const idx = parseInt(sectionSel.value || '0', 10);
+      const s = plan?.sections?.[idx];
       const txt =
         (docEl.textContent || '').trim() +
         '\n\nPALAVRAS\n-------\n' +
-        (wordsEl.value || '').trim() + '\n';
+        (wordsEl.value || '').trim() + '\n' +
+        (s?.id ? `\nID: ${s.id}\n` : '');
       try {
         await navigator.clipboard.writeText(txt);
         this.app.toast?.('Copiado ✅');
       } catch {
-        this.app.toast?.('Falha ao copiar', 'err');
+        this.app.toast?.('Falha ao copiar');
       }
     };
 
@@ -458,5 +619,8 @@ export class CulturalAgentModule {
       this.app.saveProject?.(proj);
       this.app.toast?.('Salvo ✅');
     };
+
+    // first render selected if plan exists
+    if (plan?.sections?.length) renderSelected();
   }
 }
