@@ -1,10 +1,10 @@
 /* FILE: /js/modules/cultural_agent.js */
-// Bright Cup Creator — Cultural Agent (Book Planner) v0.3 PADRÃO (1 ano)
-// Objetivo: planejar livro cultural (6x9) com emoção + padrão editorial.
-// - Sem API (por enquanto)
-// - Sem mexer no Coloring pipeline
+// Bright Cup Creator — Cultural Agent (Book Planner) v0.3d PADRÃO (1 ano)
+// Patch:
+// - Mantém palavras com ortografia (acentos/ç) no DISPLAY quando possível (sem quebrar a grade)
+// - Continua normalizando p/ geração (grade) sem acento (mais fácil achar)
+// - Não mexe no pipeline de Coloring
 // - Salva plano em Storage: cultural:book_plan
-// - Pode aplicar seção no Caça-Palavras (wordsearch) para produzir puzzle rápido
 // - Presets BR: Pocket (13x13/16) e Plus (15x15/20)
 
 import { Storage } from '../core/storage.js';
@@ -13,6 +13,7 @@ const $esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
 }[c]));
 
+// normaliza PARA GRADE (sem acento, sem espaço, só A-Z0-9)
 function normalizeWord(s){
   return String(s || '')
     .trim()
@@ -22,7 +23,15 @@ function normalizeWord(s){
     .replace(/[^A-Z0-9]/g,'');
 }
 
-function uniq(list){
+// limpa só espaços (mantém acento/ç) PARA DISPLAY
+function displayWord(s){
+  return String(s || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function uniqNorm(list){
   const seen = new Set();
   const out = [];
   for (const it of list){
@@ -37,8 +46,7 @@ function uniq(list){
 
 function pickWordsForGrid(words, gridSize, maxCount){
   const maxLen = gridSize;
-  const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
-  // prioriza perto de 7 letras (boa distribuição)
+  const filtered = uniqNorm(words).filter(w => w.length >= 3 && w.length <= maxLen);
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
   return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
@@ -68,8 +76,6 @@ function presetFromGrid(grid){
 }
 
 function enrichSectionText(id, base){
-  // Aqui é a “camada humana”: mineirês + curiosidade + mini-causo.
-  // Curto e vendável (não vira textão chato).
   const t = String(base || '').trim();
 
   if (id === 'ferrovia') {
@@ -139,7 +145,6 @@ function enrichSectionText(id, base){
     ].join('\n');
   }
 
-  // UAI “de quem é?”
   if (id === 'serras_paisagens') {
     return [
       t,
@@ -154,8 +159,6 @@ function enrichSectionText(id, base){
 }
 
 function bookDefaultPlanMG(grid=13, wpp=16){
-  // Livro 01 — Minas Gerais Cultural (PT-BR) — 6x9 — 60 páginas
-  // 10 puzzles (1 por seção), gabarito no final (fase export depois)
   const plan = {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
@@ -178,7 +181,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Minas é serra no horizonte e café passado na hora. É conversa na porta, ' +
           'é tradição que atravessa gerações. Aqui, a cultura não é enfeite: é jeito de viver.',
         wordHints:[
-          'MINAS','MINEIRO','SERRA','MONTANHA','CULTURA','HISTORIA','TRADICAO','ACOLHIMENTO','CAFE','FOGAO','INTERIOR'
+          'Minas','Mineiro','Serra','Montanha','Cultura','História','Tradição','Acolhimento','Café','Fogão','Interior','Uai'
         ]
       },
       {
@@ -189,7 +192,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'A história de Minas se mistura com caminhos antigos, trabalho duro e cidades que cresceram ' +
           'ao redor de rios, serras e rotas. O tempo aqui deixa marca: na pedra, na fé e nas histórias contadas.',
         wordHints:[
-          'HISTORIA','CAMINHO','SERRA','RIO','CIDADE','PATRIMONIO','MEMORIA','ORIGEM','TRADICAO'
+          'História','Caminho','Serra','Rio','Cidade','Patrimônio','Memória','Origem','Tradição','Cultura'
         ]
       },
       {
@@ -200,7 +203,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Em Minas, queijo é linguagem. Tem queijo fresco, meia-cura, curado — e tem a Canastra, famosa no Brasil inteiro. ' +
           'Cada pedaço carrega clima, técnica e paciência.',
         wordHints:[
-          'QUEIJO','CANASTRA','CURADO','MEIACURA','LEITE','FAZENDA','TRADICAO','SABOR','COALHO','CURA'
+          'Queijo','Canastra','Curado','Meia-cura','Leite','Fazenda','Tradição','Sabor','Coalho','Cura','Minas'
         ]
       },
       {
@@ -211,7 +214,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Receita base: polvilho, leite, óleo, ovos, queijo e sal. Mistura, sovar, bolear e assar. ' +
           'O segredo é o queijo e o ponto da massa — cada casa tem seu jeito.',
         wordHints:[
-          'PAODEQUEIJO','POLVILHO','FORNO','MASSA','QUEIJO','LEITE','OVO','SAL','RECEITA','COZINHA'
+          'Pão de queijo','Polvilho','Forno','Massa','Queijo','Leite','Ovo','Sal','Receita','Cozinha','História','Minas','Uai'
         ]
       },
       {
@@ -222,7 +225,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Café em Minas é ritual. Cheiro que acorda a casa, conversa que começa cedo, ' +
           'e o interior que ensina a valorizar o simples. É parte da identidade mineira.',
         wordHints:[
-          'CAFE','COADOR','CHEIRO','MANHA','FAZENDA','INTERIOR','TRADICAO','TORRA','XICARA'
+          'Café','Coador','Cheiro','Manhã','Fazenda','Interior','Tradição','Torra','Xícara','Minas'
         ]
       },
       {
@@ -233,7 +236,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'O “trem” em Minas é mais que vagão: é expressão, é memória e é caminho. ' +
           'A ferrovia Vitória–Minas, por exemplo, marca a ligação entre regiões e histórias.',
         wordHints:[
-          'FERROVIA','TREM','TRILHO','ESTACAO','VIAGEM','VITORIAMINAS','ROTA','PLATAFORMA','VAGAO','PROSEAR'
+          'Ferrovia','Trem','Trilho','Estação','Viagem','Vitória-Minas','Rota','Plataforma','Vagão','Prosa','Memória'
         ]
       },
       {
@@ -244,7 +247,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Minas também é conhecida por pedras e gemas. O brilho vem de longe: trabalho, comércio, ' +
           'histórias de garimpo e tradição regional.',
         wordHints:[
-          'PEDRA','GEMA','GARIMPO','CRISTAL','BRILHO','MINERIO','OURO','PRATA','JOIA'
+          'Pedra','Gema','Garimpo','Cristal','Brilho','Minério','Ouro','Prata','Joia','História'
         ]
       },
       {
@@ -255,7 +258,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Em muitas cidades, a fé aparece nas festas, nas procissões e nas igrejas. ' +
           'É uma cultura viva, que une famílias e mantém a história de pé.',
         wordHints:[
-          'FE','IGREJA','SANTUARIO','PROCISSAO','TRADICAO','FESTA','DEVOTO','ROMARIA'
+          'Fé','Igreja','Santuário','Procissão','Tradição','Festa','Devoto','Romaria','Cultura','História'
         ]
       },
       {
@@ -266,7 +269,7 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Minas é recorte de serra, estrada que sobe e desce, mirante e céu aberto. ' +
           'É natureza que convida a respirar e seguir adiante.',
         wordHints:[
-          'SERRA','MIRANTE','ESTRADA','PAISAGEM','NATUREZA','TRILHA','VALE','CACHOEIRA','UAI'
+          'Serra','Mirante','Estrada','Paisagem','Natureza','Trilha','Vale','Cachoeira','Caminho','Uai'
         ]
       },
       {
@@ -277,13 +280,12 @@ function bookDefaultPlanMG(grid=13, wpp=16){
           'Governador Valadares é conhecida como capital mundial do voo livre. ' +
           'O Pico do Ibituruna virou símbolo: aventura, vento e gente do mundo inteiro olhando Minas do alto.',
         wordHints:[
-          'VALADARES','IBITURUNA','VOOLIVRE','PARAPENTE','ASADELTA','PICO','VENTO','AVENTURA','MIRANTE'
+          'Valadares','Ibituruna','Voo livre','Parapente','Asa-delta','Pico','Vento','Aventura','Mirante','Minas'
         ]
       }
     ]
   };
 
-  // aplica “camada humana” (mineirês + mini-causo) sem mexer na estrutura
   plan.sections = (plan.sections || []).map(s => ({
     ...s,
     text: enrichSectionText(s.id, s.text)
@@ -311,8 +313,8 @@ function renderPlanText(plan){
 
 function renderSectionText(s){
   const lines = [];
-  lines.push(s.title.toUpperCase());
-  lines.push('-'.repeat(Math.max(18, s.title.length)));
+  lines.push(String(s.title || '').toUpperCase());
+  lines.push('-'.repeat(Math.max(18, String(s.title||'').length)));
   lines.push('');
   lines.push(wrapLines(s.text, 72));
   lines.push('');
@@ -330,7 +332,7 @@ export class CulturalAgentModule {
 
   render(root){
     const seed = Storage.get('cultural:seed', {
-      mode: 'BOOK', // BOOK | QUICK
+      mode: 'BOOK',
       preset: 'BR_POCKET',
       grid: 13,
       wordsPerPuzzle: 16,
@@ -408,7 +410,9 @@ export class CulturalAgentModule {
 
         <div class="card">
           <h2>Palavras da seção</h2>
-          <p class="muted">Uma por linha, normalizadas (sem acento). Compatíveis com a grade escolhida.</p>
+          <p class="muted">
+            Dica: pode escrever com acento/ç aqui (display). A grade será gerada normalizada (sem acento).
+          </p>
           <textarea id="ca_words" rows="12" style="width:100%"></textarea>
         </div>
       </div>
@@ -426,7 +430,6 @@ export class CulturalAgentModule {
       const p = $('#ca_preset').value;
       const cfg = PRESETS[p] || PRESETS.BR_POCKET;
 
-      // grid select
       const gridEl = $('#ca_grid');
       const wppEl  = $('#ca_wpp');
 
@@ -474,32 +477,28 @@ export class CulturalAgentModule {
       const grid = parseInt($('#ca_grid').value, 10);
       const wpp  = parseInt($('#ca_wpp').value, 10);
 
-      const picked = pickWordsForGrid(
+      const pickedNorm = pickWordsForGrid(
         []
           .concat(s.wordHints || [])
-          .concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA', 'UAI']),
+          .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']),
         grid,
         wpp
       );
 
-      wordsEl.value = picked.join('\n');
+      // aqui a textarea fica normalizada (p/ bater com a grade e não cortar)
+      wordsEl.value = pickedNorm.join('\n');
       saveSeed();
     };
 
-    // init preset-derived fields
     fillPresetDerived();
 
     $('#ca_preset').onchange = () => {
       fillPresetDerived();
-      // se já existe plano, mantém coerência
       renderSelected();
       saveSeed();
     };
 
-    // if existing plan
     if (existingPlan) {
-      // se existir plano mas o preset mudou, a gente não “remenda” o plano sem querer.
-      // O botão "Gerar Plano" é quem recria o padrão.
       planEl.textContent = renderPlanText(existingPlan);
       fillSections();
       renderSelected();
@@ -518,7 +517,6 @@ export class CulturalAgentModule {
       const wpp  = parseInt($('#ca_wpp').value,10);
 
       plan = bookDefaultPlanMG(grid, wpp);
-
       Storage.set('cultural:book_plan', plan);
 
       planEl.textContent = renderPlanText(plan);
@@ -565,20 +563,20 @@ export class CulturalAgentModule {
       const grid = parseInt($('#ca_grid').value,10);
       const wpp  = parseInt($('#ca_wpp').value,10);
 
-      const words = (wordsEl.value || '')
+      const wordsRaw = (wordsEl.value || '')
         .split(/\r?\n+/).map(x=>x.trim()).filter(Boolean);
 
-      const picked = pickWordsForGrid(words, grid, wpp);
+      const picked = pickWordsForGrid(wordsRaw, grid, wpp);
       const preset = presetFromGrid(grid);
 
       const ws = {
         title: `Caça-Palavras — ${s.title}`,
-        preset,                 // ✅ certo (Pocket/Plus)
+        preset,
         size: grid,
         maxWords: wpp,
         includeKey: true,
-        words: picked.join('\n'),
-        puzzleId: s.id,         // ✅ link oficial
+        words: picked.join('\n'), // normalizado
+        puzzleId: s.id,
         sectionId: s.id,
         sectionTitle: s.title,
         output: '',
@@ -597,7 +595,7 @@ export class CulturalAgentModule {
       const s = plan?.sections?.[idx];
       const txt =
         (docEl.textContent || '').trim() +
-        '\n\nPALAVRAS\n-------\n' +
+        '\n\nPALAVRAS (grade normalizada)\n---------------------------\n' +
         (wordsEl.value || '').trim() + '\n' +
         (s?.id ? `\nID: ${s.id}\n` : '');
       try {
@@ -620,7 +618,6 @@ export class CulturalAgentModule {
       this.app.toast?.('Salvo ✅');
     };
 
-    // first render selected if plan exists
     if (plan?.sections?.length) renderSelected();
   }
 }
