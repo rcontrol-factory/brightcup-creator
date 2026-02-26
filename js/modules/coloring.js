@@ -1,4 +1,10 @@
 /* FILE: /js/modules/coloring.js */
+// Bright Cup Creator — Coloring Pages (PADRÃO SAFE)
+// Fixes:
+// - NÃO envia se faltar Base URL / Workflow
+// - NÃO quebra se tryGetLatestImages não existir (compat)
+// - Batch interrompe seguro quando faltar config
+
 import { Storage } from '../core/storage.js';
 
 export class ColoringModule {
@@ -159,18 +165,32 @@ export class ColoringModule {
     };
 
     const ensureComfyReady = ()=>{
-      const cfg = this.app.getConfig();
-      if(!cfg.baseUrl){ log('⚠️ Falta Base URL. Vá em Config e salve o ComfyUI Base URL.'); return null; }
-      if(!cfg.workflowJson){ log('⚠️ Falta Workflow JSON. Vá em Config e cole o Workflow (API).'); return null; }
+      const cfg = this.app.getConfig?.() || {};
+      if(!cfg.baseUrl){
+        log('⚠️ Falta Base URL. Vá em Config e salve o ComfyUI Base URL.');
+        return null;
+      }
+      if(!cfg.workflowJson){
+        log('⚠️ Falta Workflow JSON. Vá em Config e cole o Workflow (API).');
+        return null;
+      }
       let workflow = null;
       try { workflow = JSON.parse(cfg.workflowJson); }
-      catch(e){ log('❌ Workflow JSON inválido: ' + (e?.message||e)); return null; }
+      catch(e){
+        log('❌ Workflow JSON inválido: ' + (e?.message||e));
+        return null;
+      }
+      if(!this.app.comfy || typeof this.app.comfy.enqueuePrompt !== 'function'){
+        log('❌ Bridge Comfy não carregou (this.app.comfy ausente). Recarregue a página.');
+        return null;
+      }
       return { cfg, workflow };
     };
 
     const sendOnce = async(st, seedOverride=null)=>{
       const ready = ensureComfyReady();
       if(!ready) return null;
+
       const { cfg, workflow } = ready;
       const map = cfg.workflowMap || null;
 
@@ -213,9 +233,15 @@ export class ColoringModule {
       try{
         log('➡️ Enviando (1)...');
         const res = await sendOnce(st, null);
+        if(!res){
+          log('⛔ Não enviado: falta config (Base URL / Workflow) ou bridge Comfy.');
+          return;
+        }
         log('✅ Enviado. prompt_id=' + (res?.prompt_id||'?'));
 
-        const imgs = await this.app.comfy.tryGetLatestImages();
+        // SAFE: preview só se existir
+        const fn = this.app.comfy?.tryGetLatestImages;
+        const imgs = (typeof fn === 'function') ? await fn.call(this.app.comfy) : [];
         if(imgs?.length){
           $('#imgOut').innerHTML = imgs.map(u=>`<img src="${u}" alt="output" />`).join('');
           log('🖼️ Preview carregado (se CORS permitir).');
@@ -251,16 +277,27 @@ export class ColoringModule {
       if(!built) return;
       const { st, plan } = built;
 
+      // Antes de começar batch, valida config/bridge UMA vez
+      const ready = ensureComfyReady();
+      if(!ready){
+        log('⛔ Batch cancelado: falta config (Base URL / Workflow) ou bridge Comfy.');
+        return;
+      }
+
       sending = true;
       try{
         log(`➡️ Enviando batch (${plan.length})...`);
         for(const item of plan){
           log(`• ${item.i+1}/${plan.length} seed=${item.seed}`);
           const res = await sendOnce(st, item.seed);
+          if(!res){
+            log('⛔ Batch interrompido: falha ao enviar (config/bridge).');
+            break;
+          }
           log(`  ✅ prompt_id=${res?.prompt_id||'?'}`);
           await new Promise(r=>setTimeout(r, 250));
         }
-        log('🎉 Batch enviado ✅');
+        if(sending) log('🎉 Batch finalizado ✅');
       }catch(e){
         log('❌ Erro batch: ' + (e?.message||e));
       }finally{
