@@ -1,10 +1,11 @@
 /* FILE: /js/modules/cultural_book_builder.js */
 // Bright Cup Creator — Cultural Book Builder v0.3c PADRÃO (1 ano)
 // PATCH "ALISADA":
-// - Grade (cells) responsiva (clamp) -> não ocupa a tela toda no iPhone
-// - Título/meta menores no mobile
-// - Palavras (chips) mais compactas
-// - Slot de imagem mais compacto
+// - Folha fixa (page-card com max-width + center) -> não “cresce” no mobile
+// - Grade autoajusta por N (13/15/17) usando CSS var --n
+// - Palavras (chips) compactas
+// - Slot de imagem compacto
+// - Swipe iOS mais confiável (touchstart passive:false)
 
 import { Storage } from '../core/storage.js';
 import { generateWordSearch, normalizeWord as wsNormalizeWord } from '../core/wordsearch_gen.js';
@@ -319,7 +320,7 @@ function renderGridHTML(grid){
   const N = grid?.length || 0;
   if (!N) return '<div class="ws-empty">Grade vazia</div>';
 
-  let html = '<div class="ws-grid" role="img" aria-label="Caça-palavras">';
+  let html = `<div class="ws-grid" style="--n:${N}" role="img" aria-label="Caça-palavras">`;
   for (let y=0;y<N;y++){
     html += '<div class="ws-row">';
     for (let x=0;x<N;x++){
@@ -346,7 +347,8 @@ function bindSwipe(el, onPrev, onNext){
     if (!tracking) return;
     const dx = x - startX;
     const dy = y - startY;
-    if (!locked && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.2) locked = true;
+
+    if (!locked && Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.15) locked = true;
     if (locked) { try { ev.preventDefault(); } catch {} }
   };
   const onEnd   = (x,y) => {
@@ -355,8 +357,8 @@ function bindSwipe(el, onPrev, onNext){
 
     const dx = x - startX;
     const dy = y - startY;
-    if (Math.abs(dx) < 55) return;
-    if (Math.abs(dx) < Math.abs(dy) * 1.2) return;
+    if (Math.abs(dx) < 48) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.1) return;
 
     if (dx > 0) onPrev?.();
     else onNext?.();
@@ -366,7 +368,7 @@ function bindSwipe(el, onPrev, onNext){
     const t = e.touches?.[0];
     if (!t) return;
     onStart(t.clientX, t.clientY);
-  }, { passive:true });
+  }, { passive:false });
 
   el.addEventListener('touchmove', (e)=>{
     const t = e.touches?.[0];
@@ -410,6 +412,7 @@ export class CulturalBookBuilderModule {
         .bb-tabs{ display:flex; gap:8px; align-items:center; }
         .bb-mini{ font-size:12px; opacity:.78; }
 
+        /* ✅ folha “fixa” (não cresce infinito no mobile) */
         .page-card{
           background: rgba(255,255,255,0.92);
           color: #0b0f16;
@@ -418,6 +421,8 @@ export class CulturalBookBuilderModule {
           box-shadow: 0 18px 60px rgba(0,0,0,.18);
           overflow:hidden;
           position:relative;
+          max-width: 560px;
+          margin: 0 auto;
         }
         .page-inner{
           padding: 16px 16px 14px 16px;
@@ -429,20 +434,19 @@ export class CulturalBookBuilderModule {
           border-bottom: 1px solid rgba(0,0,0,.08);
           padding-bottom: 8px;
         }
-        /* ✅ título responsivo */
         .page-title{
-          font-size: clamp(24px, 6.2vw, 34px);
+          font-size: clamp(22px, 6.0vw, 32px);
           line-height: 1.03;
           font-weight: 900;
           letter-spacing: -0.35px;
         }
         .page-meta{
-          font-size: clamp(13px, 3.7vw, 16px);
+          font-size: clamp(12px, 3.4vw, 15px);
           opacity: .65;
           margin-top: 4px;
         }
         .page-no{
-          font-size: 16px;
+          font-size: 15px;
           opacity:.55;
           font-weight: 800;
           padding-top: 6px;
@@ -462,7 +466,7 @@ export class CulturalBookBuilderModule {
           overflow-wrap:anywhere;
           word-break:break-word;
           font-family: ui-serif, Georgia, "Times New Roman", serif;
-          font-size: clamp(16px, 4.3vw, 20px);
+          font-size: clamp(16px, 4.2vw, 20px);
           line-height: 1.35;
         }
 
@@ -475,27 +479,35 @@ export class CulturalBookBuilderModule {
           display:flex;
           justify-content:center;
           align-items:center;
+          overflow:hidden;
         }
 
-        /* ✅ Grade responsiva (alisa no iPhone) */
-        .ws-grid{ display:grid; gap: clamp(2px, 0.9vw, 4px); }
-        .ws-row{ display:grid; grid-auto-flow:column; gap: clamp(2px, 0.9vw, 4px); }
+        /* ✅ Grade autoajusta por N (13/15/17) */
+        .ws-grid{
+          display:block;
+          --cell: clamp(14px, calc((min(92vw, 560px) - 64px) / var(--n)), 26px);
+        }
+        .ws-row{
+          display:flex;
+          gap: clamp(2px, 0.8vw, 4px);
+          justify-content:center;
+        }
         .ws-cell{
-          width:  clamp(18px, 5.2vw, 28px);
-          height: clamp(18px, 5.2vw, 28px);
+          width:  var(--cell);
+          height: var(--cell);
           display:flex;
           align-items:center;
           justify-content:center;
-          border-radius: clamp(5px, 1.4vw, 7px);
+          border-radius: clamp(5px, 1.2vw, 7px);
           border: 2px solid rgba(0,0,0,.18);
           background: rgba(255,255,255,0.70);
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: clamp(12px, 2.9vw, 18px);
-          letter-spacing: 0.2px;
+          font-size: clamp(11px, calc(var(--cell) * 0.56), 17px);
+          letter-spacing: 0.15px;
         }
 
-        /* ✅ Palavras mais compactas */
+        /* ✅ Palavras compactas */
         .words-box{
           border-radius: 16px;
           border: 1px solid rgba(0,0,0,.10);
@@ -503,7 +515,7 @@ export class CulturalBookBuilderModule {
           padding: 10px 12px;
         }
         .words-title{
-          font-size: 16px;
+          font-size: 15px;
           font-weight: 900;
           opacity: .72;
           margin-bottom: 8px;
@@ -511,22 +523,22 @@ export class CulturalBookBuilderModule {
         .words-line{
           display:flex;
           flex-wrap:wrap;
-          gap: 8px 10px;
+          gap: 7px 9px;
           align-items:center;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size: clamp(13px, 3.6vw, 17px);
+          font-size: clamp(12px, 3.4vw, 16px);
           font-weight: 900;
-          letter-spacing: 0.15px;
+          letter-spacing: 0.12px;
         }
         .ws-word{
-          padding: 5px 9px;
+          padding: 4px 8px;
           border-radius: 10px;
           border: 1px solid rgba(0,0,0,.14);
           background: rgba(255,255,255,0.65);
           white-space:nowrap;
         }
 
-        /* ✅ Slot de imagem mais compacto */
+        /* ✅ Slot de imagem compacto */
         .illus-slot{
           border-radius: 14px;
           border: 1px dashed rgba(0,0,0,.22);
@@ -565,6 +577,7 @@ export class CulturalBookBuilderModule {
           .spread{ grid-template-columns: 1fr; }
           .page-inner{ padding: 14px; }
           .ws-frame{ padding: 9px; }
+          .page-card{ max-width: 560px; }
         }
       </style>
 
