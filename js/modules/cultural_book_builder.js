@@ -1,11 +1,10 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3b PADRÃO (1 ano)
-// Objetivo: preview editorial do livro cultural (6x9) LIMPO no mobile, com caça-palavras quadriculado.
-// FIXES IMPORTANTES:
-// - Palavras do puzzle em linhas horizontais (wrap), sem “coluna infinita”
-// - Swipe (folhear) com o dedo no mobile (esquerda/direita)
-// - Slot de imagem ilustrativa na página do puzzle (placeholder clean)
-// - Cache local de puzzles pra não “trocar” grade toda hora ao navegar
+// Bright Cup Creator — Cultural Book Builder v0.3c PADRÃO (1 ano)
+// PATCH "ALISADA":
+// - Grade (cells) responsiva (clamp) -> não ocupa a tela toda no iPhone
+// - Título/meta menores no mobile
+// - Palavras (chips) mais compactas
+// - Slot de imagem mais compacto
 
 import { Storage } from '../core/storage.js';
 import { generateWordSearch, normalizeWord as wsNormalizeWord } from '../core/wordsearch_gen.js';
@@ -17,7 +16,6 @@ function esc(s){
 }
 
 function normalizeWord(s){
-  // compat com wordsearch_gen (sem acento, sem espaço, A-Z0-9)
   try { return wsNormalizeWord(s); } catch {}
   return String(s || '')
     .trim()
@@ -43,7 +41,6 @@ function uniq(list){
 function pickWords(words, gridSize, maxCount){
   const maxLen = gridSize;
   const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
-  // prioriza perto de 7 letras (boa distribuição)
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
   return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
@@ -78,13 +75,10 @@ function iconLabel(icon){
 }
 
 function displayWord(w){
-  // Mostra “bonito” com acento se vier com acento.
-  // Se vier normalizado, ainda fica OK.
   return String(w || '').trim().toUpperCase();
 }
 
 function buildDefaultPlanMG(grid=15, wpp=20){
-  // (Mantém simples e robusto. A “camada humana” mais longa fica no Agent.)
   return {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
@@ -220,7 +214,6 @@ function buildPages(plan){
 
   const pages = [];
 
-  // apresentação
   pages.push({
     kind:'text',
     icon:'history',
@@ -247,7 +240,6 @@ function buildPages(plan){
     const rawHints = [].concat(s.wordHints || []).concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA', 'UAI']);
     const wordsNorm = pickWords(rawHints, gridDefault, wppDefault);
 
-    // lista “bonita” (com acento quando existir)
     const wordsDisplay = uniq(rawHints.map(displayWord))
       .filter(w => normalizeWord(w).length >= 3 && normalizeWord(w).length <= gridDefault)
       .slice(0, Math.max(wordsNorm.length, 6));
@@ -265,7 +257,6 @@ function buildPages(plan){
     });
   });
 
-  // final / gabarito placeholder
   pages.push({
     kind:'text',
     icon:'history',
@@ -312,7 +303,7 @@ function ensurePuzzleGenerated(plan, page){
 
   const payload = {
     size: gen.size,
-    grid: gen.grid,       // matriz
+    grid: gen.grid,
     placedCount: (gen.placed || []).length,
     wordsUsed: (gen.words || []).length
   };
@@ -343,7 +334,6 @@ function renderGridHTML(grid){
 function renderWordsLine(wordsDisplay){
   const list = (wordsDisplay || []).map(displayWord).filter(Boolean);
   if (!list.length) return '';
-  // cada palavra vira um “chip”, e o container faz wrap automático
   return list.map(w => `<span class="ws-word">${esc(w)}</span>`).join('');
 }
 
@@ -356,8 +346,6 @@ function bindSwipe(el, onPrev, onNext){
     if (!tracking) return;
     const dx = x - startX;
     const dy = y - startY;
-
-    // se for claramente horizontal, trava e evita scroll da página
     if (!locked && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.2) locked = true;
     if (locked) { try { ev.preventDefault(); } catch {} }
   };
@@ -367,8 +355,6 @@ function bindSwipe(el, onPrev, onNext){
 
     const dx = x - startX;
     const dy = y - startY;
-
-    // só considera swipe horizontal
     if (Math.abs(dx) < 55) return;
     if (Math.abs(dx) < Math.abs(dy) * 1.2) return;
 
@@ -376,7 +362,6 @@ function bindSwipe(el, onPrev, onNext){
     else onNext?.();
   };
 
-  // touch
   el.addEventListener('touchstart', (e)=>{
     const t = e.touches?.[0];
     if (!t) return;
@@ -395,7 +380,6 @@ function bindSwipe(el, onPrev, onNext){
     onEnd(t.clientX, t.clientY);
   }, { passive:true });
 
-  // mouse (desktop)
   let mouseDown = false;
   el.addEventListener('mousedown', (e)=>{ mouseDown=true; onStart(e.clientX, e.clientY); });
   window.addEventListener('mousemove', (e)=>{ if(!mouseDown) return; onMove(e.clientX, e.clientY, e); }, { passive:false });
@@ -422,15 +406,10 @@ export class CulturalBookBuilderModule {
         .bb-wrap{ display:grid; gap:14px; }
         .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
         .bb-toolbar .left, .bb-toolbar .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-
-        .bb-top{
-          display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;
-          margin-top:6px;
-        }
+        .bb-top{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-top:6px; }
         .bb-tabs{ display:flex; gap:8px; align-items:center; }
         .bb-mini{ font-size:12px; opacity:.78; }
 
-        /* “Papel branco” (card do livro) */
         .page-card{
           background: rgba(255,255,255,0.92);
           color: #0b0f16;
@@ -441,30 +420,31 @@ export class CulturalBookBuilderModule {
           position:relative;
         }
         .page-inner{
-          padding: 18px 18px 16px 18px;
+          padding: 16px 16px 14px 16px;
           display:grid;
-          gap:12px;
+          gap:10px;
         }
         .page-head{
           display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
           border-bottom: 1px solid rgba(0,0,0,.08);
-          padding-bottom: 10px;
+          padding-bottom: 8px;
         }
+        /* ✅ título responsivo */
         .page-title{
-          font-size: 34px;
-          line-height: 1.02;
+          font-size: clamp(24px, 6.2vw, 34px);
+          line-height: 1.03;
           font-weight: 900;
-          letter-spacing: -0.4px;
+          letter-spacing: -0.35px;
         }
         .page-meta{
-          font-size: 16px;
+          font-size: clamp(13px, 3.7vw, 16px);
           opacity: .65;
           margin-top: 4px;
         }
         .page-no{
-          font-size: 18px;
+          font-size: 16px;
           opacity:.55;
-          font-weight: 700;
+          font-weight: 800;
           padding-top: 6px;
           min-width: 52px;
           text-align:right;
@@ -474,7 +454,7 @@ export class CulturalBookBuilderModule {
           border-radius: 16px;
           border: 1px solid rgba(0,0,0,.10);
           background: rgba(255,255,255,0.55);
-          padding: 14px;
+          padding: 12px;
         }
         .page-body pre{
           margin:0;
@@ -482,90 +462,88 @@ export class CulturalBookBuilderModule {
           overflow-wrap:anywhere;
           word-break:break-word;
           font-family: ui-serif, Georgia, "Times New Roman", serif;
-          font-size: 20px;
+          font-size: clamp(16px, 4.3vw, 20px);
           line-height: 1.35;
         }
 
-        /* puzzle block */
-        .puzzle-wrap{
-          display:grid;
-          gap:12px;
-        }
+        .puzzle-wrap{ display:grid; gap:10px; }
         .ws-frame{
           border-radius: 16px;
           border: 1px solid rgba(0,0,0,.14);
           background: rgba(255,255,255,0.65);
-          padding: 12px;
+          padding: 10px;
           display:flex;
           justify-content:center;
           align-items:center;
         }
-        .ws-grid{ display:grid; gap:4px; }
-        .ws-row{ display:grid; grid-auto-flow:column; gap:4px; }
+
+        /* ✅ Grade responsiva (alisa no iPhone) */
+        .ws-grid{ display:grid; gap: clamp(2px, 0.9vw, 4px); }
+        .ws-row{ display:grid; grid-auto-flow:column; gap: clamp(2px, 0.9vw, 4px); }
         .ws-cell{
-          width: 30px;
-          height: 30px;
+          width:  clamp(18px, 5.2vw, 28px);
+          height: clamp(18px, 5.2vw, 28px);
           display:flex;
           align-items:center;
           justify-content:center;
-          border-radius: 6px;
+          border-radius: clamp(5px, 1.4vw, 7px);
           border: 2px solid rgba(0,0,0,.18);
           background: rgba(255,255,255,0.70);
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 18px;
-          letter-spacing: 0.3px;
+          font-size: clamp(12px, 2.9vw, 18px);
+          letter-spacing: 0.2px;
         }
 
-        /* palavras: horizontal + wrap (o que você pediu) */
+        /* ✅ Palavras mais compactas */
         .words-box{
           border-radius: 16px;
           border: 1px solid rgba(0,0,0,.10);
           background: rgba(255,255,255,0.55);
-          padding: 12px 14px;
+          padding: 10px 12px;
         }
         .words-title{
-          font-size: 18px;
-          font-weight: 800;
-          opacity: .75;
-          margin-bottom: 10px;
+          font-size: 16px;
+          font-weight: 900;
+          opacity: .72;
+          margin-bottom: 8px;
         }
         .words-line{
           display:flex;
           flex-wrap:wrap;
-          gap:10px 14px;
+          gap: 8px 10px;
           align-items:center;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size: 18px;
-          font-weight: 800;
-          letter-spacing: 0.2px;
+          font-size: clamp(13px, 3.6vw, 17px);
+          font-weight: 900;
+          letter-spacing: 0.15px;
         }
         .ws-word{
-          padding: 6px 10px;
+          padding: 5px 9px;
           border-radius: 10px;
           border: 1px solid rgba(0,0,0,.14);
           background: rgba(255,255,255,0.65);
           white-space:nowrap;
         }
 
-        /* slot de imagem ilustrativa (clean) */
+        /* ✅ Slot de imagem mais compacto */
         .illus-slot{
-          border-radius: 16px;
+          border-radius: 14px;
           border: 1px dashed rgba(0,0,0,.22);
           background: rgba(255,255,255,0.42);
-          padding: 10px 12px;
+          padding: 9px 10px;
           display:flex;
           align-items:center;
           justify-content:space-between;
-          gap:12px;
+          gap:10px;
         }
-        .illus-left{ display:grid; gap:3px; }
-        .illus-title{ font-size: 16px; font-weight: 900; opacity:.75; }
-        .illus-desc{ font-size: 14px; opacity:.60; }
+        .illus-left{ display:grid; gap:2px; }
+        .illus-title{ font-size: 14px; font-weight: 900; opacity:.74; }
+        .illus-desc{ font-size: 12px; opacity:.58; }
         .illus-badge{
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 900;
-          padding: 8px 10px;
+          padding: 7px 9px;
           border-radius: 12px;
           border: 1px solid rgba(0,0,0,.14);
           background: rgba(255,255,255,0.65);
@@ -577,17 +555,16 @@ export class CulturalBookBuilderModule {
           align-items:center;
           justify-content:space-between;
           gap:12px;
-          padding-top: 6px;
+          padding-top: 4px;
           opacity:.78;
-          font-size: 14px;
+          font-size: 13px;
         }
 
-        /* layout spread */
         .spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
         @media (max-width: 860px){
           .spread{ grid-template-columns: 1fr; }
-          .page-title{ font-size: 30px; }
-          .ws-cell{ width: 26px; height: 26px; font-size: 16px; }
+          .page-inner{ padding: 14px; }
+          .ws-frame{ padding: 9px; }
         }
       </style>
 
@@ -595,7 +572,6 @@ export class CulturalBookBuilderModule {
         <div class="card">
           <h2>Livro Cultural — Builder</h2>
           <p class="muted">Preview visual do livro (<b>papel branco</b>). Folheie e valide como produto final.</p>
-
           <div id="bb_area"></div>
         </div>
       </div>
@@ -654,7 +630,6 @@ export class CulturalBookBuilderModule {
         `;
       }
 
-      // puzzle
       const gen = ensurePuzzleGenerated(plan, page);
       const gridHtml = renderGridHTML(gen?.grid);
 
@@ -705,7 +680,6 @@ export class CulturalBookBuilderModule {
         size: page.grid || 15,
         maxWords: (page.wordsNorm || []).length || 16,
         includeKey: true,
-        // envia normalizado (compatível com gerador)
         words: (page.wordsNorm || []).join('\n'),
         puzzleId: page.sectionId || '',
         sectionId: page.sectionId || '',
@@ -727,14 +701,8 @@ export class CulturalBookBuilderModule {
 
       const save = () => saveSeed({ mode, pageIndex });
 
-      const goPrev = () => {
-        pageIndex = Math.max(0, pageIndex - 1);
-        save(); paint();
-      };
-      const goNext = () => {
-        pageIndex = Math.min(pages.length - 1, pageIndex + 1);
-        save(); paint();
-      };
+      const goPrev = () => { pageIndex = Math.max(0, pageIndex - 1); save(); paint(); };
+      const goNext = () => { pageIndex = Math.min(pages.length - 1, pageIndex + 1); save(); paint(); };
 
       area.innerHTML = `
         <div class="bb-toolbar">
@@ -777,18 +745,14 @@ export class CulturalBookBuilderModule {
           const p = pages[pageIndex];
           view.innerHTML = renderPageCard(p, plan, true);
 
-          // bind swipe no card (folhear com dedo)
           const card = view.querySelector('.page-card');
           bindSwipe(card, goPrev, goNext);
 
-          // bind botão enviar
           const btn = view.querySelector('[data-send="ws"]');
           if (btn) btn.onclick = () => sendPageToWordSearch(p, plan);
-
           return;
         }
 
-        // SPREAD: página atual à esquerda e próxima à direita
         const left = pages[pageIndex];
         const right = pages[pageIndex+1] || null;
 
@@ -799,10 +763,12 @@ export class CulturalBookBuilderModule {
           </div>
         `;
 
-        // swipe no spread inteiro (para mudar “duas páginas”)
-        bindSwipe(view, ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); }, ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); });
+        bindSwipe(
+          view,
+          ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); },
+          ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); }
+        );
 
-        // bind enviar nos dois
         const cards = view.querySelectorAll('.page-card');
         cards.forEach((cardEl, idxCard)=>{
           const page = idxCard===0 ? left : right;
