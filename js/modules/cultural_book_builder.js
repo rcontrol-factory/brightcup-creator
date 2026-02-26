@@ -1,11 +1,8 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3b PADRÃO (1 ano)
-// Objetivo: preview editorial do livro cultural (6x9) de forma LIMPA no mobile.
-// - Se não existir plano (Safari limpou storage): gera plano padrão MG aqui mesmo.
-// - UI “papel branco” (visual final) + modo Folhear.
-// - Cada SPREAD = Texto (esquerda) + Puzzle (direita).
-// - Puzzle preview: GRADE QUADRICULADA (CSS grid) + palavras (sem cortar).
-// - Não gera PDF aqui (isso vem no Exporter).
+// Bright Cup Creator — Cultural Book Builder v0.3c PADRÃO (1 ano)
+// PATCH MINIMO (SEM QUEBRAR PADRÃO):
+// - Grade quadriculada não pode cortar: ajustar CSS pra “caber sempre” no papel branco.
+// - NÃO mexer em lógica, spreads, seed, cache, pipeline.
 
 import { Storage } from '../core/storage.js';
 import { generateWordSearch } from '../core/wordsearch_gen.js';
@@ -212,7 +209,6 @@ function setCache(cache){
 
 function parseGridText(gridText){
   const rows = String(gridText || '').trim().split(/\n+/).map(r => r.trim()).filter(Boolean);
-  // aceita com ou sem espaços
   const grid = rows.map(r => {
     const parts = r.split(/\s+/).filter(Boolean);
     if (parts.length > 1) return parts.map(x => (x||'').slice(0,1));
@@ -254,7 +250,7 @@ function buildSpreads(plan){
       body: wrap(
         `• Use ◀ ▶ para folhear.\n` +
         `• Cada spread é: TEXTO (esq.) + PUZZLE (dir.).\n` +
-        `• A grade exibida aqui já é um preview real e quadriculado.\n` +
+        `• A grade exibida aqui é preview visual.\n` +
         `• O PDF final (KDP) entra no Exporter.\n\n` +
         `Dica: se o Safari limpar o storage, recrie o livro e baixe o plano (JSON) para backup.`,
         74
@@ -372,7 +368,6 @@ export class CulturalBookBuilderModule {
         .bb-stage{ display:grid; gap:12px; }
         .bb-spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
 
-        /* papel branco */
         .bb-page{
           border-radius:18px;
           border:1px solid rgba(255,255,255,.14);
@@ -383,14 +378,13 @@ export class CulturalBookBuilderModule {
           position:relative;
           overflow:hidden;
         }
-        .bb-page::before{ content:""; display:block; padding-top:150%; } /* 6x9 ratio */
+        .bb-page::before{ content:""; display:block; padding-top:150%; }
         .bb-page > .bb-inner{ position:absolute; inset:14px; display:flex; flex-direction:column; gap:10px; }
 
         .bb-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
         .bb-title{ font-size:18px; font-weight:900; letter-spacing:.2px; overflow-wrap:anywhere; }
         .bb-meta{ font-size:12px; opacity:.72; overflow-wrap:anywhere; }
 
-        /* corpo (sem rolagem interna) */
         .bb-body{
           flex:1;
           border-radius:14px;
@@ -412,23 +406,26 @@ export class CulturalBookBuilderModule {
           line-height:1.28;
         }
 
-        /* grade quadriculada */
+        /* ===== PATCH MINIMO: GRADE NÃO PODE CORTAR ===== */
         .bb-gridwrap{
           flex:1;
           border-radius:12px;
           border:1px solid rgba(15,22,32,.14);
           background:rgba(255,255,255,.98);
-          padding:10px;
+          padding:6px;                 /* era 10px */
           display:flex;
-          align-items:center;
-          justify-content:center;
+          align-items:stretch;          /* era center */
+          justify-content:stretch;       /* era center */
           overflow:hidden;
+          min-height: 0;                /* importante no iOS flex */
         }
         .bb-grid{
           display:grid;
-          gap:2px;
+          gap:1px;                      /* era 2px */
           width:100%;
-          max-width: 360px; /* controla no mobile */
+          height:100%;
+          max-width:100%;
+          max-height:100%;
           aspect-ratio: 1 / 1;
         }
         .bb-cell{
@@ -436,13 +433,15 @@ export class CulturalBookBuilderModule {
           align-items:center;
           justify-content:center;
           border:1px solid rgba(15,22,32,.22);
-          border-radius:3px;
+          border-radius:2px;            /* era 3px */
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight:800;
           color:#0f1620;
           background:rgba(255,255,255,1);
           user-select:none;
+          line-height:1;
         }
+        /* ============================================== */
 
         .bb-words{
           display:grid;
@@ -461,7 +460,6 @@ export class CulturalBookBuilderModule {
 
         @media (max-width: 860px){
           .bb-spread{ grid-template-columns: 1fr; }
-          .bb-grid{ max-width: 420px; }
         }
       </style>
 
@@ -516,13 +514,12 @@ export class CulturalBookBuilderModule {
       const N = gridN || parsed.N || 15;
       const grid = parsed.grid;
 
-      // se algo vier vazio, evita quebrar
       if (!grid || !grid.length) {
         return `<div class="bb-gridwrap"><div class="bb-mini muted">Sem grade (preview)</div></div>`;
       }
 
-      // tamanho da letra ajusta com N (13 maior, 15/17 menor)
-      const fontPx = (N <= 13) ? 16 : (N <= 15) ? 14 : 12;
+      // PATCH MINIMO: fonte levemente menor pra não estourar no iPhone (e não cortar)
+      const fontPx = (N <= 13) ? 15 : (N <= 15) ? 13 : 11;
 
       const cells = [];
       for (let y = 0; y < grid.length; y++){
@@ -662,7 +659,6 @@ export class CulturalBookBuilderModule {
           posEl.textContent = `${p.pageNo}/${totalPages}`;
         }
 
-        // bind “Enviar p/ Caça-palavras”
         stage.querySelectorAll('[data-send]').forEach((btn) => {
           btn.onclick = () => {
             let pz = null;
