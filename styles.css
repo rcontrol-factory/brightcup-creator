@@ -5,37 +5,31 @@
 */
 
 :root{
-  /* Core colors */
   --bg0:#05070c;
   --bg1:#070b14;
   --ink:#eaf1ff;
   --muted:#b8c6e6;
 
-  /* Accents */
-  --a1:#4be7ff;   /* cyan */
-  --a2:#7c5cff;   /* violet */
-  --a3:#2cf7b6;   /* mint */
+  --a1:#4be7ff;
+  --a2:#7c5cff;
+  --a3:#2cf7b6;
   --warn:#ffcf5a;
   --bad:#ff5d7a;
 
-  /* Surfaces (glass) */
   --glass: rgba(18, 28, 52, .55);
   --glass2: rgba(10, 16, 34, .42);
   --stroke: rgba(140, 180, 255, .18);
   --stroke2: rgba(120, 140, 255, .14);
 
-  /* Shadows / glow */
   --shadow: 0 18px 60px rgba(0,0,0,.55);
   --shadow2: 0 10px 30px rgba(0,0,0,.42);
   --glow: 0 0 18px rgba(75,231,255,.22);
   --glow2: 0 0 26px rgba(124,92,255,.18);
 
-  /* Radius / spacing */
   --r12: 12px;
   --r16: 16px;
   --r20: 20px;
 
-  /* Typography */
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
 }
@@ -53,7 +47,6 @@ body{
   overflow-x:hidden;
 }
 
-/* ---------- Space background layers (subtle) ---------- */
 body::before{
   content:"";
   position: fixed;
@@ -94,7 +87,6 @@ body::after{
   50%{ transform: translate3d(8px,-10px,0) scale(1.02); opacity:.68; }
 }
 
-/* ---------- Header ---------- */
 .header{
   position: sticky;
   top: 0;
@@ -155,7 +147,6 @@ body::after{
   text-overflow: ellipsis;
 }
 
-/* ---------- Buttons / badges ---------- */
 .top-actions{ display:flex; align-items:center; gap:10px; }
 
 .badge{
@@ -202,7 +193,6 @@ body::after{
   box-shadow: 0 0 22px rgba(75,231,255,.20), 0 0 28px rgba(124,92,255,.16), var(--shadow2), inset 0 1px 0 rgba(255,255,255,.12);
 }
 
-/* ---------- Layout ---------- */
 .layout{
   max-width: 1200px;
   margin: 0 auto;
@@ -212,10 +202,9 @@ body::after{
   gap: 14px;
 }
 
-/* ---------- Sidebar ---------- */
 .sidebar{
   position: sticky;
-  top: 78px; /* header height */
+  top: 78px;
   align-self: start;
   border-radius: var(--r20);
   background: linear-gradient(180deg, rgba(18, 28, 52, .58), rgba(10,16,34,.42));
@@ -257,7 +246,6 @@ body::after{
   background: linear-gradient(90deg, transparent, rgba(160,200,255,.16), transparent);
 }
 
-/* ---------- Content ---------- */
 .content{
   display:flex;
   flex-direction: column;
@@ -275,7 +263,6 @@ body::after{
   min-height: 320px;
 }
 
-/* ---------- Panel (Logs) ---------- */
 .panel{
   border-radius: var(--r20);
   background: linear-gradient(180deg, rgba(18, 28, 52, .52), rgba(10,16,34,.34));
@@ -316,7 +303,6 @@ body::after{
   background: rgba(0,0,0,.12);
 }
 
-/* ---------- Toast ---------- */
 .toast{
   position: sticky;
   top: 8px;
@@ -334,7 +320,6 @@ body::after{
 .toast.warn{ border-color: rgba(255,207,90,.28); color: rgba(255,240,210,.95); }
 .toast.bad{ border-color: rgba(255,93,122,.30); color: rgba(255,225,232,.95); }
 
-/* ---------- Inputs (for future modules) ---------- */
 input, select, textarea{
   width: 100%;
   padding: 10px 12px;
@@ -349,7 +334,6 @@ input:focus, select:focus, textarea:focus{
   box-shadow: 0 0 0 3px rgba(75,231,255,.10);
 }
 
-/* ---------- Small helpers ---------- */
 a{ color: rgba(120,210,255,.92); }
 a:hover{ color: rgba(180,235,255,.98); }
 hr{
@@ -358,11 +342,8 @@ hr{
   background: linear-gradient(90deg, transparent, rgba(160,200,255,.16), transparent);
 }
 
-/* ---------- Mobile (iPhone) ---------- */
 @media (max-width: 980px){
-  .layout{
-    grid-template-columns: 1fr;
-  }
+  .layout{ grid-template-columns: 1fr; }
   .sidebar{
     position: relative;
     top: 0;
@@ -379,28 +360,16 @@ hr{
     border-radius: 16px;
   }
   .sep{ display:none; }
-  .header-inner{
-    padding: 12px 12px;
-  }
-  .top-actions .btn{
-    padding: 9px 10px;
-  }
+  .header-inner{ padding: 12px 12px; }
+  .top-actions .btn{ padding: 9px 10px; }
 }
 
 @media (max-width: 520px){
   .brand-title .s{ display:none; }
-  .sidebar{
-    grid-template-columns: repeat(2, minmax(0,1fr));
-  }
+  .sidebar{ grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 
-/* Reduced motion */
 @media (prefers-reduced-motion: reduce){
   body::before, body::after{ animation:none; }
   .btn, .navitem{ transition:none; }
-}
-
-/* ✅ PATCH MINIMO (anti-zoom / anti-estouro iOS) */
-@media (max-width: 520px){
-  body{ -webkit-text-size-adjust: 100%; }
 }
