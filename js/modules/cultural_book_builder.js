@@ -1,11 +1,11 @@
 /* FILE: /js/modules/cultural_book_builder.js */
 // Bright Cup Creator — Cultural Book Builder v0.3d PADRÃO (1 ano)
-// PATCH "ALISADA 2":
-// - Grade NUNCA corta: usa CSS grid com repeat(N, 1fr) + aspect-ratio
-// - Largura da grade: min(100%, 520px) e centralizada
-// - Swipe no dedo volta (touch-action + bind no container/carta)
-// - Palavras (chips) compactas e com ortografia (acentos/ç) no display
-// - Texto e puzzle ficam com padrão fixo dentro do card
+// PATCH "REVISTINHA":
+// - Grade clássica (quadrada, linhas finas) -> sem cápsula/bolha
+// - Container da grade com overflow:auto -> não corta no iPhone
+// - Palavras em linha (horizontal) separadas por " — " -> sem chips
+// - Título/meta responsivos no mobile
+// - Swipe folhear mantido (bindSwipe)
 
 import { Storage } from '../core/storage.js';
 import { generateWordSearch, normalizeWord as wsNormalizeWord } from '../core/wordsearch_gen.js';
@@ -16,7 +16,6 @@ function esc(s){
   }[c]));
 }
 
-// normaliza só para geração/validação da grade
 function normalizeWord(s){
   try { return wsNormalizeWord(s); } catch {}
   return String(s || '')
@@ -27,11 +26,6 @@ function normalizeWord(s){
     .replace(/[^A-Z0-9]/g,'');
 }
 
-function displayWord(w){
-  // display com ortografia (mantém acentos/ç), só padroniza espaços + caixa alta
-  return String(w || '').trim().replace(/\s+/g,' ').toUpperCase();
-}
-
 function uniq(list){
   const seen = new Set();
   const out = [];
@@ -40,34 +34,16 @@ function uniq(list){
     if (!w) continue;
     if (seen.has(w)) continue;
     seen.add(w);
-    out.push(it);
+    out.push(w);
   }
   return out;
 }
 
 function pickWords(words, gridSize, maxCount){
   const maxLen = gridSize;
-  const filtered = uniq(words)
-    .map(w => ({ raw: w, norm: normalizeWord(w) }))
-    .filter(o => o.norm.length >= 3 && o.norm.length <= maxLen);
-
-  filtered.sort((a,b) => (Math.abs(a.norm.length-7) - Math.abs(b.norm.length-7)));
-  const sliced = filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
-  return sliced.map(o => o.norm);
-}
-
-function pickDisplayWords(words, gridSize, targetCount){
-  const maxLen = gridSize;
-  const cleaned = uniq(words)
-    .map(displayWord)
-    .filter(w => {
-      const n = normalizeWord(w);
-      return n.length >= 3 && n.length <= maxLen;
-    });
-
-  // tenta deixar uma lista bonita, não gigantesca
-  const want = Math.max(6, Number(targetCount || 0) || 0);
-  return cleaned.slice(0, want);
+  const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
+  filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
+  return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
 
 function wrap(text, max=72){
@@ -99,8 +75,12 @@ function iconLabel(icon){
   return map[icon] || (icon || 'ilustração');
 }
 
+// display: mantém acento/ç (ortografia correta)
+function displayWord(w){
+  return String(w ?? '').trim().toUpperCase();
+}
+
 function buildDefaultPlanMG(grid=15, wpp=20){
-  // plano base (se não existir um salvo)
   return {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
@@ -114,7 +94,118 @@ function buildDefaultPlanMG(grid=15, wpp=20){
       include_key: true,
       createdAt: new Date().toISOString()
     },
-    sections: []
+    sections: [
+      {
+        id:'intro_minas',
+        icon:'mountain',
+        title:'O que é Minas?',
+        text:
+          'Minas é serra no horizonte e café passado na hora. É conversa na porta, ' +
+          'é tradição que atravessa gerações. Aqui, cultura não é enfeite: é jeito de viver.',
+        wordHints:[
+          'MINAS','MINEIRO','SERRA','MONTANHA','CULTURA','HISTÓRIA','TRADIÇÃO','ACOLHIMENTO','CAFÉ','FOGÃO','INTERIOR'
+        ]
+      },
+      {
+        id:'origem_minas',
+        icon:'history',
+        title:'Como começou Minas',
+        text:
+          'A história de Minas se mistura com caminhos antigos, trabalho duro e cidades que cresceram ' +
+          'ao redor de rios, serras e rotas. O tempo deixa marca: na pedra, na fé e nas histórias contadas.',
+        wordHints:[
+          'HISTÓRIA','CAMINHO','SERRA','RIO','CIDADE','PATRIMÔNIO','MEMÓRIA','ORIGEM','TRADIÇÃO'
+        ]
+      },
+      {
+        id:'queijo_minas',
+        icon:'cheese',
+        title:'A cultura do queijo mineiro',
+        text:
+          'Em Minas, queijo é linguagem. Tem queijo fresco, meia-cura, curado. ' +
+          'E tem a Canastra, famosa no Brasil inteiro. Cada pedaço carrega clima, técnica e paciência.',
+        wordHints:[
+          'QUEIJO','CANASTRA','CURADO','MEIA-CURA','LEITE','FAZENDA','TRADIÇÃO','SABOR','COALHO','CURA'
+        ]
+      },
+      {
+        id:'pao_de_queijo',
+        icon:'bread',
+        title:'Pão de queijo (receita mineira simples)',
+        text:
+          'Receita base: polvilho, leite, óleo, ovos, queijo e sal. Mistura, sovar, bolear e assar. ' +
+          'O segredo é o queijo e o ponto da massa — cada casa tem seu jeito.',
+        wordHints:[
+          'PÃO-DE-QUEIJO','POLVILHO','FORNO','MASSA','QUEIJO','LEITE','OVO','SAL','RECEITA','COZINHA'
+        ]
+      },
+      {
+        id:'cafe_minas',
+        icon:'coffee',
+        title:'Café e interior',
+        text:
+          'Café em Minas é ritual. Cheiro que acorda a casa, conversa que começa cedo, ' +
+          'e o interior que ensina a valorizar o simples. É parte da identidade mineira.',
+        wordHints:[
+          'CAFÉ','COADOR','CHEIRO','MANHÃ','FAZENDA','INTERIOR','TRADIÇÃO','TORRA','XÍCARA'
+        ]
+      },
+      {
+        id:'ferrovia',
+        icon:'train',
+        title:'Ferrovia e o “trem” mineiro',
+        text:
+          'O “trem” em Minas é mais que vagão: é expressão, é memória e é caminho. ' +
+          'A ferrovia Vitória–Minas, por exemplo, marca ligações entre regiões e histórias.',
+        wordHints:[
+          'FERROVIA','TREM','TRILHO','ESTAÇÃO','VIAGEM','VITÓRIA-MINAS','ROTA','PLATAFORMA','VAGÃO'
+        ]
+      },
+      {
+        id:'pedras_preciosas',
+        icon:'gem',
+        title:'Pedras preciosas e brilho de Minas',
+        text:
+          'Minas também é conhecida por pedras e gemas. O brilho vem de longe: trabalho, comércio, ' +
+          'histórias de garimpo e tradição regional.',
+        wordHints:[
+          'PEDRA','GEMA','GARIMPO','CRISTAL','BRILHO','MINÉRIO','OURO','PRATA','JOIA'
+        ]
+      },
+      {
+        id:'fe_religiosidade',
+        icon:'church',
+        title:'Fé e religiosidade',
+        text:
+          'Em muitas cidades, a fé aparece nas festas, nas procissões e nas igrejas. ' +
+          'É cultura viva, que une famílias e mantém a história de pé.',
+        wordHints:[
+          'FÉ','IGREJA','SANTUÁRIO','PROCISSÃO','TRADIÇÃO','FESTA','DEVOTO','ROMARIA'
+        ]
+      },
+      {
+        id:'serras_paisagens',
+        icon:'landscape',
+        title:'Serras, paisagens e caminhos',
+        text:
+          'Minas é recorte de serra, estrada que sobe e desce, mirante e céu aberto. ' +
+          'É natureza que convida a respirar e seguir adiante.',
+        wordHints:[
+          'SERRA','MIRANTE','ESTRADA','PAISAGEM','NATUREZA','TRILHA','VALE','CACHOEIRA'
+        ]
+      },
+      {
+        id:'voo_livre_valadares',
+        icon:'paraglider',
+        title:'Governador Valadares e o voo livre',
+        text:
+          'Governador Valadares é conhecida como capital mundial do voo livre. ' +
+          'O Pico do Ibituruna virou símbolo: aventura, vento e gente do mundo inteiro olhando Minas do alto.',
+        wordHints:[
+          'VALADARES','IBITURUNA','VOO LIVRE','PARAPENTE','ASA-DELTA','PICO','VENTO','AVENTURA','MIRANTE'
+        ]
+      }
+    ]
   };
 }
 
@@ -148,18 +239,22 @@ function buildPages(plan){
       sectionId: s.id
     });
 
-    const rawHints = []
-      .concat(s.wordHints || [])
-      .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
-
+    const rawHints = [].concat(s.wordHints || []).concat([s.title, 'MINAS', 'CULTURA', 'HISTÓRIA', 'UAI']);
     const wordsNorm = pickWords(rawHints, gridDefault, wppDefault);
-    const wordsDisplay = pickDisplayWords(rawHints, gridDefault, Math.max(wordsNorm.length, 6));
+
+    // displayWords: mantém ortografia (com acento/ç) mas filtra pelo tamanho da palavra normalizada
+    const wordsDisplay = uniq(rawHints.map(displayWord))
+      .filter(w => {
+        const n = normalizeWord(w);
+        return n.length >= 3 && n.length <= gridDefault;
+      })
+      .slice(0, Math.max(wordsNorm.length, 6));
 
     pages.push({
       kind:'puzzle',
       icon: s.icon,
       title: `Caça-Palavras — ${s.title}`,
-      meta: `Prévia visual (editorial) • grade ${gridDefault}x${gridDefault}`,
+      meta: `Prévia visual (editorial) • grade ${gridDefault}x${gridDefault} • palavras ${wordsNorm.length}`,
       sectionId: s.id,
       sectionTitle: s.title,
       grid: gridDefault,
@@ -226,25 +321,27 @@ function ensurePuzzleGenerated(plan, page){
   return payload;
 }
 
-// ✅ NOVO: grade em CSS grid (1 container), nunca corta
 function renderGridHTML(grid){
   const N = grid?.length || 0;
   if (!N) return '<div class="ws-empty">Grade vazia</div>';
 
-  let html = `<div class="ws-grid" style="--wsN:${N}" role="img" aria-label="Caça-palavras">`;
+  let html = `<div class="ws-grid" data-n="${N}" role="img" aria-label="Caça-palavras">`;
   for (let y=0;y<N;y++){
+    html += '<div class="ws-row">';
     for (let x=0;x<N;x++){
       html += `<div class="ws-cell">${esc(grid[y][x] || '')}</div>`;
     }
+    html += '</div>';
   }
   html += '</div>';
   return html;
 }
 
-function renderWordsLine(wordsDisplay){
+// ✅ Palavras em linha (horizontal), separadas por " — "
+function renderWordsInline(wordsDisplay){
   const list = (wordsDisplay || []).map(displayWord).filter(Boolean);
   if (!list.length) return '';
-  return list.map(w => `<span class="ws-word">${esc(w)}</span>`).join('');
+  return `<div class="words-inline">${list.map(w => esc(w)).join(' <span class="sep">—</span> ')}</div>`;
 }
 
 function bindSwipe(el, onPrev, onNext){
@@ -256,9 +353,7 @@ function bindSwipe(el, onPrev, onNext){
     if (!tracking) return;
     const dx = x - startX;
     const dy = y - startY;
-
-    // trava só se for swipe horizontal mesmo
-    if (!locked && Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy) * 1.2) locked = true;
+    if (!locked && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.2) locked = true;
     if (locked) { try { ev.preventDefault(); } catch {} }
   };
   const onEnd   = (x,y) => {
@@ -330,7 +425,6 @@ export class CulturalBookBuilderModule {
           box-shadow: 0 18px 60px rgba(0,0,0,.18);
           overflow:hidden;
           position:relative;
-          touch-action: pan-y; /* ✅ permite scroll vertical, e a gente trata o swipe horizontal */
         }
         .page-inner{
           padding: 16px 16px 14px 16px;
@@ -343,7 +437,7 @@ export class CulturalBookBuilderModule {
           padding-bottom: 8px;
         }
         .page-title{
-          font-size: clamp(22px, 6.0vw, 32px);
+          font-size: clamp(22px, 6.0vw, 34px);
           line-height: 1.03;
           font-weight: 900;
           letter-spacing: -0.35px;
@@ -379,40 +473,49 @@ export class CulturalBookBuilderModule {
         }
 
         .puzzle-wrap{ display:grid; gap:10px; }
+
+        /* ✅ Container com overflow -> NÃO CORTA */
         .ws-frame{
           border-radius: 16px;
           border: 1px solid rgba(0,0,0,.14);
           background: rgba(255,255,255,0.65);
           padding: 10px;
-          display:flex;
-          justify-content:center;
-          align-items:center;
-          overflow:hidden; /* ✅ evita qualquer “vazamento” */
+          max-width: 100%;
+          overflow: auto;
+          -webkit-overflow-scrolling: touch;
         }
 
-        /* ✅ Grade SEM CORTE (auto-fit por frações) */
+        /* ✅ Grade clássica "revistinha" */
         .ws-grid{
           display:grid;
-          grid-template-columns: repeat(var(--wsN), 1fr);
-          gap: clamp(2px, 0.7vw, 4px);
-          width: min(100%, 520px);
+          width: max-content;
           margin: 0 auto;
+          padding: 4px;
+          background: rgba(255,255,255,0.92);
+          border: 1px solid rgba(0,0,0,.22);
+        }
+        .ws-row{
+          display:grid;
+          grid-auto-flow: column;
         }
         .ws-cell{
-          width: 100%;
-          aspect-ratio: 1 / 1;
+          width:  clamp(16px, 4.6vw, 24px);
+          height: clamp(16px, 4.6vw, 24px);
           display:flex;
           align-items:center;
           justify-content:center;
-          border-radius: clamp(5px, 1.3vw, 7px);
-          border: 2px solid rgba(0,0,0,.18);
-          background: rgba(255,255,255,0.70);
+          border: 1px solid rgba(0,0,0,.28);
+          background: rgba(255,255,255,0.98);
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: clamp(11px, 2.5vw, 17px);
-          letter-spacing: 0.2px;
+          font-size: clamp(12px, 2.8vw, 16px);
+          line-height: 1;
+          border-radius: 0; /* 🔥 sem cápsula */
+          letter-spacing: 0.1px;
+          user-select: none;
         }
 
+        /* ✅ Palavras em linha (horizontal) */
         .words-box{
           border-radius: 16px;
           border: 1px solid rgba(0,0,0,.10);
@@ -425,24 +528,22 @@ export class CulturalBookBuilderModule {
           opacity: .72;
           margin-bottom: 8px;
         }
-        .words-line{
-          display:flex;
-          flex-wrap:wrap;
-          gap: 8px 10px;
-          align-items:center;
+        .words-inline{
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size: clamp(12px, 3.4vw, 16px);
+          font-size: clamp(13px, 3.6vw, 17px);
           font-weight: 900;
-          letter-spacing: 0.12px;
+          letter-spacing: 0.15px;
+          line-height: 1.35;
+          opacity: .92;
+          word-break: break-word;
+          overflow-wrap: anywhere;
         }
-        .ws-word{
-          padding: 5px 9px;
-          border-radius: 10px;
-          border: 1px solid rgba(0,0,0,.14);
-          background: rgba(255,255,255,0.65);
-          white-space:nowrap;
+        .words-inline .sep{
+          opacity: .35;
+          padding: 0 4px;
         }
 
+        /* ✅ Slot de imagem compacto */
         .illus-slot{
           border-radius: 14px;
           border: 1px dashed rgba(0,0,0,.22);
@@ -472,7 +573,7 @@ export class CulturalBookBuilderModule {
           justify-content:space-between;
           gap:12px;
           padding-top: 4px;
-          opacity:.78;
+          opacity:.88;
           font-size: 13px;
         }
 
@@ -481,7 +582,6 @@ export class CulturalBookBuilderModule {
           .spread{ grid-template-columns: 1fr; }
           .page-inner{ padding: 14px; }
           .ws-frame{ padding: 9px; }
-          .ws-grid{ width: min(100%, 480px); }
         }
       </style>
 
@@ -509,8 +609,7 @@ export class CulturalBookBuilderModule {
       `;
 
       area.querySelector('#bb_make').onclick = () => {
-        // cria um plano base; se o Agent já colocou sections, ele usa o do storage mesmo
-        plan = Storage.get('cultural:book_plan', null) || buildDefaultPlanMG(15, 20);
+        plan = buildDefaultPlanMG(15, 20);
         Storage.set('cultural:book_plan', plan);
         this.app.toast?.('Livro Minas criado ✅');
         renderMain();
@@ -557,7 +656,7 @@ export class CulturalBookBuilderModule {
             <div class="page-head">
               <div>
                 <div class="page-title">${esc(page.title || '')}</div>
-                <div class="page-meta">${esc(page.meta || '')} • palavras ${esc(String(gen?.placedCount || 0))}</div>
+                <div class="page-meta">${esc(page.meta || '')}</div>
               </div>
               <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
             </div>
@@ -567,7 +666,7 @@ export class CulturalBookBuilderModule {
 
               <div class="words-box">
                 <div class="words-title">Palavras</div>
-                <div class="words-line">${renderWordsLine(page.wordsDisplay || page.wordsNorm || [])}</div>
+                ${renderWordsInline(page.wordsDisplay || page.wordsNorm || [])}
               </div>
 
               <div class="illus-slot">
@@ -580,7 +679,9 @@ export class CulturalBookBuilderModule {
             </div>
 
             <div class="page-foot">
-              ${withButton ? `<button class="btn" data-send="ws">Enviar p/ Caça-palavras</button>` : `<span></span>`}
+              ${
+                withButton ? `<button class="btn" data-send="ws">Enviar p/ Caça-palavras</button>` : `<span></span>`
+              }
               <span></span>
             </div>
           </div>
@@ -588,7 +689,7 @@ export class CulturalBookBuilderModule {
       `;
     };
 
-    const sendPageToWordSearch = (page) => {
+    const sendPageToWordSearch = (page, plan) => {
       if (!page || page.kind !== 'puzzle') return;
       const ws = {
         title: page.title || `Caça-Palavras ${page.grid}x${page.grid}`,
@@ -661,13 +762,11 @@ export class CulturalBookBuilderModule {
           const p = pages[pageIndex];
           view.innerHTML = renderPageCard(p, plan, true);
 
-          // ✅ swipe no card e no container (mais robusto no iOS)
           const card = view.querySelector('.page-card');
           bindSwipe(card, goPrev, goNext);
-          bindSwipe(view, goPrev, goNext);
 
           const btn = view.querySelector('[data-send="ws"]');
-          if (btn) btn.onclick = () => sendPageToWordSearch(p);
+          if (btn) btn.onclick = () => sendPageToWordSearch(p, plan);
           return;
         }
 
@@ -691,7 +790,7 @@ export class CulturalBookBuilderModule {
         cards.forEach((cardEl, idxCard)=>{
           const page = idxCard===0 ? left : right;
           const btn = cardEl.querySelector('[data-send="ws"]');
-          if (btn && page) btn.onclick = () => sendPageToWordSearch(page);
+          if (btn && page) btn.onclick = () => sendPageToWordSearch(page, plan);
         });
       };
 
@@ -702,8 +801,8 @@ export class CulturalBookBuilderModule {
       area.querySelector('#bb_mode_folhear').onclick = () => { mode='FOLHEAR'; save(); renderMain(); };
 
       area.querySelector('#bb_reset').onclick = () => {
-        // aqui recria só se você quiser “zerar” mesmo
-        plan = Storage.get('cultural:book_plan', null) || buildDefaultPlanMG(15, 20);
+        plan = buildDefaultPlanMG(15, 20);
+        Storage.set('cultural:book_plan', plan);
         Storage.set('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
         this.app.toast?.('Livro recriado ✅');
         renderMain();
