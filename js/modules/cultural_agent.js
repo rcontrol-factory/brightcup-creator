@@ -1,10 +1,11 @@
 /* FILE: /js/modules/cultural_agent.js */
-// Bright Cup Creator — Cultural Agent (Book Planner) v0.3d PADRÃO (1 ano)
-// Patch:
-// - Mantém palavras com ortografia (acentos/ç) no DISPLAY quando possível (sem quebrar a grade)
-// - Continua normalizando p/ geração (grade) sem acento (mais fácil achar)
-// - Não mexe no pipeline de Coloring
-// - Salva plano em Storage: cultural:book_plan
+// Bright Cup Creator — Cultural Agent (Book Planner) v0.4a PADRÃO (1 ano)
+// V0.4a:
+// - Agent gera: plan.meta.layout (style + pageSize + margins + typography)
+// - Palavras: DISPLAY preserva acento/ç quando existir; GRADE normaliza (sem acento)
+// - Exporta plano em Storage: cultural:book_plan
+// - Builder vira só folhear/aprovar (layout vem do Agent)
+// - Imagem/ilustração: prevista para páginas de TEXTO (não no puzzle)
 // - Presets BR: Pocket (13x13/16) e Plus (15x15/20)
 
 import { Storage } from '../core/storage.js';
@@ -23,12 +24,31 @@ function normalizeWord(s){
     .replace(/[^A-Z0-9]/g,'');
 }
 
-// limpa só espaços (mantém acento/ç) PARA DISPLAY
+// mantém ortografia PARA DISPLAY (só limpa espaços)
 function displayWord(s){
   return String(s || '')
     .trim()
     .replace(/\s+/g, ' ')
     .toUpperCase();
+}
+
+// cria um mapa "NORMALIZADO -> melhor DISPLAY"
+function buildDisplayMap(words){
+  const map = {};
+  for (const raw of (words || [])){
+    const disp = displayWord(raw);
+    const norm = normalizeWord(raw);
+    if (!norm) continue;
+
+    // preferir a versão com acento/ç se existir (heurística simples)
+    const hasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(disp);
+    const prev = map[norm];
+    if (!prev) { map[norm] = disp; continue; }
+    const prevHasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(prev);
+    if (!prevHasAccent && hasAccent) map[norm] = disp;
+    // se ambos têm (ou não têm), mantém o primeiro
+  }
+  return map;
 }
 
 function uniqNorm(list){
@@ -67,6 +87,16 @@ function wrapLines(text, max=72){
 const PRESETS = {
   BR_POCKET: { label:'Brasil — Pocket (13x13 / 16 palavras)', grid:13, wpp:16 },
   BR_PLUS:   { label:'Brasil — Plus (15x15 / 20 palavras)',   grid:15, wpp:20 }
+};
+
+const STYLES = {
+  RETRO: { label:'Retro (revistinha / clean)', value:'RETRO' },
+  CLEAN: { label:'Clean (moderno minimal)', value:'CLEAN' }
+};
+
+const PAGE_SIZES = {
+  '6x9':     { label:'6x9 (KDP / padrão)', value:'6x9' },
+  '8.5x11':  { label:'8.5x11 (Letter)', value:'8.5x11' }
 };
 
 function presetFromGrid(grid){
@@ -158,19 +188,56 @@ function enrichSectionText(id, base){
   return t;
 }
 
-function bookDefaultPlanMG(grid=13, wpp=16){
+// layout padrão (Agent manda, Builder só respeita)
+function layoutDefaults(style, pageSize){
+  const st = String(style || 'RETRO').toUpperCase();
+  const ps = String(pageSize || '6x9');
+
+  const base = {
+    style: (st === 'CLEAN') ? 'CLEAN' : 'RETRO',
+    pageSize: (ps === '8.5x11') ? '8.5x11' : '6x9',
+    margins: { top: 0.55, right: 0.55, bottom: 0.60, left: 0.55 }, // polegadas (referência editorial)
+    typography: {
+      titleScale: 1.0,
+      bodyScale: 1.0,
+      gridScale: 1.0,
+      wordsScale: 1.0
+    },
+    rules: {
+      illustrationOnTextPages: true,
+      illustrationOnPuzzlePages: false
+    }
+  };
+
+  if (base.pageSize === '8.5x11'){
+    base.margins = { top: 0.70, right: 0.70, bottom: 0.80, left: 0.70 };
+    base.typography.titleScale = 1.05;
+    base.typography.bodyScale = 1.05;
+  }
+
+  if (base.style === 'CLEAN'){
+    base.typography.titleScale *= 1.02;
+    base.typography.bodyScale *= 1.00;
+    base.typography.wordsScale *= 0.98;
+  }
+
+  return base;
+}
+
+function bookDefaultPlanMG(grid=13, wpp=16, style='RETRO', pageSize='6x9'){
   const plan = {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
       title: 'MINAS GERAIS CULTURAL',
       subtitle: 'História • Sabores • Tradições • Curiosidades • Caça-Palavras',
-      format: '6x9',
+      format: pageSize, // compat
       pages_target: 60,
       language: 'pt-BR',
       grid_default: grid,
       words_per_puzzle: wpp,
       include_key: true,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      layout: layoutDefaults(style, pageSize)
     },
     sections: [
       {
@@ -296,16 +363,18 @@ function bookDefaultPlanMG(grid=13, wpp=16){
 
 function renderPlanText(plan){
   const m = plan.meta || {};
+  const l = m.layout || {};
   const lines = [];
   lines.push((m.title || 'LIVRO').toUpperCase());
   if (m.subtitle) lines.push(m.subtitle);
   lines.push('-'.repeat(46));
-  lines.push(`Formato: ${m.format} | Páginas: ${m.pages_target} | Idioma: ${m.language}`);
-  lines.push(`Seções: ${plan.sections.length} | Grade: ${m.grid_default}x${m.grid_default} | Palavras/puzzle: ${m.words_per_puzzle}`);
+  lines.push(`Formato: ${l.pageSize || m.format} | Estilo: ${l.style || 'RETRO'} | Idioma: ${m.language}`);
+  lines.push(`Seções: ${(plan.sections||[]).length} | Grade: ${m.grid_default}x${m.grid_default} | Palavras/puzzle: ${m.words_per_puzzle}`);
+  lines.push(`Ilustração: texto=SIM | puzzle=NÃO`);
   lines.push('');
   lines.push('SEÇÕES');
   lines.push('-----');
-  plan.sections.forEach((s, i) => {
+  (plan.sections || []).forEach((s, i) => {
     lines.push(`${String(i+1).padStart(2,'0')}. ${s.title}  [id:${s.id}] [icon:${s.icon}]`);
   });
   return lines.join('\n');
@@ -336,6 +405,8 @@ export class CulturalAgentModule {
       preset: 'BR_POCKET',
       grid: 13,
       wordsPerPuzzle: 16,
+      pageSize: '6x9',
+      style: 'RETRO',
       docText: '',
       wordsText: '',
       planText: '',
@@ -349,8 +420,8 @@ export class CulturalAgentModule {
         <div class="card">
           <h2>Cultural Agent</h2>
           <p class="muted">
-            Linha Cultural Brasil (PT-BR). Planeje o livro com emoção + padrão editorial.
-            <br/>Fluxo rápido: <b>Gerar Plano → Abrir Builder → Enviar p/ Caça-Palavras → Gerar+Salvar</b>.
+            Linha Cultural Brasil (PT-BR). <b>O Agent cria o livro</b>. O Builder só folheia/aprova.
+            <br/>Fluxo: <b>Gerar Plano → Abrir Builder → Enviar p/ Caça-Palavras → Gerar+Salvar</b>.
           </p>
 
           <div class="row">
@@ -368,6 +439,22 @@ export class CulturalAgentModule {
               </select>
             </label>
 
+            <label>Formato (página)
+              <select id="ca_pagesize">
+                <option value="6x9" ${seed.pageSize==='6x9'?'selected':''}>${$esc(PAGE_SIZES['6x9'].label)}</option>
+                <option value="8.5x11" ${seed.pageSize==='8.5x11'?'selected':''}>${$esc(PAGE_SIZES['8.5x11'].label)}</option>
+              </select>
+            </label>
+
+            <label>Estilo (layout)
+              <select id="ca_style">
+                <option value="RETRO" ${seed.style==='RETRO'?'selected':''}>${$esc(STYLES.RETRO.label)}</option>
+                <option value="CLEAN" ${seed.style==='CLEAN'?'selected':''}>${$esc(STYLES.CLEAN.label)}</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="row">
             <label>Grade (padrão)
               <select id="ca_grid"></select>
             </label>
@@ -400,7 +487,7 @@ export class CulturalAgentModule {
         <div class="card">
           <h2>Plano do livro</h2>
           <pre id="ca_plan" class="pre"></pre>
-          <p class="muted">Isso vira o “roteiro” do livro. O Builder mostra o livro folheando.</p>
+          <p class="muted">Isso vira o “roteiro + layout” do livro. O Builder só folheia.</p>
         </div>
 
         <div class="card">
@@ -411,7 +498,8 @@ export class CulturalAgentModule {
         <div class="card">
           <h2>Palavras da seção</h2>
           <p class="muted">
-            Dica: pode escrever com acento/ç aqui (display). A grade será gerada normalizada (sem acento).
+            ✅ Pode ter acento/ç aqui (DISPLAY).<br/>
+            ⚙️ Na hora de aplicar no Caça-Palavras, a grade vai normalizar (sem acento).
           </p>
           <textarea id="ca_words" rows="12" style="width:100%"></textarea>
         </div>
@@ -446,6 +534,8 @@ export class CulturalAgentModule {
         preset: $('#ca_preset').value,
         grid: parseInt($('#ca_grid').value,10),
         wordsPerPuzzle: parseInt($('#ca_wpp').value,10),
+        pageSize: $('#ca_pagesize').value,
+        style: $('#ca_style').value,
         docText: docEl.textContent || '',
         wordsText: wordsEl.value || '',
         planText: planEl.textContent || '',
@@ -477,16 +567,17 @@ export class CulturalAgentModule {
       const grid = parseInt($('#ca_grid').value, 10);
       const wpp  = parseInt($('#ca_wpp').value, 10);
 
-      const pickedNorm = pickWordsForGrid(
-        []
-          .concat(s.wordHints || [])
-          .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']),
-        grid,
-        wpp
-      );
+      const rawPool = []
+        .concat(s.wordHints || [])
+        .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
 
-      // aqui a textarea fica normalizada (p/ bater com a grade e não cortar)
-      wordsEl.value = pickedNorm.join('\n');
+      const pickedNorm = pickWordsForGrid(rawPool, grid, wpp);
+
+      // DISPLAY: tenta manter acento/ç se existir
+      const dispMap = buildDisplayMap(rawPool);
+      const pickedDisplay = pickedNorm.map(n => dispMap[n] || n);
+
+      wordsEl.value = pickedDisplay.join('\n');
       saveSeed();
     };
 
@@ -497,6 +588,9 @@ export class CulturalAgentModule {
       renderSelected();
       saveSeed();
     };
+
+    $('#ca_pagesize').onchange = () => saveSeed();
+    $('#ca_style').onchange = () => saveSeed();
 
     if (existingPlan) {
       planEl.textContent = renderPlanText(existingPlan);
@@ -515,8 +609,10 @@ export class CulturalAgentModule {
     $('#ca_build').onclick = () => {
       const grid = parseInt($('#ca_grid').value,10);
       const wpp  = parseInt($('#ca_wpp').value,10);
+      const pageSize = $('#ca_pagesize').value;
+      const style = $('#ca_style').value;
 
-      plan = bookDefaultPlanMG(grid, wpp);
+      plan = bookDefaultPlanMG(grid, wpp, style, pageSize);
       Storage.set('cultural:book_plan', plan);
 
       planEl.textContent = renderPlanText(plan);
@@ -524,7 +620,7 @@ export class CulturalAgentModule {
       renderSelected();
 
       this.app.toast?.('Plano do livro gerado ✅');
-      try { this.app.log?.(`[CULT] book_plan created grid=${grid} wpp=${wpp} sections=${plan.sections.length}`); } catch {}
+      try { this.app.log?.(`[CULT] book_plan created grid=${grid} wpp=${wpp} pageSize=${pageSize} style=${style} sections=${plan.sections.length}`); } catch {}
       saveSeed();
     };
 
@@ -566,7 +662,8 @@ export class CulturalAgentModule {
       const wordsRaw = (wordsEl.value || '')
         .split(/\r?\n+/).map(x=>x.trim()).filter(Boolean);
 
-      const picked = pickWordsForGrid(wordsRaw, grid, wpp);
+      // aplica normalização aqui (grade não aceita acento)
+      const pickedNorm = pickWordsForGrid(wordsRaw, grid, wpp);
       const preset = presetFromGrid(grid);
 
       const ws = {
@@ -575,7 +672,7 @@ export class CulturalAgentModule {
         size: grid,
         maxWords: wpp,
         includeKey: true,
-        words: picked.join('\n'), // normalizado
+        words: pickedNorm.join('\n'), // NORMALIZADO
         puzzleId: s.id,
         sectionId: s.id,
         sectionTitle: s.title,
@@ -586,18 +683,29 @@ export class CulturalAgentModule {
       Storage.set('wordsearch:seed', ws);
 
       this.app.toast?.('Aplicado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
-      try { this.app.log?.(`[CULT] applied section=${idx+1} id=${s.id} grid=${grid} wpp=${wpp} words=${picked.length}`); } catch {}
+      try { this.app.log?.(`[CULT] applied section=${idx+1} id=${s.id} grid=${grid} wpp=${wpp} words=${pickedNorm.length}`); } catch {}
       saveSeed();
     };
 
     $('#ca_copy').onclick = async () => {
       const idx = parseInt(sectionSel.value || '0', 10);
       const s = plan?.sections?.[idx];
+
+      // copia DISPLAY (bonito) + também envia NORMALIZADO no final (p/ engine)
+      const wordsDisp = (wordsEl.value || '').trim();
+      const wordsNorm = wordsDisp
+        .split(/\r?\n+/).map(x=>x.trim()).filter(Boolean)
+        .map(normalizeWord).filter(Boolean)
+        .join('\n');
+
       const txt =
         (docEl.textContent || '').trim() +
-        '\n\nPALAVRAS (grade normalizada)\n---------------------------\n' +
-        (wordsEl.value || '').trim() + '\n' +
+        '\n\nPALAVRAS (DISPLAY)\n------------------\n' +
+        wordsDisp + '\n\n' +
+        'PALAVRAS (NORMALIZADO p/ GRADE)\n-------------------------------\n' +
+        wordsNorm + '\n' +
         (s?.id ? `\nID: ${s.id}\n` : '');
+
       try {
         await navigator.clipboard.writeText(txt);
         this.app.toast?.('Copiado ✅');
