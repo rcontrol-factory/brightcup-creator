@@ -1,9 +1,14 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3a PADRÃO (1 ano)
-// PATCH: ortografia correta na LISTA de palavras (acentos/ç) + grade normalizada (sem acento/ç)
+// Bright Cup Creator — Cultural Book Builder v0.3b PADRÃO (1 ano)
+// Objetivo: preview editorial do livro cultural (6x9) LIMPO no mobile, com caça-palavras quadriculado.
+// FIXES IMPORTANTES:
+// - Palavras do puzzle em linhas horizontais (wrap), sem “coluna infinita”
+// - Swipe (folhear) com o dedo no mobile (esquerda/direita)
+// - Slot de imagem ilustrativa na página do puzzle (placeholder clean)
+// - Cache local de puzzles pra não “trocar” grade toda hora ao navegar
 
 import { Storage } from '../core/storage.js';
-import { generateWordSearch } from '../core/wordsearch_gen.js';
+import { generateWordSearch, normalizeWord as wsNormalizeWord } from '../core/wordsearch_gen.js';
 
 function esc(s){
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -12,12 +17,35 @@ function esc(s){
 }
 
 function normalizeWord(s){
+  // compat com wordsearch_gen (sem acento, sem espaço, A-Z0-9)
+  try { return wsNormalizeWord(s); } catch {}
   return String(s || '')
     .trim()
     .toUpperCase()
     .replace(/\s+/g,'')
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/[^A-Z0-9]/g,'');
+}
+
+function uniq(list){
+  const seen = new Set();
+  const out = [];
+  for (const it of list){
+    const w = normalizeWord(it);
+    if (!w) continue;
+    if (seen.has(w)) continue;
+    seen.add(w);
+    out.push(w);
+  }
+  return out;
+}
+
+function pickWords(words, gridSize, maxCount){
+  const maxLen = gridSize;
+  const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
+  // prioriza perto de 7 letras (boa distribuição)
+  filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
+  return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
 
 function wrap(text, max=72){
@@ -49,45 +77,14 @@ function iconLabel(icon){
   return map[icon] || (icon || 'ilustração');
 }
 
-function presetFromGrid(grid){
-  const g = Number(grid || 0);
-  if (g <= 13) return 'BR_POCKET';
-  return 'BR_PLUS';
+function displayWord(w){
+  // Mostra “bonito” com acento se vier com acento.
+  // Se vier normalizado, ainda fica OK.
+  return String(w || '').trim().toUpperCase();
 }
 
-// ✅ cria mapa: NORMALIZADA -> DISPLAY (com acento/ç)
-// prioridade: primeira ocorrência
-function buildDisplayMap(rawList){
-  const map = new Map(); // norm -> display
-  for (const it of (rawList || [])){
-    const disp = String(it || '').trim();
-    if (!disp) continue;
-    const dispUp = disp.toUpperCase(); // mantém acentos/ç
-    const norm = normalizeWord(dispUp);
-    if (!norm) continue;
-    if (!map.has(norm)) map.set(norm, dispUp);
-  }
-  return map;
-}
-
-// ✅ seleciona palavras equilibradas, mas devolve (gridWords normalizadas) + (displayWords corretas)
-function pickWordsDual(rawList, gridSize, maxCount){
-  const maxLen = gridSize;
-
-  const map = buildDisplayMap(rawList);
-  let norms = Array.from(map.keys()).filter(w => w.length >= 3 && w.length <= maxLen);
-
-  // prioriza perto de 7 letras (boa distribuição)
-  norms.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
-
-  const take = Math.max(6, Math.min(norms.length, Number(maxCount || norms.length)));
-  norms = norms.slice(0, take);
-
-  const display = norms.map(n => map.get(n) || n);
-  return { gridWords: norms, displayWords: display };
-}
-
-function buildDefaultPlanMG(grid=13, wpp=16){
+function buildDefaultPlanMG(grid=15, wpp=20){
+  // (Mantém simples e robusto. A “camada humana” mais longa fica no Agent.)
   return {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
@@ -108,12 +105,9 @@ function buildDefaultPlanMG(grid=13, wpp=16){
         title:'O que é Minas?',
         text:
           'Minas é serra no horizonte e café passado na hora. É conversa na porta, ' +
-          'é tradição que atravessa gerações. Aqui, cultura não é enfeite: é jeito de viver.\n\n' +
-          'E tem um detalhe: mineiro fala pouco, mas entende muito.\n' +
-          'Se alguém te oferecer café e pão de queijo… você aceitou a amizade sem perceber.',
-        // ✅ aqui você pode colocar com acento/ç quando quiser
+          'é tradição que atravessa gerações. Aqui, cultura não é enfeite: é jeito de viver.',
         wordHints:[
-          'Minas','Mineiro','Serra','Montanha','Cultura','História','Tradição','Acolhimento','Café','Fogão','Interior'
+          'MINAS','MINEIRO','SERRA','MONTANHA','CULTURA','HISTÓRIA','TRADIÇÃO','ACOLHIMENTO','CAFÉ','FOGÃO','INTERIOR'
         ]
       },
       {
@@ -122,10 +116,9 @@ function buildDefaultPlanMG(grid=13, wpp=16){
         title:'Como começou Minas',
         text:
           'A história de Minas se mistura com caminhos antigos, trabalho duro e cidades que cresceram ' +
-          'ao redor de rios, serras e rotas. O tempo deixa marca: na pedra, na fé e nas histórias contadas.\n\n' +
-          'E por aqui história não fica só em livro: fica na conversa — e na memória do povo.',
+          'ao redor de rios, serras e rotas. O tempo deixa marca: na pedra, na fé e nas histórias contadas.',
         wordHints:[
-          'História','Caminho','Serra','Rio','Cidade','Patrimônio','Memória','Origem','Tradição'
+          'HISTÓRIA','CAMINHO','SERRA','RIO','CIDADE','PATRIMÔNIO','MEMÓRIA','ORIGEM','TRADIÇÃO'
         ]
       },
       {
@@ -136,20 +129,18 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Em Minas, queijo é linguagem. Tem queijo fresco, meia-cura, curado. ' +
           'E tem a Canastra, famosa no Brasil inteiro. Cada pedaço carrega clima, técnica e paciência.',
         wordHints:[
-          'Queijo','Canastra','Curado','Meia-cura','Leite','Fazenda','Tradição','Sabor','Coalho','Cura'
+          'QUEIJO','CANASTRA','CURADO','MEIA-CURA','LEITE','FAZENDA','TRADIÇÃO','SABOR','COALHO','CURA'
         ]
       },
       {
         id:'pao_de_queijo',
         icon:'bread',
-        title:'Pão de queijo (receita simples)',
+        title:'Pão de queijo (receita mineira simples)',
         text:
           'Receita base: polvilho, leite, óleo, ovos, queijo e sal. Mistura, sovar, bolear e assar. ' +
-          'O segredo é o queijo e o ponto da massa — cada casa tem seu jeito.\n\n' +
-          'Causo real: cada família diz que a dela é “a receita certa”.\n' +
-          'O mais mineiro disso tudo é que… todo mundo está “certo” ao mesmo tempo.',
+          'O segredo é o queijo e o ponto da massa — cada casa tem seu jeito.',
         wordHints:[
-          'Pão de queijo','Polvilho','Forno','Massa','Queijo','Leite','Ovo','Sal','Receita','Cozinha','Canastra'
+          'PÃO-DE-QUEIJO','POLVILHO','FORNO','MASSA','QUEIJO','LEITE','OVO','SAL','RECEITA','COZINHA'
         ]
       },
       {
@@ -158,11 +149,9 @@ function buildDefaultPlanMG(grid=13, wpp=16){
         title:'Café e interior',
         text:
           'Café em Minas é ritual. Cheiro que acorda a casa, conversa que começa cedo, ' +
-          'e o interior que ensina a valorizar o simples. É parte da identidade mineira.\n\n' +
-          'E o café em Minas não é só bebida: é convite.\n' +
-          'Se ouvir “passa aqui rapidinho”… pode saber: vai ter café e prosa.',
+          'e o interior que ensina a valorizar o simples. É parte da identidade mineira.',
         wordHints:[
-          'Café','Coador','Cheiro','Manhã','Fazenda','Interior','Tradição','Torra','Xícara','Prosa'
+          'CAFÉ','COADOR','CHEIRO','MANHÃ','FAZENDA','INTERIOR','TRADIÇÃO','TORRA','XÍCARA'
         ]
       },
       {
@@ -170,13 +159,10 @@ function buildDefaultPlanMG(grid=13, wpp=16){
         icon:'train',
         title:'Ferrovia e o “trem” mineiro',
         text:
-          'Em Minas, “trem” não é só vagão: é quase um idioma.\n' +
-          'Você fala “pega aquele trem ali” e pronto — serve pra chave, sacola, panela, controle… tudo vira “trem”.\n\n' +
-          'Tem gente que diz que é economia de palavras. Outros juram que é só pra sobrar tempo de passar um café.\n\n' +
-          'E existe o trem de verdade: trilho, estação, viagem e história. A ferrovia Vitória–Minas marcou caminhos e memórias.\n\n' +
-          'Agora me diz: o “trem” é o objeto… ou é a desculpa perfeita pra prosear?',
+          'O “trem” em Minas é mais que vagão: é expressão, é memória e é caminho. ' +
+          'A ferrovia Vitória–Minas, por exemplo, marca ligações entre regiões e histórias.',
         wordHints:[
-          'Ferrovia','Trem','Trilho','Estação','Viagem','Vitória–Minas','Rota','Plataforma','Vagão','Prosear'
+          'FERROVIA','TREM','TRILHO','ESTAÇÃO','VIAGEM','VITÓRIA-MINAS','ROTA','PLATAFORMA','VAGÃO'
         ]
       },
       {
@@ -187,7 +173,7 @@ function buildDefaultPlanMG(grid=13, wpp=16){
           'Minas também é conhecida por pedras e gemas. O brilho vem de longe: trabalho, comércio, ' +
           'histórias de garimpo e tradição regional.',
         wordHints:[
-          'Pedra','Gema','Garimpo','Cristal','Brilho','Minério','Ouro','Prata','Joia'
+          'PEDRA','GEMA','GARIMPO','CRISTAL','BRILHO','MINÉRIO','OURO','PRATA','JOIA'
         ]
       },
       {
@@ -196,11 +182,9 @@ function buildDefaultPlanMG(grid=13, wpp=16){
         title:'Fé e religiosidade',
         text:
           'Em muitas cidades, a fé aparece nas festas, nas procissões e nas igrejas. ' +
-          'É cultura viva, que une famílias e mantém a história de pé.\n\n' +
-          'Festa, procissão, igreja antiga… fé misturada com comunidade.\n' +
-          'Em cidade pequena, isso vira calendário do ano — e memória da vida inteira.',
+          'É cultura viva, que une famílias e mantém a história de pé.',
         wordHints:[
-          'Fé','Igreja','Santuário','Procissão','Tradição','Festa','Devoto','Romaria'
+          'FÉ','IGREJA','SANTUÁRIO','PROCISSÃO','TRADIÇÃO','FESTA','DEVOTO','ROMARIA'
         ]
       },
       {
@@ -209,12 +193,9 @@ function buildDefaultPlanMG(grid=13, wpp=16){
         title:'Serras, paisagens e caminhos',
         text:
           'Minas é recorte de serra, estrada que sobe e desce, mirante e céu aberto. ' +
-          'É natureza que convida a respirar e seguir adiante.\n\n' +
-          'E tem o “uai”… que dá discussão boa.\n' +
-          'Tem gente que fala “uai é de Minas”, tem gente que fala “uai é de Goiás”.\n' +
-          'A verdade? O uai é do Brasil — mas o mineiro usa com uma calma que é só dele.',
+          'É natureza que convida a respirar e seguir adiante.',
         wordHints:[
-          'Serra','Mirante','Estrada','Paisagem','Natureza','Trilha','Vale','Cachoeira','Uai'
+          'SERRA','MIRANTE','ESTRADA','PAISAGEM','NATUREZA','TRILHA','VALE','CACHOEIRA'
         ]
       },
       {
@@ -223,11 +204,9 @@ function buildDefaultPlanMG(grid=13, wpp=16){
         title:'Governador Valadares e o voo livre',
         text:
           'Governador Valadares é conhecida como capital mundial do voo livre. ' +
-          'O Pico do Ibituruna virou símbolo: aventura, vento e gente do mundo inteiro olhando Minas do alto.\n\n' +
-          'Lá de cima, Minas parece mapa vivo: serra, rio, cidade e horizonte.\n' +
-          'É liberdade com aquele “uai” quando o vento muda.',
+          'O Pico do Ibituruna virou símbolo: aventura, vento e gente do mundo inteiro olhando Minas do alto.',
         wordHints:[
-          'Valadares','Ibituruna','Voo livre','Parapente','Asa-delta','Pico','Vento','Aventura','Mirante'
+          'VALADARES','IBITURUNA','VOO LIVRE','PARAPENTE','ASA-DELTA','PICO','VENTO','AVENTURA','MIRANTE'
         ]
       }
     ]
@@ -236,21 +215,21 @@ function buildDefaultPlanMG(grid=13, wpp=16){
 
 function buildPages(plan){
   const m = plan.meta || {};
-  const grid = Number(m.grid_default || 13);
-  const wpp  = Number(m.words_per_puzzle || 16);
+  const gridDefault = Number(m.grid_default || 15);
+  const wppDefault  = Number(m.words_per_puzzle || 20);
 
   const pages = [];
 
+  // apresentação
   pages.push({
     kind:'text',
     icon:'history',
-    title: m.title || 'LIVRO CULTURAL',
+    title: m.title || 'MINAS GERAIS CULTURAL',
     meta: (m.subtitle || '').trim(),
     body: wrap(
-      `Apresentação\n\n` +
-      `Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
-      `Cada seção traz um texto curto (com alma) e um caça-palavras temático.\n\n` +
-      `Boa leitura e bom passatempo.`,
+      `Apresentação\n\nEste livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
+      `Cada seção traz um texto curto e um caça-palavras temático.\n\n` +
+      `No final, você encontra o gabarito completo. Boa leitura e bom passatempo.`,
       72
     )
   });
@@ -265,25 +244,28 @@ function buildPages(plan){
       sectionId: s.id
     });
 
-    const rawWords = []
-      .concat(s.wordHints || [])
-      .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
+    const rawHints = [].concat(s.wordHints || []).concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA', 'UAI']);
+    const wordsNorm = pickWords(rawHints, gridDefault, wppDefault);
 
-    const dual = pickWordsDual(rawWords, grid, wpp);
+    // lista “bonita” (com acento quando existir)
+    const wordsDisplay = uniq(rawHints.map(displayWord))
+      .filter(w => normalizeWord(w).length >= 3 && normalizeWord(w).length <= gridDefault)
+      .slice(0, Math.max(wordsNorm.length, 6));
 
     pages.push({
       kind:'puzzle',
       icon: s.icon,
       title: `Caça-Palavras — ${s.title}`,
-      meta: `Prévia visual (editorial) • grade ${grid}x${grid} • palavras ${dual.gridWords.length}`,
-      sectionTitle: s.title,
+      meta: `Prévia visual (editorial) • grade ${gridDefault}x${gridDefault}`,
       sectionId: s.id,
-      grid,
-      words: dual.gridWords,              // ✅ SEM acento/ç (para grade)
-      displayWords: dual.displayWords     // ✅ COM acento/ç (para lista)
+      sectionTitle: s.title,
+      grid: gridDefault,
+      wordsNorm,
+      wordsDisplay
     });
   });
 
+  // final / gabarito placeholder
   pages.push({
     kind:'text',
     icon:'history',
@@ -291,25 +273,133 @@ function buildPages(plan){
     meta:'(entra completo no Export PDF)',
     body: wrap(
       `O gabarito completo entra na fase do Export PDF (KDP).\n\n` +
-      `Aqui no Builder a gente valida: ordem, texto, tema, palavras e padrão editorial.`,
+      `Aqui no Builder a gente valida: ordem, texto, tema, grade e padrão editorial.`,
       72
     )
   });
 
-  pages.forEach((p, i) => p.pageNo = i + 1);
+  pages.forEach((p,i)=> p.pageNo = i+1);
   return pages;
 }
 
-function makePuzzlePreview(puzzle){
-  const grid = puzzle.grid || 13;
-  const words = puzzle.words || [];
-  return generateWordSearch({
-    size: grid,
-    words,
-    maxWords: words.length,
+function seedKeyForPlan(plan){
+  const pid = String(plan?.meta?.id || 'book');
+  const ts = String(plan?.meta?.createdAt || '');
+  return `cultural:builder_cache:${pid}:${ts}`;
+}
+
+function getPuzzleCache(plan){
+  return Storage.get(seedKeyForPlan(plan), { puzzles:{} });
+}
+
+function setPuzzleCache(plan, cache){
+  Storage.set(seedKeyForPlan(plan), cache || { puzzles:{} });
+}
+
+function ensurePuzzleGenerated(plan, page){
+  if (!page || page.kind !== 'puzzle') return null;
+  const cache = getPuzzleCache(plan);
+  const key = `p${page.pageNo}:${page.sectionId || ''}:${page.grid || ''}`;
+  if (cache?.puzzles?.[key]) return cache.puzzles[key];
+
+  const gen = generateWordSearch({
+    size: page.grid || 15,
+    words: page.wordsNorm || [],
+    maxWords: (page.wordsNorm || []).length || 16,
     allowDiagonal: true,
     allowBackwards: true
   });
+
+  const payload = {
+    size: gen.size,
+    grid: gen.grid,       // matriz
+    placedCount: (gen.placed || []).length,
+    wordsUsed: (gen.words || []).length
+  };
+
+  cache.puzzles = cache.puzzles || {};
+  cache.puzzles[key] = payload;
+  setPuzzleCache(plan, cache);
+
+  return payload;
+}
+
+function renderGridHTML(grid){
+  const N = grid?.length || 0;
+  if (!N) return '<div class="ws-empty">Grade vazia</div>';
+
+  let html = '<div class="ws-grid" role="img" aria-label="Caça-palavras">';
+  for (let y=0;y<N;y++){
+    html += '<div class="ws-row">';
+    for (let x=0;x<N;x++){
+      html += `<div class="ws-cell">${esc(grid[y][x] || '')}</div>`;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderWordsLine(wordsDisplay){
+  const list = (wordsDisplay || []).map(displayWord).filter(Boolean);
+  if (!list.length) return '';
+  // cada palavra vira um “chip”, e o container faz wrap automático
+  return list.map(w => `<span class="ws-word">${esc(w)}</span>`).join('');
+}
+
+function bindSwipe(el, onPrev, onNext){
+  if (!el) return;
+  let startX = 0, startY = 0, tracking = false, locked = false;
+
+  const onStart = (x,y) => { startX=x; startY=y; tracking=true; locked=false; };
+  const onMove  = (x,y,ev) => {
+    if (!tracking) return;
+    const dx = x - startX;
+    const dy = y - startY;
+
+    // se for claramente horizontal, trava e evita scroll da página
+    if (!locked && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.2) locked = true;
+    if (locked) { try { ev.preventDefault(); } catch {} }
+  };
+  const onEnd   = (x,y) => {
+    if (!tracking) return;
+    tracking = false;
+
+    const dx = x - startX;
+    const dy = y - startY;
+
+    // só considera swipe horizontal
+    if (Math.abs(dx) < 55) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.2) return;
+
+    if (dx > 0) onPrev?.();
+    else onNext?.();
+  };
+
+  // touch
+  el.addEventListener('touchstart', (e)=>{
+    const t = e.touches?.[0];
+    if (!t) return;
+    onStart(t.clientX, t.clientY);
+  }, { passive:true });
+
+  el.addEventListener('touchmove', (e)=>{
+    const t = e.touches?.[0];
+    if (!t) return;
+    onMove(t.clientX, t.clientY, e);
+  }, { passive:false });
+
+  el.addEventListener('touchend', (e)=>{
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+    onEnd(t.clientX, t.clientY);
+  }, { passive:true });
+
+  // mouse (desktop)
+  let mouseDown = false;
+  el.addEventListener('mousedown', (e)=>{ mouseDown=true; onStart(e.clientX, e.clientY); });
+  window.addEventListener('mousemove', (e)=>{ if(!mouseDown) return; onMove(e.clientX, e.clientY, e); }, { passive:false });
+  window.addEventListener('mouseup', (e)=>{ if(!mouseDown) return; mouseDown=false; onEnd(e.clientX, e.clientY); });
 }
 
 export class CulturalBookBuilderModule {
@@ -323,326 +413,425 @@ export class CulturalBookBuilderModule {
 
   render(root){
     let plan = Storage.get('cultural:book_plan', null);
-    const seed = Storage.get('cultural:builder_seed', { mode: 'FOLHEAR', pageIndex: 0 });
+    const seed = Storage.get('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
+
+    const saveSeed = (next) => Storage.set('cultural:builder_seed', next);
 
     root.innerHTML = `
       <style>
         .bb-wrap{ display:grid; gap:14px; }
-        .bb-top{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
-        .bb-top h2{ margin:0; }
-        .bb-help{ opacity:.82; }
-        .bb-controls{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-        .bb-toggle{ display:flex; gap:8px; padding:6px; border-radius:999px; border:1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.18); }
-        .bb-toggle button{ border-radius:999px; padding:8px 12px; }
+        .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+        .bb-toolbar .left, .bb-toolbar .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 
-        .bb-paper{
-          background:#f2f3f5;
-          color:#101214;
-          border-radius:18px;
-          border:1px solid rgba(0,0,0,.08);
-          box-shadow: 0 10px 30px rgba(0,0,0,.18);
+        .bb-top{
+          display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;
+          margin-top:6px;
+        }
+        .bb-tabs{ display:flex; gap:8px; align-items:center; }
+        .bb-mini{ font-size:12px; opacity:.78; }
+
+        /* “Papel branco” (card do livro) */
+        .page-card{
+          background: rgba(255,255,255,0.92);
+          color: #0b0f16;
+          border-radius: 22px;
+          border: 1px solid rgba(0,0,0,.08);
+          box-shadow: 0 18px 60px rgba(0,0,0,.18);
           overflow:hidden;
+          position:relative;
         }
-        .bb-paper-head{ padding:14px 16px 10px 16px; border-bottom:1px solid rgba(0,0,0,.10); }
-        .bb-paper-title{ font-weight:900; font-size:24px; line-height:1.05; letter-spacing:-.2px; }
-        .bb-paper-meta{ margin-top:6px; font-size:14px; opacity:.76; }
-        .bb-paper-body{ padding:14px 16px 14px 16px; }
+        .page-inner{
+          padding: 18px 18px 16px 18px;
+          display:grid;
+          gap:12px;
+        }
+        .page-head{
+          display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+          border-bottom: 1px solid rgba(0,0,0,.08);
+          padding-bottom: 10px;
+        }
+        .page-title{
+          font-size: 34px;
+          line-height: 1.02;
+          font-weight: 900;
+          letter-spacing: -0.4px;
+        }
+        .page-meta{
+          font-size: 16px;
+          opacity: .65;
+          margin-top: 4px;
+        }
+        .page-no{
+          font-size: 18px;
+          opacity:.55;
+          font-weight: 700;
+          padding-top: 6px;
+          min-width: 52px;
+          text-align:right;
+        }
 
-        .bb-textbox{
-          border-radius:14px;
-          border:1px solid rgba(0,0,0,.12);
-          background: rgba(255,255,255,.70);
-          padding:14px;
-          min-height: 360px;
+        .page-body{
+          border-radius: 16px;
+          border: 1px solid rgba(0,0,0,.10);
+          background: rgba(255,255,255,0.55);
+          padding: 14px;
         }
-        .bb-textbox pre{
+        .page-body pre{
           margin:0;
           white-space:pre-wrap;
+          overflow-wrap:anywhere;
           word-break:break-word;
           font-family: ui-serif, Georgia, "Times New Roman", serif;
-          font-size:18px;
-          line-height:1.35;
+          font-size: 20px;
+          line-height: 1.35;
         }
 
-        .bb-puzzle{ display:grid; gap:12px; }
-        .bb-gridwrap{ border-radius:14px; border:1px solid rgba(0,0,0,.14); background: rgba(255,255,255,.76); padding:10px; }
-        .bb-grid{
+        /* puzzle block */
+        .puzzle-wrap{
           display:grid;
-          width:100%;
-          aspect-ratio: 1 / 1;
-          border-radius:10px;
-          overflow:hidden;
-          border:1px solid rgba(0,0,0,.10);
+          gap:12px;
         }
-        .bb-cell{
+        .ws-frame{
+          border-radius: 16px;
+          border: 1px solid rgba(0,0,0,.14);
+          background: rgba(255,255,255,0.65);
+          padding: 12px;
+          display:flex;
+          justify-content:center;
+          align-items:center;
+        }
+        .ws-grid{ display:grid; gap:4px; }
+        .ws-row{ display:grid; grid-auto-flow:column; gap:4px; }
+        .ws-cell{
+          width: 30px;
+          height: 30px;
           display:flex;
           align-items:center;
           justify-content:center;
-          border:1px solid rgba(0,0,0,.10);
+          border-radius: 6px;
+          border: 2px solid rgba(0,0,0,.18);
+          background: rgba(255,255,255,0.70);
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-weight:800;
-          user-select:none;
+          font-weight: 900;
+          font-size: 18px;
+          letter-spacing: 0.3px;
         }
 
-        .bb-words{
-          border-radius:14px;
-          border:1px solid rgba(0,0,0,.10);
-          background: rgba(255,255,255,.70);
-          padding:12px 14px;
+        /* palavras: horizontal + wrap (o que você pediu) */
+        .words-box{
+          border-radius: 16px;
+          border: 1px solid rgba(0,0,0,.10);
+          background: rgba(255,255,255,0.55);
+          padding: 12px 14px;
         }
-        .bb-words .label{ font-size:14px; opacity:.75; margin-bottom:8px; }
-        .bb-wordsline{
+        .words-title{
+          font-size: 18px;
+          font-weight: 800;
+          opacity: .75;
+          margin-bottom: 10px;
+        }
+        .words-line{
           display:flex;
           flex-wrap:wrap;
           gap:10px 14px;
+          align-items:center;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size:14px;
-          line-height:1.2;
+          font-size: 18px;
+          font-weight: 800;
+          letter-spacing: 0.2px;
         }
-        .bb-wordsline span{ white-space:nowrap; }
+        .ws-word{
+          padding: 6px 10px;
+          border-radius: 10px;
+          border: 1px solid rgba(0,0,0,.14);
+          background: rgba(255,255,255,0.65);
+          white-space:nowrap;
+        }
 
-        .bb-paper-foot{
+        /* slot de imagem ilustrativa (clean) */
+        .illus-slot{
+          border-radius: 16px;
+          border: 1px dashed rgba(0,0,0,.22);
+          background: rgba(255,255,255,0.42);
+          padding: 10px 12px;
           display:flex;
           align-items:center;
           justify-content:space-between;
-          gap:10px;
-          padding:12px 16px;
-          border-top:1px solid rgba(0,0,0,.10);
-          background: rgba(255,255,255,.55);
+          gap:12px;
         }
-        .bb-foot-left{ font-size:14px; opacity:.85; }
-        .bb-foot-right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        .illus-left{ display:grid; gap:3px; }
+        .illus-title{ font-size: 16px; font-weight: 900; opacity:.75; }
+        .illus-desc{ font-size: 14px; opacity:.60; }
+        .illus-badge{
+          font-size: 13px;
+          font-weight: 900;
+          padding: 8px 10px;
+          border-radius: 12px;
+          border: 1px solid rgba(0,0,0,.14);
+          background: rgba(255,255,255,0.65);
+          opacity:.9;
+        }
 
-        .bb-pages{ display:grid; gap:14px; }
-        .bb-spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; align-items:start; }
-        @media (max-width: 860px){ .bb-spread{ grid-template-columns: 1fr; } }
+        .page-foot{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          padding-top: 6px;
+          opacity:.78;
+          font-size: 14px;
+        }
+
+        /* layout spread */
+        .spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+        @media (max-width: 860px){
+          .spread{ grid-template-columns: 1fr; }
+          .page-title{ font-size: 30px; }
+          .ws-cell{ width: 26px; height: 26px; font-size: 16px; }
+        }
       </style>
 
       <div class="bb-wrap">
         <div class="card">
-          <div class="bb-top">
-            <div>
-              <h2>Livro Cultural — Builder</h2>
-              <div class="muted bb-help">Preview visual do livro (<b>papel branco</b>). Folheie e valide como produto final.</div>
-            </div>
-            <div class="bb-controls">
-              <div class="bb-toggle">
-                <button class="btn" id="bb_mode_spread">Spread</button>
-                <button class="btn" id="bb_mode_folhear">Folhear</button>
-              </div>
-              <button class="btn" id="bb_prev">◀</button>
-              <button class="btn" id="bb_next">▶</button>
-            </div>
-          </div>
+          <h2>Livro Cultural — Builder</h2>
+          <p class="muted">Preview visual do livro (<b>papel branco</b>). Folheie e valide como produto final.</p>
 
-          <div class="muted" style="margin-top:10px">
-            <b id="bb_bookname"></b>
-            <span style="margin-left:10px">No mobile: arraste a tela, ou use ◀ ▶.</span>
-          </div>
-
-          <div id="bb_area" style="margin-top:12px"></div>
-
-          <div class="row" style="margin-top:12px">
-            <button class="btn" id="bb_download_plan">Baixar plano (JSON)</button>
-            <button class="btn" id="bb_reset">Recriar Minas (PADRÃO)</button>
-          </div>
-
-          <div class="muted" style="margin-top:10px">
-            Página <b id="bb_pagepos"></b>
-          </div>
+          <div id="bb_area"></div>
         </div>
       </div>
     `;
 
     const area = root.querySelector('#bb_area');
-    const bookname = root.querySelector('#bb_bookname');
-    const posEl = root.querySelector('#bb_pagepos');
 
-    const saveSeed = (mode, pageIndex) => {
-      Storage.set('cultural:builder_seed', {
-        mode: mode || seed.mode || 'FOLHEAR',
-        pageIndex: Number.isFinite(pageIndex) ? pageIndex : (seed.pageIndex || 0)
-      });
-    };
+    const renderEmpty = () => {
+      area.innerHTML = `
+        <div class="bb-empty">
+          <p class="muted"><b>Nenhum livro carregado.</b> Isso pode acontecer se o Safari limpar o armazenamento.</p>
+          <div class="row">
+            <button class="btn primary" id="bb_make">Criar Livro Minas (PADRÃO)</button>
+            <button class="btn" id="bb_go_agent">Abrir Cultural Agent</button>
+          </div>
+          <p class="bb-mini muted">Dica: exporte o plano em JSON no Cultural Agent para backup.</p>
+        </div>
+      `;
 
-    const ensurePlan = () => {
-      if (!plan) {
-        plan = buildDefaultPlanMG(13, 16);
+      area.querySelector('#bb_make').onclick = () => {
+        plan = buildDefaultPlanMG(15, 20);
         Storage.set('cultural:book_plan', plan);
-      }
-      return plan;
+        this.app.toast?.('Livro Minas criado ✅');
+        renderMain();
+      };
+
+      area.querySelector('#bb_go_agent').onclick = () => {
+        const btn = document.querySelector('.navitem[data-view="cultural"]');
+        btn?.click?.();
+      };
     };
 
-    const renderPaper = (page) => {
-      const pageNo = page?.pageNo || 1;
-      const title = page?.title || '';
-      const meta = page?.meta || '';
-      const icon = page?.icon || 'history';
+    const renderPageCard = (page, plan, withButton=true) => {
+      if (!page) return '';
 
-      const rightBtn = (page.kind === 'puzzle')
-        ? `<button class="btn" id="bb_send_ws">Enviar p/ Caça-palavras</button>`
-        : '';
+      if (page.kind === 'text') {
+        return `
+          <div class="page-card">
+            <div class="page-inner">
+              <div class="page-head">
+                <div>
+                  <div class="page-title">${esc(page.title || '')}</div>
+                  <div class="page-meta">${esc(page.meta || '')}</div>
+                </div>
+                <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
+              </div>
 
-      let bodyHtml = '';
+              <div class="page-body"><pre>${esc(page.body || '')}</pre></div>
 
-      if (page.kind === 'puzzle') {
-        const gen = makePuzzlePreview(page);
-
-        const N = gen.size;
-        const fontPx = (N >= 17) ? 12 : (N >= 15 ? 13 : 14);
-
-        const gridStyle = `grid-template-columns: repeat(${N}, 1fr);`;
-        const cells = [];
-        for (let y=0; y<N; y++){
-          for (let x=0; x<N; x++){
-            const ch = gen.grid?.[y]?.[x] || '';
-            cells.push(`<div class="bb-cell" style="font-size:${fontPx}px">${esc(ch)}</div>`);
-          }
-        }
-
-        // ✅ lista com ortografia correta (acentos/ç)
-        const list = (page.displayWords && page.displayWords.length) ? page.displayWords : (gen.words || []);
-        const wordsLine = (list || []).map(w => `<span>${esc(w)}</span>`).join('');
-
-        bodyHtml = `
-          <div class="bb-puzzle">
-            <div class="bb-gridwrap">
-              <div class="bb-grid" style="${gridStyle}">
-                ${cells.join('')}
+              <div class="page-foot">
+                <span>Ilustração P&B: <b>${esc(iconLabel(page.icon))}</b></span>
+                <span></span>
               </div>
             </div>
-
-            <div class="bb-words">
-              <div class="label">Palavras</div>
-              <div class="bb-wordsline">${wordsLine}</div>
-            </div>
-          </div>
-        `;
-      } else {
-        bodyHtml = `
-          <div class="bb-textbox">
-            <pre>${esc(page.body || '')}</pre>
           </div>
         `;
       }
+
+      // puzzle
+      const gen = ensurePuzzleGenerated(plan, page);
+      const gridHtml = renderGridHTML(gen?.grid);
 
       return `
-        <div class="bb-paper" data-page="${esc(String(pageNo))}">
-          <div class="bb-paper-head">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px">
+        <div class="page-card">
+          <div class="page-inner">
+            <div class="page-head">
               <div>
-                <div class="bb-paper-title">${esc(title)}</div>
-                <div class="bb-paper-meta">${esc(meta)}</div>
+                <div class="page-title">${esc(page.title || '')}</div>
+                <div class="page-meta">${esc(page.meta || '')} • palavras ${esc(String(gen?.placedCount || 0))}</div>
               </div>
-              <div class="bb-paper-meta">p.${esc(String(pageNo))}</div>
+              <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
             </div>
-          </div>
 
-          <div class="bb-paper-body">
-            ${bodyHtml}
-          </div>
+            <div class="puzzle-wrap">
+              <div class="ws-frame">${gridHtml}</div>
 
-          <div class="bb-paper-foot">
-            <div class="bb-foot-left">Ilustração P&amp;B: <b>${esc(iconLabel(icon))}</b></div>
-            <div class="bb-foot-right">${rightBtn}</div>
+              <div class="words-box">
+                <div class="words-title">Palavras</div>
+                <div class="words-line">${renderWordsLine(page.wordsDisplay || page.wordsNorm || [])}</div>
+              </div>
+
+              <div class="illus-slot">
+                <div class="illus-left">
+                  <div class="illus-title">Ilustração P&B: ${esc(iconLabel(page.icon))}</div>
+                  <div class="illus-desc">Slot reservado (a imagem entra aqui no modo Export/IA).</div>
+                </div>
+                <div class="illus-badge">Imagem</div>
+              </div>
+            </div>
+
+            <div class="page-foot">
+              ${
+                withButton ? `<button class="btn" data-send="ws">Enviar p/ Caça-palavras</button>` : `<span></span>`
+              }
+              <span></span>
+            </div>
           </div>
         </div>
       `;
     };
 
-    const renderMain = () => {
-      ensurePlan();
-      const pages = buildPages(plan);
+    const sendPageToWordSearch = (page, plan) => {
+      if (!page || page.kind !== 'puzzle') return;
+      const ws = {
+        title: page.title || `Caça-Palavras ${page.grid}x${page.grid}`,
+        preset: (page.grid || 15) <= 13 ? 'BR_POCKET' : 'BR_PLUS',
+        size: page.grid || 15,
+        maxWords: (page.wordsNorm || []).length || 16,
+        includeKey: true,
+        // envia normalizado (compatível com gerador)
+        words: (page.wordsNorm || []).join('\n'),
+        puzzleId: page.sectionId || '',
+        sectionId: page.sectionId || '',
+        sectionTitle: page.sectionTitle || '',
+        output: '',
+        ts: Date.now()
+      };
+      Storage.set('wordsearch:seed', ws);
+      this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar+Salvar)');
+      try { this.app.log?.(`[BOOK] sent section="${page.sectionTitle || ''}" grid=${ws.size} words=${(page.wordsNorm||[]).length}`); } catch {}
+    };
 
-      let mode = (seed.mode === 'SPREAD' || seed.mode === 'FOLHEAR') ? seed.mode : 'FOLHEAR';
+    const renderMain = () => {
+      if (!plan) return renderEmpty();
+
+      const pages = buildPages(plan);
+      let mode = seed.mode === 'SPREAD' ? 'SPREAD' : 'FOLHEAR';
       let pageIndex = Math.max(0, Math.min(seed.pageIndex || 0, pages.length - 1));
 
-      const setModeButtons = () => {
-        const bS = root.querySelector('#bb_mode_spread');
-        const bF = root.querySelector('#bb_mode_folhear');
-        if (mode === 'SPREAD') { bS.classList.add('primary'); bF.classList.remove('primary'); }
-        else { bF.classList.add('primary'); bS.classList.remove('primary'); }
+      const save = () => saveSeed({ mode, pageIndex });
+
+      const goPrev = () => {
+        pageIndex = Math.max(0, pageIndex - 1);
+        save(); paint();
+      };
+      const goNext = () => {
+        pageIndex = Math.min(pages.length - 1, pageIndex + 1);
+        save(); paint();
       };
 
-      const updatePos = () => {
-        posEl.textContent = `${pageIndex + 1}/${pages.length}`;
-        saveSeed(mode, pageIndex);
-      };
+      area.innerHTML = `
+        <div class="bb-toolbar">
+          <div class="left">
+            <span class="bb-mini"><b>${esc(plan.meta?.title || 'LIVRO')}</b></span>
+          </div>
+          <div class="right">
+            <button class="btn" id="bb_prev">◀</button>
+            <button class="btn" id="bb_next">▶</button>
+          </div>
+        </div>
 
-      const wirePuzzleSend = () => {
-        const paper = area.querySelector('.bb-paper');
-        if (!paper) return;
-        const pageNo = parseInt(paper.getAttribute('data-page') || '1', 10);
-        const p = pages.find(x => x.pageNo === pageNo);
-        if (!p || p.kind !== 'puzzle') return;
+        <div class="bb-top">
+          <div class="bb-tabs">
+            <button class="btn ${mode==='SPREAD'?'primary':''}" id="bb_mode_spread">Spread</button>
+            <button class="btn ${mode==='FOLHEAR'?'primary':''}" id="bb_mode_folhear">Folhear</button>
+          </div>
+          <div class="bb-mini">Página <b id="bb_pos"></b></div>
+        </div>
 
-        const btn = paper.querySelector('#bb_send_ws');
-        if (!btn) return;
+        <div id="bb_view"></div>
 
-        btn.onclick = () => {
-          const ws = {
-            title: `Caça-Palavras — ${p.sectionTitle || p.title || 'Seção'}`,
-            preset: presetFromGrid(p.grid),
-            size: p.grid,
-            maxWords: (p.words || []).length,
-            includeKey: true,
-            words: (p.words || []).join('\n'), // ✅ grade sem acento/ç
-            puzzleId: p.sectionId || '',
-            sectionId: p.sectionId || '',
-            sectionTitle: p.sectionTitle || ''
-          };
-          Storage.set('wordsearch:seed', ws);
-          this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar+Salvar)');
-          try { this.app.log?.(`[BOOK] sent section="${p.sectionTitle || ''}" id=${p.sectionId || ''} grid=${p.grid} words=${(p.words||[]).length}`); } catch {}
-        };
-      };
+        <div class="bb-toolbar" style="margin-top:10px;">
+          <div class="left">
+            <button class="btn" id="bb_download_plan">Baixar plano (JSON)</button>
+            <button class="btn" id="bb_reset">Recriar Minas (PADRÃO)</button>
+          </div>
+          <div class="right">
+            <button class="btn" id="bb_go_agent">Abrir Agent</button>
+          </div>
+        </div>
+      `;
 
-      const render = () => {
-        setModeButtons();
-        bookname.textContent = String(plan.meta?.title || 'LIVRO');
+      const view = area.querySelector('#bb_view');
 
-        if (mode === 'SPREAD') {
-          const left = pages[pageIndex];
-          const right = pages[pageIndex + 1] || null;
-          area.innerHTML = `
-            <div class="bb-spread">
-              <div>${renderPaper(left)}</div>
-              <div>${right ? renderPaper(right) : ''}</div>
-            </div>
-          `;
-        } else {
-          const page = pages[pageIndex];
-          area.innerHTML = `<div class="bb-pages">${renderPaper(page)}</div>`;
+      const paint = () => {
+        area.querySelector('#bb_pos').textContent = `${pageIndex+1}/${pages.length}`;
+
+        if (mode === 'FOLHEAR') {
+          const p = pages[pageIndex];
+          view.innerHTML = renderPageCard(p, plan, true);
+
+          // bind swipe no card (folhear com dedo)
+          const card = view.querySelector('.page-card');
+          bindSwipe(card, goPrev, goNext);
+
+          // bind botão enviar
+          const btn = view.querySelector('[data-send="ws"]');
+          if (btn) btn.onclick = () => sendPageToWordSearch(p, plan);
+
+          return;
         }
 
-        wirePuzzleSend();
-        updatePos();
+        // SPREAD: página atual à esquerda e próxima à direita
+        const left = pages[pageIndex];
+        const right = pages[pageIndex+1] || null;
+
+        view.innerHTML = `
+          <div class="spread">
+            <div>${renderPageCard(left, plan, true)}</div>
+            <div>${right ? renderPageCard(right, plan, true) : ''}</div>
+          </div>
+        `;
+
+        // swipe no spread inteiro (para mudar “duas páginas”)
+        bindSwipe(view, ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); }, ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); });
+
+        // bind enviar nos dois
+        const cards = view.querySelectorAll('.page-card');
+        cards.forEach((cardEl, idxCard)=>{
+          const page = idxCard===0 ? left : right;
+          const btn = cardEl.querySelector('[data-send="ws"]');
+          if (btn && page) btn.onclick = () => sendPageToWordSearch(page, plan);
+        });
       };
 
-      root.querySelector('#bb_mode_spread').onclick = () => { mode = 'SPREAD'; render(); };
-      root.querySelector('#bb_mode_folhear').onclick = () => { mode = 'FOLHEAR'; render(); };
+      area.querySelector('#bb_prev').onclick = goPrev;
+      area.querySelector('#bb_next').onclick = goNext;
 
-      root.querySelector('#bb_prev').onclick = () => {
-        if (mode === 'SPREAD') pageIndex = Math.max(0, pageIndex - 2);
-        else pageIndex = Math.max(0, pageIndex - 1);
-        render();
-      };
+      area.querySelector('#bb_mode_spread').onclick = () => { mode='SPREAD'; save(); renderMain(); };
+      area.querySelector('#bb_mode_folhear').onclick = () => { mode='FOLHEAR'; save(); renderMain(); };
 
-      root.querySelector('#bb_next').onclick = () => {
-        if (mode === 'SPREAD') pageIndex = Math.min(pages.length - 1, pageIndex + 2);
-        else pageIndex = Math.min(pages.length - 1, pageIndex + 1);
-        render();
-      };
-
-      root.querySelector('#bb_reset').onclick = () => {
-        plan = buildDefaultPlanMG(13, 16);
+      area.querySelector('#bb_reset').onclick = () => {
+        plan = buildDefaultPlanMG(15, 20);
         Storage.set('cultural:book_plan', plan);
-        Storage.set('cultural:builder_seed', { mode: 'FOLHEAR', pageIndex: 0 });
+        Storage.set('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
         this.app.toast?.('Livro recriado ✅');
         renderMain();
       };
 
-      root.querySelector('#bb_download_plan').onclick = () => {
+      area.querySelector('#bb_go_agent').onclick = () => {
+        const btn = document.querySelector('.navitem[data-view="cultural"]');
+        btn?.click?.();
+      };
+
+      area.querySelector('#bb_download_plan').onclick = () => {
+        if (!plan) return;
         try{
           const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
           const a = document.createElement('a');
@@ -651,15 +840,15 @@ export class CulturalBookBuilderModule {
           a.click();
           setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
           this.app.toast?.('Plano baixado ✅');
-        } catch(e){
-          this.app.toast?.('Falha ao baixar');
-          try { this.app.log?.('[BOOK] download failed: ' + (e?.message || e)); } catch {}
+        } catch {
+          this.app.toast?.('Falha ao baixar', 'err');
         }
       };
 
-      render();
+      paint();
     };
 
-    renderMain();
+    if (!plan) renderEmpty();
+    else renderMain();
   }
 }
