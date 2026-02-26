@@ -1,16 +1,16 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-/**
- * Bright Cup Creator — Cultural Book Builder (Preview + PDF Export)
- * v0.8i FIX (remove puzzle/words bubbles)
- *
- * Ajustes:
- * - Palavras do puzzle vêm de: section.wordHints
- * - Header compacto
- * - Folha fixa
- * - Swipe 1 passo por gesto
- * - Palavras em colunas (dinâmico)
- * - ✅ Remove “bolhas” (containers) do grid e das palavras
- */
+// Bright Cup Creator — Cultural Book Builder v0.4a PADRÃO (1 ano)
+// V0.4a:
+// - Builder = só folhear/aprovar (layout vem do Agent via plan.meta.layout)
+// - Folha fixa (6x9) sem expandir por conteúdo
+// - Caça-Palavras sem “bolhas” internas (grid e palavras sem cards/bubbles)
+// - Palavras em 3 colunas, compactas (mais espaço pra grade)
+// - Header do puzzle mais enxuto (sem “Prévia visual...”, sem “Puzzle”)
+// - Mantém: pipeline de export/IA e slots de ilustração
+//
+// Observação: este módulo é de “preview editorial”. O PDF final continua vindo do Export.
+//
+// (c) RControl / Bright Cup Creator
 
 import { Storage } from '../core/storage.js';
 
@@ -20,461 +20,426 @@ const $esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
-// Mantém “ortografia” (acentos/ç) para DISPLAY
-function displayWord(s){
-  return String(s || '').trim().replace(/\s+/g,' ').toUpperCase();
+function normalizeWord(s){
+  return String(s || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g,'')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^A-Z0-9]/g,'');
 }
 
-function renderWordsColumns(items){
-  const safe = (items || []).map(displayWord).filter(Boolean);
-  return safe.map(w => `<div class="ws-w">${$esc(w)}</div>`).join('');
+function uniqNorm(list){
+  const seen = new Set();
+  const out = [];
+  for (const it of (list || [])){
+    const w = normalizeWord(it);
+    if (!w) continue;
+    if (seen.has(w)) continue;
+    seen.add(w);
+    out.push(w);
+  }
+  return out;
 }
 
-/**
- * Layout colunas:
- * - <=6 palavras: 2 colunas
- * - 7..15: 3 colunas (PADRÃO)
- * - >15: 4 colunas
- */
-function wordsGridVars(items){
-  const n = Array.isArray(items) ? items.length : 0;
-
-  let cols = 3;
-  if (n <= 6) cols = 2;
-  else if (n <= 15) cols = 3;
-  else cols = 4;
-
-  let wfs = 13;
-  if (cols === 2) wfs = 13;
-  if (cols === 3) wfs = 12.5;
-  if (cols === 4) wfs = 12;
-
-  let gx = 14;
-  let gy = 5;
-  if (cols === 4) { gx = 12; gy = 4; }
-
-  return `--cols:${cols};--wfs:${wfs}px;--gx:${gx}px;--gy:${gy}px;`;
+function pickWordsForGrid(words, gridSize, maxCount){
+  const maxLen = gridSize;
+  const filtered = uniqNorm(words).filter(w => w.length >= 3 && w.length <= maxLen);
+  filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
+  const take = Math.max(6, Number(maxCount || 0) || 0);
+  return filtered.slice(0, take);
 }
 
-function bindSwipe(el, onPrev, onNext){
-  if (!el) return;
-
-  el.__bbSwipeHandlers = { onPrev, onNext };
-
-  if (el.__bbSwipeBound) return;
-  el.__bbSwipeBound = true;
-
-  let sx = 0, sy = 0, dx = 0, dy = 0, dragging = false, pid = null;
-
-  const getH = () => el.__bbSwipeHandlers || {};
-  const callPrev = () => { try { getH().onPrev?.(); } catch {} };
-  const callNext = () => { try { getH().onNext?.(); } catch {} };
-
-  const onStart = (x, y, pointerId) => { sx = x; sy = y; dx = 0; dy = 0; dragging = true; pid = pointerId ?? null; };
-  const onMove  = (x, y) => { if (!dragging) return; dx = x - sx; dy = y - sy; };
-  const onEnd   = () => {
-    if (!dragging) return;
-    dragging = false;
-
-    if (Math.abs(dx) > 38 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-      if (dx > 0) callPrev();
-      else callNext();
-    }
-    dx = 0; dy = 0; pid = null;
-  };
-
-  el.addEventListener('touchstart', (e) => {
-    const t = e.touches?.[0];
-    if (!t) return;
-    onStart(t.clientX, t.clientY, null);
-  }, { passive:true });
-
-  el.addEventListener('touchmove', (e) => {
-    const t = e.touches?.[0];
-    if (!t) return;
-    onMove(t.clientX, t.clientY);
-  }, { passive:true });
-
-  el.addEventListener('touchend', () => onEnd(), { passive:true });
-
-  el.addEventListener('mousedown', (e) => onStart(e.clientX, e.clientY, 'mouse'));
-  window.addEventListener('mousemove', (e) => {
-    if (!dragging || pid !== 'mouse') return;
-    onMove(e.clientX, e.clientY);
-  }, { passive:true });
-  window.addEventListener('mouseup', () => {
-    if (!dragging || pid !== 'mouse') return;
-    onEnd();
-  }, { passive:true });
+function wrapLines(text, max=72){
+  const words = String(text||'').split(/\s+/g);
+  const lines = [];
+  let line = '';
+  for (const w of words){
+    if (!line) { line = w; continue; }
+    if ((line + ' ' + w).length <= max) line += ' ' + w;
+    else { lines.push(line); line = w; }
+  }
+  if (line) lines.push(line);
+  return lines.join('\n');
 }
 
-function getBookPlan(){
-  return Storage.get('cultural:book_plan', null);
+function renderSectionText(s){
+  const lines = [];
+  lines.push(String(s.title || '').toUpperCase());
+  lines.push('-'.repeat(Math.max(18, String(s.title||'').length)));
+  lines.push('');
+  lines.push(wrapLines(s.text, 72));
+  lines.push('');
+  return lines.join('\n').trimEnd();
 }
 
-function getBookPages(plan){
+function presetFromGrid(grid){
+  const g = Number(grid||0);
+  if (g <= 13) return 'BR_POCKET';
+  return 'BR_PLUS';
+}
+
+function buildPagesFromPlan(plan){
   const pages = [];
-  const m = plan?.meta || {};
-  const sections = plan?.sections || [];
+  const meta = plan?.meta || {};
+  const gridDefault = Number(meta.grid_default || 15);
+  const wppDefault  = Number(meta.words_per_puzzle || 16);
+  const includeKey  = !!meta.include_key;
 
+  // capa
   pages.push({
     kind:'cover',
-    title: (m.title || 'LIVRO').toUpperCase(),
-    subtitle: m.subtitle || '',
-    number: 1
+    title: meta.title || 'LIVRO',
+    subtitle: meta.subtitle || '',
+    pageNo: 1
   });
 
-  let p = 2;
-  sections.forEach((s) => {
+  // seções: texto + puzzle
+  let pageNo = 2;
+  const secs = plan?.sections || [];
+  for (const s of secs){
+    // texto
     pages.push({
       kind:'text',
-      title: s.title || '',
-      body: String(s.text || ''),
-      illoHint: s.title || '',
-      number: p++
+      icon: s.icon,
+      title: s.title,
+      sectionId: s.id,
+      sectionTitle: s.title,
+      doc: renderSectionText(s),
+      imageSlotLabel: (s?.imageSlotLabel || 'Ilustração P&B') + `: ${s.title}`,
+      pageNo: pageNo++
     });
 
-    // ✅ palavras vêm de wordHints
-    const wordsDisplay = Array.isArray(s.wordHints) ? s.wordHints : [];
+    // palavras
+    const wordsRaw = []
+      .concat(s.wordHints || [])
+      .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
 
+    const wordsNorm = pickWordsForGrid(wordsRaw, gridDefault, wppDefault);
+
+    // puzzle page
     pages.push({
       kind:'puzzle',
-      title: `Caça-Palavras — ${s.title || ''}`,
-      gridSize: Number(m.grid_default || 15),
-      grid: s?.grid || null,
-      wordsDisplay,
-      placed: wordsDisplay.length,
-      illoHint: (s?.illoHint || s?.title || ''),
-      number: p++
-    });
-  });
-
-  if (m.include_key) {
-    pages.push({
-      kind:'key',
-      title: 'Gabarito',
-      body: 'Gabarito completo entra aqui (Export/IA).',
-      number: p++
+      icon: s.icon,
+      title: `Caça-Palavras — ${s.title}`,
+      meta: `grade ${gridDefault}x${gridDefault} · palavras ${wordsNorm.length}`,
+      sectionId: s.id,
+      sectionTitle: s.title,
+      grid: gridDefault,
+      maxWords: wppDefault,
+      includeKey,
+      wordsNorm,
+      imageSlotLabel: (s?.imageSlotLabelPuzzle || 'Ilustração P&B') + `: ${s.title}`,
+      pageNo: pageNo++
     });
   }
 
   return pages;
 }
 
-function ensureGrid(page){
-  if (Array.isArray(page.grid) && page.grid.length) return page.grid;
-
-  const size = clamp(Number(page.gridSize||15), 10, 21);
-  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const grid = [];
-  for (let r=0;r<size;r++){
-    const row = [];
-    for (let c=0;c<size;c++){
-      row.push(letters[(Math.random()*letters.length)|0]);
+function tableGridHTML(grid){
+  const rows = [];
+  for (let r=0; r<grid.length; r++){
+    const tds = [];
+    for (let c=0; c<grid[r].length; c++){
+      const ch = grid[r][c] || ' ';
+      tds.push(`<td class="ws-cell"><span>${$esc(ch)}</span></td>`);
     }
-    grid.push(row);
+    rows.push(`<tr>${tds.join('')}</tr>`);
   }
-  return grid;
+  return `<table class="ws-grid" aria-label="Caça-palavras">${rows.join('')}</table>`;
 }
 
-function renderGridTable(grid){
-  const rows = (grid || []).map(row => {
-    const tds = row.map(ch => `<td>${$esc(ch)}</td>`).join('');
-    return `<tr>${tds}</tr>`;
+function splitWordsToCols(words, cols=3){
+  const arr = (words || []).slice();
+  const out = Array.from({length:cols}, ()=>[]);
+  const per = Math.ceil(arr.length / cols);
+  for (let i=0; i<cols; i++){
+    out[i] = arr.slice(i*per, (i+1)*per);
+  }
+  return out;
+}
+
+function wordsHTML(words){
+  const cols = splitWordsToCols(words, 3);
+  const colHtml = cols.map(col => {
+    const items = col.map(w => `<div class="word-item">${$esc(w)}</div>`).join('');
+    return `<div class="word-col">${items}</div>`;
   }).join('');
-  return `<table class="ws-table"><tbody>${rows}</tbody></table>`;
+  return `<div class="words-grid">${colHtml}</div>`;
 }
 
 export class CulturalBookBuilderModule {
   constructor(app){
     this.app = app;
     this.id = 'book';
-    this.title = 'Book Builder';
-    this._pageIndex = 0;
-    this._mode = 'FOLHEAR';
+    this.title = 'Builder';
   }
 
   async init(){}
 
   render(root){
-    const plan = getBookPlan();
-    const pages = plan ? getBookPages(plan) : [];
+    const seed = Storage.get('cultural:seed', null);
+    const plan = Storage.get('cultural:book_plan', null);
+
+    const pages = plan ? buildPagesFromPlan(plan) : [];
 
     root.innerHTML = `
-      <div class="grid">
-        <div class="card">
-          <h2>Book Builder</h2>
-          <p class="muted">Folha fixa (preview). Folheie e valide.</p>
-
-          <div class="row">
-            <button class="btn" id="bb_spread">Spread</button>
-            <button class="btn primary" id="bb_folhear">Folhear</button>
-            <div class="pill" id="bb_pagepill">Página ${pages.length? (this._pageIndex+1) : 0}/${pages.length}</div>
-            <button class="btn icon" id="bb_prev" title="Anterior">◀</button>
-            <button class="btn icon" id="bb_next" title="Próximo">▶</button>
+      <div class="builder">
+        <div class="builder-top">
+          <div class="builder-title">
+            <h2>Builder</h2>
+            <p class="muted">Prévia visual do livro (papel branco). Folheie e valide como produto final.</p>
           </div>
 
-          <div class="row">
-            <button class="btn" id="bb_export_plan">Baixar plano (JSON)</button>
-            <button class="btn" id="bb_rebuild">Recriar Minas (PADRÃO)</button>
-            <button class="btn" id="bb_open_agent">Abrir Agent</button>
+          <div class="builder-controls">
+            <button class="btn" id="bb_spread">Spread</button>
+            <button class="btn primary" id="bb_flip">Folhear</button>
+            <div class="pill" id="bb_pageinfo">Página 1/1</div>
+            <button class="btn" id="bb_prev">◀</button>
+            <button class="btn" id="bb_next">▶</button>
           </div>
         </div>
 
-        <div class="card">
-          <div id="bb_view" class="bb-view"></div>
+        <div class="builder-main">
+          <div class="page-wrap">
+            <div class="page" id="bb_page">
+              <div class="page-inner" id="bb_pageinner">
+                <div class="empty">Nenhum plano ainda. Abra o Cultural Agent e gere o plano.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="builder-actions">
+          <button class="btn" id="bb_download_plan">Baixar plano (JSON)</button>
+          <button class="btn" id="bb_recreate">Recriar Minas (PADRÃO)</button>
+          <button class="btn" id="bb_open_agent">Abrir Agent</button>
         </div>
       </div>
 
       <style>
-        .bb-view{ padding: 8px 0; user-select:none; }
+        .builder{display:flex;flex-direction:column;gap:14px;}
+        .builder-top{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+        .builder-title h2{margin:0 0 4px 0;}
+        .builder-title .muted{margin:0;color:rgba(255,255,255,.72);font-size:13px;}
+        .builder-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+        .pill{padding:8px 12px;border:1px solid rgba(255,255,255,.15);border-radius:999px;background:rgba(0,0,0,.18);}
+        .builder-main{display:flex;justify-content:center;}
+        .page-wrap{width:min(92vw, 520px);}
+        .page{background:#fff;border-radius:22px;box-shadow:0 18px 50px rgba(0,0,0,.22);overflow:hidden;}
+        .page-inner{padding:18px 18px 14px 18px; height: 720px; display:flex; flex-direction:column;}
+        .empty{color:#64748b;font-size:14px;}
 
-        .paper{ width: 100%; display:flex; justify-content:center; }
+        /* header base */
+        .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+        .page-title{font-size:34px;line-height:1.04;font-weight:900;letter-spacing:-.02em;margin:0;}
+        .page-kind{color:#64748b;font-size:14px;margin-top:6px;}
+        .page-no{font-size:14px;opacity:.7;font-weight:900;min-width:52px;text-align:right;padding-top:6px;}
+        .page-meta{color:#64748b;font-size:14px;margin-top:8px;}
+        .page-hr{height:1px;background:#e5e7eb;margin:10px 0 14px 0;}
 
-        /* ✅ folha fixa */
-        .page{
-          background: #f7f7f5;
-          color: #0b0f16;
-          border-radius: 14px;
-          border: 1px solid rgba(0,0,0,.18);
-          box-shadow: 0 14px 44px rgba(0,0,0,.22);
-          overflow:hidden;
-          position:relative;
-          width: min(100%, 560px);
-          aspect-ratio: 2 / 3;
-          max-height:min(78vh,780px);
-          height:auto;
-          touch-action: pan-y;
-        }
+        /* text page */
+        .page-body{flex:1;min-height:0;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;padding:18px;}
+        .page-body .doc{font-family:Georgia, 'Times New Roman', Times, serif; font-size:20px;line-height:1.35;color:#111827;white-space:pre-line;}
+        .img-slot{margin-top:12px;border:2px dashed #cbd5e1;border-radius:16px;padding:14px;color:#64748b;background:rgba(148,163,184,.08);display:flex;align-items:center;justify-content:space-between;gap:12px;}
+        .img-slot b{color:#0f172a;}
+        .img-chip{border:1px solid #cbd5e1;border-radius:12px;padding:6px 10px;background:#fff;color:#334155;font-weight:800;font-size:12px;}
 
-        .page-inner{
-          padding: 14px;
-          height:100%;
-          display:flex;
-          flex-direction:column;
-          gap:10px;
-        }
+        /* caça-palavras: header mais enxuto + sem linha extra */
+        .ws-head .page-title{font-size:clamp(20px,5.6vw,28px);line-height:1.06;}
+        .ws-meta{font-size:14px;opacity:.72;margin-top:6px;}
+        .ws-head .page-kind{display:none;}
 
-        /* ✅ HEADER COMPACTO */
-        .page-head{
-          display:flex;
-          justify-content:space-between;
-          align-items:flex-start;
-          gap:10px;
-        }
-        .page-title{
-          font-size: 26px;
-          line-height: 1.05;
-          font-weight: 900;
-          letter-spacing:-.02em;
-          margin:0;
-        }
-        .pnum{
-          opacity:.55;
+        /* caça-palavras: sem bolhas/cards internos */
+        .ws-box{border:none;background:transparent;border-radius:0;padding:0;margin:0;}
+        .ws-grid{border-collapse:collapse;width:100%;table-layout:fixed;}
+        .ws-cell{padding:0;}
+        .ws-cell span{
+          display:flex;align-items:center;justify-content:center;
+          width:100%;height:100%;
+          font-size:clamp(10px, 2.8vw, 16px);
           font-weight:900;
-          font-size: 16px;
-          margin-top: 2px;
-          white-space:nowrap;
+          color:#0f172a;
         }
-        .refline{
-          margin-top: 4px;
-          font-size: 14px;
-          opacity:.72;
-        }
+        .ws-grid td{border:1px solid #111827; height: clamp(18px, 5vw, 28px);}
 
-        /* TEXT */
-        .page-body{
-          border: 1px solid rgba(0,0,0,.12);
-          background: #ffffff;
-          padding: 14px;
-          border-radius: 12px;
-          flex:1;
-          min-height:0;
-          overflow:hidden;
-        }
-        .text-body{
-          font-family: Georgia, serif;
-          font-size: 22px;
-          line-height: 1.25;
-          white-space: pre-wrap;
-        }
+        /* palavras: 3 colunas, sem “bolha” */
+        .words-box{margin-top:12px;border:none;background:transparent;border-radius:0;padding:0;}
+        .words-title{font-weight:900;font-size:26px;margin:0 0 8px 0;color:#0f172a;}
+        .words-grid{display:grid;grid-template-columns:repeat(3, 1fr);gap:10px 18px;}
+        .word-col{display:flex;flex-direction:column;gap:8px;}
+        .word-item{font-weight:900;letter-spacing:.02em;font-size:18px;color:#0f172a;border-bottom:2px dotted rgba(15,23,42,.25);padding-bottom:2px;}
 
-        /* ✅ PUZZLE (SEM BOLHA) */
-        .ws-box{
-          border: none;
-          background: transparent;
-          padding: 0;
-          border-radius: 0;
-          overflow:hidden;
-          flex: 1;
-          min-height: 0;
-          display:flex;
-          align-items:center;
-          justify-content:center;
-        }
-        .ws-table{ border-collapse: collapse; margin: 0 auto; }
-        .ws-table td{
-          border: 1px solid rgba(0,0,0,.40);
-          width: 1.9em;
-          height: 1.9em;
-          text-align:center;
-          vertical-align:middle;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-weight: 900;
-          font-size: clamp(12px, 3.2vw, 16px);
-          line-height: 1;
-          padding: 0;
-          background: transparent;
-        }
-
-        /* ✅ WORDS (SEM BOLHA) */
-        .words-box{
-          border: none;
-          background: transparent;
-          padding: 0;
-          border-radius: 0;
-          max-height: 28%;
-          overflow:hidden;
-        }
-        .words-title{
-          font-weight: 900;
-          font-size: 18px;
-          margin: 0;
-        }
-        .words-grid{
-          display:grid;
-          grid-template-columns: repeat(var(--cols, 3), minmax(0,1fr));
-          gap: var(--gy, 5px) var(--gx, 14px);
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-weight: 900;
-          font-size: var(--wfs, 12.5px);
-          margin-top: 8px;
-        }
-        .ws-w{
-          white-space:nowrap;
-          border-bottom: 1px dotted rgba(0,0,0,.22);
-          padding-bottom: 2px;
-        }
-
-        .cover{ display:flex; flex-direction:column; justify-content:center; height:100%; gap: 14px; }
-        .cover h1{ margin:0; font-size: 44px; line-height:1.02; letter-spacing:-.02em; }
-        .cover .sub{ font-size: 18px; opacity:.78; }
-
-        .hint{ margin-top:auto; font-size: 14px; opacity:.65; }
+        .footer-note{margin-top:auto;padding-top:10px;color:#64748b;font-size:14px;}
+        .footer-note b{color:#0f172a;}
       </style>
     `;
 
-    const $ = (s) => root.querySelector(s);
-    const view = $('#bb_view');
-    const pill = $('#bb_pagepill');
+    const $ = (s)=>root.querySelector(s);
+    const pageInner = $('#bb_pageinner');
+    const pageInfo = $('#bb_pageinfo');
 
-    const updatePill = () => {
-      pill.textContent = `Página ${pages.length ? (this._pageIndex + 1) : 0}/${pages.length}`;
+    let mode = 'flip';
+    let idx = 0;
+
+    const renderCover = (p) => {
+      return `
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">${$esc(p.title || '')}</h1>
+            <div class="page-meta">${$esc(p.subtitle || '')}</div>
+          </div>
+          <div class="page-no">p.${$esc(String(p.pageNo||1))}</div>
+        </div>
+        <div class="page-hr"></div>
+        <div class="page-body">
+          <div class="doc">${$esc((plan?.meta?.subtitle || '').replace(/\s*\u2022\s*/g, ' • '))}</div>
+        </div>
+      `;
     };
 
-    const renderPage = (page) => {
-      if (!page) {
-        return `<div class="paper"><div class="page"><div class="page-inner"><p class="muted">Sem páginas</p></div></div></div>`;
-      }
-
-      if (page.kind === 'cover'){
-        return `
-          <div class="paper">
-            <div class="page">
-              <div class="page-inner">
-                <div class="cover">
-                  <div>
-                    <h1>${$esc(page.title || '')}</h1>
-                    <div class="sub">${$esc(page.subtitle || '')}</div>
-                  </div>
-                  <div class="hint">Prévia editorial • folha fixa</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        `;
-      }
-
-      if (page.kind === 'puzzle'){
-        const grid = ensureGrid(page);
-        const words = Array.isArray(page.wordsDisplay) ? page.wordsDisplay : [];
-        const placed = words.length;
-
-        return `
-          <div class="paper">
-            <div class="page">
-              <div class="page-inner">
-                <div class="page-head">
-                  <div>
-                    <h1 class="page-title">${$esc(page.title || '')}</h1>
-                    <div class="refline">grade ${grid.length}x${grid.length} • palavras ${placed}</div>
-                  </div>
-                  <div class="pnum">p.${$esc(page.number || '')}</div>
-                </div>
-
-                <div class="ws-box">
-                  ${renderGridTable(grid)}
-                </div>
-
-                <div class="words-box">
-                  <h3 class="words-title">Palavras</h3>
-                  <div class="words-grid" style="${wordsGridVars(words)}">
-                    ${renderWordsColumns(words)}
-                  </div>
-                </div>
-
-                <div class="hint">Ilustração P&amp;B: ${$esc(page.illoHint || '')}</div>
-              </div>
-            </div>
-          </div>
-        `;
-      }
-
+    const renderTextPage = (p) => {
       return `
-        <div class="paper">
-          <div class="page">
-            <div class="page-inner">
-              <div class="page-head">
-                <div>
-                  <h1 class="page-title">${$esc(page.title || '')}</h1>
-                  <div class="refline">Texto cultural</div>
-                </div>
-                <div class="pnum">p.${$esc(page.number || '')}</div>
-              </div>
-
-              <div class="page-body">
-                <div class="text-body">${$esc(page.body || '')}</div>
-              </div>
-
-              <div class="hint">Ilustração P&amp;B: ${$esc(page.illoHint || page.title || '')}</div>
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">${$esc(p.title || '')}</h1>
+            <div class="page-kind">Texto cultural</div>
+          </div>
+          <div class="page-no">p.${$esc(String(p.pageNo||''))}</div>
+        </div>
+        <div class="page-hr"></div>
+        <div class="page-body">
+          <div class="doc">${$esc(p.doc || '')}</div>
+          <div class="img-slot">
+            <div>
+              <b>${$esc(p.imageSlotLabel || 'Ilustração P&B')}</b>
+              <div>Slot reservado (entra no Export/IA) — nesta página de texto.</div>
             </div>
+            <div class="img-chip">Imagem</div>
           </div>
         </div>
       `;
     };
 
-    const paint = () => {
-      updatePill();
-      if (!pages.length){
-        view.innerHTML = `<div class="paper"><div class="page"><div class="page-inner"><p class="muted">Nenhum plano carregado. Abra o Agent e gere um plano.</p></div></div></div>`;
-        return;
-      }
-      view.innerHTML = renderPage(pages[this._pageIndex]);
+    const renderPuzzlePage = (p) => {
+      const gridSize = Number(p.grid || 15);
+      const words = (p.wordsNorm || []).slice();
+      const wsSeed = Storage.get('wordsearch:seed', null);
 
-      bindSwipe(view,
-        () => { this._pageIndex = clamp(this._pageIndex - 1, 0, pages.length - 1); paint(); },
-        () => { this._pageIndex = clamp(this._pageIndex + 1, 0, pages.length - 1); paint(); }
-      );
+      // se existir saída gerada do módulo de caça-palavras, tenta usar (preview),
+      // senão mostra “grade vazia” como placeholder.
+      const outGrid = (wsSeed && wsSeed.output && wsSeed.puzzleId === p.sectionId)
+        ? wsSeed.output
+        : '';
+
+      let grid = [];
+      if (outGrid && typeof outGrid === 'string'){
+        // parse simples: linhas com letras separadas por espaços ou coladas
+        const lines = outGrid.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const rows = lines.slice(0, gridSize).map(l => l.replace(/\s+/g,''));
+        grid = rows.map(r => r.split('').slice(0, gridSize));
+      }
+
+      // fallback: se não tem grid válido, cria grid aleatória só pra preencher (visual)
+      if (!grid.length || grid.length !== gridSize){
+        const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        grid = Array.from({length:gridSize}, () => Array.from({length:gridSize}, () => A[Math.floor(Math.random()*A.length)]));
+      }
+
+      return `
+        <div class="page-head ws-head">
+          <div>
+            <h1 class="page-title">${$esc(p.title || '')}</h1>
+            <div class="ws-meta">${$esc(p.meta || '')}</div>
+          </div>
+          <div class="page-no">p.${$esc(String(p.pageNo||''))}</div>
+        </div>
+        <div class="page-hr"></div>
+
+        <div class="ws-box">
+          ${tableGridHTML(grid)}
+        </div>
+
+        <div class="words-box">
+          <div class="words-title">Palavras</div>
+          ${wordsHTML(words)}
+        </div>
+
+        <div class="footer-note">Ilustração P&B: <b>${$esc(p.sectionTitle || '')}</b></div>
+      `;
     };
 
-    $('#bb_prev').onclick = () => { this._pageIndex = clamp(this._pageIndex - 1, 0, pages.length - 1); paint(); };
-    $('#bb_next').onclick = () => { this._pageIndex = clamp(this._pageIndex + 1, 0, pages.length - 1); paint(); };
+    const paint = () => {
+      if (!pages.length){
+        pageInfo.textContent = 'Página 1/1';
+        pageInner.innerHTML = `<div class="empty">Nenhum plano ainda. Abra o Cultural Agent e gere o plano.</div>`;
+        return;
+      }
 
-    $('#bb_spread').onclick = () => { this._mode = 'SPREAD'; this.app.toast?.('Modo Spread'); };
-    $('#bb_folhear').onclick = () => { this._mode = 'FOLHEAR'; this.app.toast?.('Modo Folhear'); };
+      idx = clamp(idx, 0, pages.length-1);
+      const p = pages[idx];
+      pageInfo.textContent = `Página ${idx+1}/${pages.length}`;
 
-    $('#bb_export_plan').onclick = () => {
-      if (!plan){ this.app.toast?.('Sem plano'); return; }
+      if (p.kind === 'cover') pageInner.innerHTML = renderCover(p);
+      else if (p.kind === 'text') pageInner.innerHTML = renderTextPage(p);
+      else pageInner.innerHTML = renderPuzzlePage(p);
+    };
+
+    const next = () => { idx++; paint(); };
+    const prev = () => { idx--; paint(); };
+
+    $('#bb_next').onclick = next;
+    $('#bb_prev').onclick = prev;
+
+    $('#bb_flip').onclick = () => {
+      mode = 'flip';
+      $('#bb_flip').classList.add('primary');
+      $('#bb_spread').classList.remove('primary');
+    };
+
+    $('#bb_spread').onclick = () => {
+      mode = 'spread';
+      $('#bb_spread').classList.add('primary');
+      $('#bb_flip').classList.remove('primary');
+    };
+
+    // swipe: folhear (um por gesto)
+    let startX = 0;
+    let tracking = false;
+    pageInner.addEventListener('touchstart', (e) => {
+      if (!e.touches?.length) return;
+      tracking = true;
+      startX = e.touches[0].clientX;
+    }, { passive:true });
+
+    pageInner.addEventListener('touchend', (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const endX = e.changedTouches?.[0]?.clientX ?? startX;
+      const dx = endX - startX;
+      if (Math.abs(dx) < 42) return;
+      if (dx < 0) next(); else prev();
+    }, { passive:true });
+
+    $('#bb_open_agent').onclick = () => {
+      const btn = document.querySelector('.navitem[data-view="cultural"]');
+      btn?.click?.();
+    };
+
+    $('#bb_recreate').onclick = () => {
+      // botão “PADRÃO”: chama o agent se existir
+      try{
+        const btn = document.querySelector('#ca_build');
+        if (btn) btn.click();
+        else this.app.toast?.('Abra o Cultural Agent e clique “Gerar Plano do Livro (MG)”', 'warn');
+      } catch {
+        this.app.toast?.('Falha ao recriar', 'err');
+      }
+    };
+
+    $('#bb_download_plan').onclick = () => {
+      if (!plan){ this.app.toast?.('Nenhum plano salvo', 'warn'); return; }
       try{
         const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
         const a = document.createElement('a');
@@ -482,29 +447,12 @@ export class CulturalBookBuilderModule {
         a.download = `book-plan-${(plan?.meta?.id||'cultural')}-${Date.now()}.json`;
         a.click();
         setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-        this.app.toast?.('Plano exportado ✅');
-      } catch(e){
-        this.app.toast?.('Falha ao exportar');
-        try { this.app.log?.('[BOOK] export failed: ' + (e?.message || e)); } catch {}
-      }
-    };
-
-    $('#bb_rebuild').onclick = () => {
-      try{
-        const btn = document.querySelector('.navitem[data-view="cultural"]');
-        btn?.click?.();
-        this.app.toast?.('Abra o Agent e clique “Gerar Plano do Livro (MG)”');
+        this.app.toast?.('Plano baixado ✅');
       } catch {
-        this.app.toast?.('Falha');
+        this.app.toast?.('Falha ao baixar', 'err');
       }
-    };
-
-    $('#bb_open_agent').onclick = () => {
-      const btn = document.querySelector('.navitem[data-view="cultural"]');
-      btn?.click?.();
     };
 
     paint();
-    try { this.app.log?.(`[BOOK] render ok pages=${pages.length}`); } catch {}
   }
 }
