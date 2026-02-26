@@ -1,3 +1,4 @@
+/* FILE: /styles.css */
 /* Bright Cup Creator — styles.css
    Theme: AURORA-NEBULA (v1.0)
    Goal: Futuristic, readable, "space studio" vibe (subtle animation, no clutter)
@@ -397,4 +398,9 @@ hr{
 @media (prefers-reduced-motion: reduce){
   body::before, body::after{ animation:none; }
   .btn, .navitem{ transition:none; }
+}
+
+/* ✅ PATCH MINIMO (anti-zoom / anti-estouro iOS) */
+@media (max-width: 520px){
+  body{ -webkit-text-size-adjust: 100%; }
 }
