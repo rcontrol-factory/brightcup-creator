@@ -1,14 +1,15 @@
 /* FILE: /js/modules/cultural_book_builder.js */
 /**
  * Bright Cup Creator — Cultural Book Builder (Preview + PDF Export)
- * v0.8h FIX (words from wordHints + header compact)
+ * v0.8i FIX (remove puzzle/words bubbles)
  *
  * Ajustes:
- * - Palavras do puzzle vêm de: section.wordHints (sempre tem)
- * - Header compacto: título menor + referência pequena (sem “prévia visual”, sem divisor)
- * - Folha fixa (não cresce) e sem rolagem dentro da folha
+ * - Palavras do puzzle vêm de: section.wordHints
+ * - Header compacto
+ * - Folha fixa
  * - Swipe 1 passo por gesto
- * - Palavras em 3 colunas por padrão (dinâmico por quantidade)
+ * - Palavras em colunas (dinâmico)
+ * - ✅ Remove “bolhas” (containers) do grid e das palavras
  */
 
 import { Storage } from '../core/storage.js';
@@ -133,15 +134,15 @@ function getBookPages(plan){
       number: p++
     });
 
-    // ✅ PALAVRAS DO PUZZLE VÊM DE wordHints (sempre existe no plano)
+    // ✅ palavras vêm de wordHints
     const wordsDisplay = Array.isArray(s.wordHints) ? s.wordHints : [];
 
     pages.push({
       kind:'puzzle',
       title: `Caça-Palavras — ${s.title || ''}`,
       gridSize: Number(m.grid_default || 15),
-      grid: s?.grid || null, // se tiver, usa; senão gera fake (preview)
-      wordsDisplay,          // ✅ agora não some
+      grid: s?.grid || null,
+      wordsDisplay,
       placed: wordsDisplay.length,
       illoHint: (s?.illoHint || s?.title || ''),
       number: p++
@@ -262,7 +263,7 @@ export class CulturalBookBuilderModule {
           gap:10px;
         }
         .page-title{
-          font-size: 26px;     /* ✅ menor (pedido) */
+          font-size: 26px;
           line-height: 1.05;
           font-weight: 900;
           letter-spacing:-.02em;
@@ -277,7 +278,7 @@ export class CulturalBookBuilderModule {
         }
         .refline{
           margin-top: 4px;
-          font-size: 14px;     /* ✅ pequeno */
+          font-size: 14px;
           opacity:.72;
         }
 
@@ -298,12 +299,12 @@ export class CulturalBookBuilderModule {
           white-space: pre-wrap;
         }
 
-        /* PUZZLE */
+        /* ✅ PUZZLE (SEM BOLHA) */
         .ws-box{
-          border: 1px solid rgba(0,0,0,.14);
-          background: #ffffff;
-          padding: 10px;
-          border-radius: 12px;
+          border: none;
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
           overflow:hidden;
           flex: 1;
           min-height: 0;
@@ -313,7 +314,7 @@ export class CulturalBookBuilderModule {
         }
         .ws-table{ border-collapse: collapse; margin: 0 auto; }
         .ws-table td{
-          border: 1px solid rgba(0,0,0,.35);
+          border: 1px solid rgba(0,0,0,.40);
           width: 1.9em;
           height: 1.9em;
           text-align:center;
@@ -323,14 +324,15 @@ export class CulturalBookBuilderModule {
           font-size: clamp(12px, 3.2vw, 16px);
           line-height: 1;
           padding: 0;
+          background: transparent;
         }
 
-        /* WORDS */
+        /* ✅ WORDS (SEM BOLHA) */
         .words-box{
-          border: 1px solid rgba(0,0,0,.14);
-          background: #ffffff;
-          padding: 10px;
-          border-radius: 12px;
+          border: none;
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
           max-height: 28%;
           overflow:hidden;
         }
