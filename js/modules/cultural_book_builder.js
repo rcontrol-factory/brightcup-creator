@@ -1,10 +1,10 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.3 PADRÃO (1 ano)
+// Bright Cup Creator — Cultural Book Builder v0.3b PADRÃO (1 ano)
 // Objetivo: preview editorial do livro cultural (6x9) de forma LIMPA no mobile.
 // - Se não existir plano (Safari limpou storage): gera plano padrão MG aqui mesmo.
 // - UI “papel branco” (visual final) + modo Folhear.
-// - Cada SPREAD = Texto (esquerda) + Puzzle (direita) — SEM “sumir”.
-// - Mostra grade preview + palavras (quadriculado/monospace) sem rolagem dentro da página.
+// - Cada SPREAD = Texto (esquerda) + Puzzle (direita).
+// - Puzzle preview: GRADE QUADRICULADA (CSS grid) + palavras (sem cortar).
 // - Não gera PDF aqui (isso vem no Exporter).
 
 import { Storage } from '../core/storage.js';
@@ -41,7 +41,6 @@ function uniq(list){
 function pickWords(words, gridSize, maxCount){
   const maxLen = gridSize;
   const filtered = uniq(words).filter(w => w.length >= 3 && w.length <= maxLen);
-  // prioriza palavras “boas” pra puzzle (nem minúsculas demais, nem gigantes)
   filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
   return filtered.slice(0, maxCount);
 }
@@ -211,53 +210,62 @@ function setCache(cache){
   Storage.set('cultural:builder_cache', cache || {});
 }
 
+function parseGridText(gridText){
+  const rows = String(gridText || '').trim().split(/\n+/).map(r => r.trim()).filter(Boolean);
+  // aceita com ou sem espaços
+  const grid = rows.map(r => {
+    const parts = r.split(/\s+/).filter(Boolean);
+    if (parts.length > 1) return parts.map(x => (x||'').slice(0,1));
+    return r.split('').filter(Boolean);
+  });
+  const N = grid.length ? grid.length : 0;
+  return { N, grid };
+}
+
 function buildSpreads(plan){
   const m = plan.meta || {};
   const grid = Number(m.grid_default || 15);
   const wpp  = Number(m.words_per_puzzle || 20);
 
-  const cache = getCache(); // cache de grids por seção pra não “mudar” toda hora
+  const cache = getCache();
   const spreads = [];
 
-  // Spread 0 — capa/apresentação + instruções
-  const coverLeft = {
-    kind:'text',
-    icon:'history',
-    title: m.title || 'MINAS GERAIS CULTURAL',
-    meta: (m.subtitle || '').trim(),
-    body: wrap(
-      `Apresentação\n\n` +
-      `Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
-      `Cada seção traz um texto curto (com alma) e um caça-palavras temático.\n\n` +
-      `No final, você encontra o gabarito completo.\n\n` +
-      `Boa leitura e bom passatempo.`,
-      74
-    ),
-    pageNo: 1
-  };
-
-  const coverRight = {
-    kind:'text',
-    icon:'history',
-    title: 'Como usar',
-    meta: 'Preview editorial',
-    body: wrap(
-      `• Use ◀ ▶ para folhear.\n` +
-      `• Cada spread é: TEXTO (esq.) + PUZZLE (dir.).\n` +
-      `• A grade exibida aqui já é um preview real.\n` +
-      `• O PDF final (KDP) entra no Exporter.\n\n` +
-      `Dica: se o Safari limpar o storage, recrie o livro e baixe o plano (JSON) para backup.`,
-      74
-    ),
-    pageNo: 2
-  };
-
-  spreads.push({ left: coverLeft, right: coverRight });
+  spreads.push({
+    left: {
+      kind:'text',
+      icon:'history',
+      title: m.title || 'MINAS GERAIS CULTURAL',
+      meta: (m.subtitle || '').trim(),
+      body: wrap(
+        `Apresentação\n\n` +
+        `Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
+        `Cada seção traz um texto curto (com alma) e um caça-palavras temático.\n\n` +
+        `No final, você encontra o gabarito completo.\n\n` +
+        `Boa leitura e bom passatempo.`,
+        74
+      ),
+      pageNo: 1
+    },
+    right: {
+      kind:'text',
+      icon:'history',
+      title: 'Como usar',
+      meta: 'Preview editorial',
+      body: wrap(
+        `• Use ◀ ▶ para folhear.\n` +
+        `• Cada spread é: TEXTO (esq.) + PUZZLE (dir.).\n` +
+        `• A grade exibida aqui já é um preview real e quadriculado.\n` +
+        `• O PDF final (KDP) entra no Exporter.\n\n` +
+        `Dica: se o Safari limpar o storage, recrie o livro e baixe o plano (JSON) para backup.`,
+        74
+      ),
+      pageNo: 2
+    }
+  });
 
   let pageNo = 3;
 
   (plan.sections || []).forEach((s) => {
-    // Página esquerda (texto)
     const left = {
       kind:'text',
       icon: s.icon,
@@ -267,7 +275,6 @@ function buildSpreads(plan){
       pageNo: pageNo++
     };
 
-    // Página direita (puzzle preview real)
     const words = pickWords(
       [].concat(s.wordHints || []).concat([s.title, 'MINAS', 'CULTURA', 'HISTORIA']),
       grid,
@@ -292,7 +299,7 @@ function buildSpreads(plan){
         words: gen.words
       };
       cache[cacheKey] = preview;
-      // mantém cache “curto” (evita crescer infinito)
+
       const keys = Object.keys(cache);
       if (keys.length > 80) {
         for (let i = 0; i < 20; i++) delete cache[keys[i]];
@@ -315,7 +322,6 @@ function buildSpreads(plan){
     spreads.push({ left, right });
   });
 
-  // Final — gabarito (placeholder aqui)
   spreads.push({
     left: {
       kind:'text',
@@ -339,7 +345,7 @@ function buildSpreads(plan){
     }
   });
 
-  return { spreads, grid };
+  return { spreads };
 }
 
 export class CulturalBookBuilderModule {
@@ -353,7 +359,6 @@ export class CulturalBookBuilderModule {
 
   render(root){
     let plan = Storage.get('cultural:book_plan', null);
-    const seed = Storage.get('cultural:builder_seed', { mode:'SPREAD', pos: 0 });
 
     root.innerHTML = `
       <style>
@@ -367,7 +372,7 @@ export class CulturalBookBuilderModule {
         .bb-stage{ display:grid; gap:12px; }
         .bb-spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
 
-        /* “papel branco” */
+        /* papel branco */
         .bb-page{
           border-radius:18px;
           border:1px solid rgba(255,255,255,.14);
@@ -385,7 +390,7 @@ export class CulturalBookBuilderModule {
         .bb-title{ font-size:18px; font-weight:900; letter-spacing:.2px; overflow-wrap:anywhere; }
         .bb-meta{ font-size:12px; opacity:.72; overflow-wrap:anywhere; }
 
-        /* NÃO rolar dentro da página (preview final) */
+        /* corpo (sem rolagem interna) */
         .bb-body{
           flex:1;
           border-radius:14px;
@@ -393,30 +398,57 @@ export class CulturalBookBuilderModule {
           background:rgba(255,255,255,.88);
           padding:12px;
           overflow:hidden;
+          display:flex;
+          flex-direction:column;
+          gap:10px;
         }
         .bb-body pre{
           margin:0;
           white-space:pre-wrap;
           overflow-wrap:anywhere;
           word-break:break-word;
-          font-family: ui-serif, Georgia, \"Times New Roman\", serif;
+          font-family: ui-serif, Georgia, "Times New Roman", serif;
           font-size:15px;
           line-height:1.28;
         }
 
-        .bb-gridpre{
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", monospace;
-          font-size:14px;
-          line-height:1.2;
-          white-space:pre;
+        /* grade quadriculada */
+        .bb-gridwrap{
+          flex:1;
+          border-radius:12px;
+          border:1px solid rgba(15,22,32,.14);
+          background:rgba(255,255,255,.98);
+          padding:10px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
           overflow:hidden;
+        }
+        .bb-grid{
+          display:grid;
+          gap:2px;
+          width:100%;
+          max-width: 360px; /* controla no mobile */
+          aspect-ratio: 1 / 1;
+        }
+        .bb-cell{
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          border:1px solid rgba(15,22,32,.22);
+          border-radius:3px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-weight:800;
+          color:#0f1620;
+          background:rgba(255,255,255,1);
+          user-select:none;
         }
 
         .bb-words{
           display:grid;
           grid-template-columns: 1fr 1fr;
           gap:4px 14px;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", monospace;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-size:12px;
           opacity:.92;
           overflow:hidden;
@@ -429,27 +461,20 @@ export class CulturalBookBuilderModule {
 
         @media (max-width: 860px){
           .bb-spread{ grid-template-columns: 1fr; }
+          .bb-grid{ max-width: 420px; }
         }
       </style>
 
       <div class="bb-wrap">
         <div class="card">
           <h2>Livro Cultural — Builder</h2>
-          <p class="muted">
-            Preview visual do livro (<b>papel branco</b>). Folheie e valide como produto final.
-          </p>
+          <p class="muted">Preview visual do livro (<b>papel branco</b>). Folheie e valide como produto final.</p>
           <div id="bb_area"></div>
         </div>
       </div>
     `;
 
     const area = root.querySelector('#bb_area');
-
-    const saveSeed = (patch={}) => {
-      const next = Object.assign({}, Storage.get('cultural:builder_seed', { mode:'SPREAD', pos:0 }), patch);
-      Storage.set('cultural:builder_seed', next);
-      return next;
-    };
 
     const gotoAgent = () => {
       const btn = document.querySelector('.navitem[data-view="cultural"]');
@@ -472,12 +497,48 @@ export class CulturalBookBuilderModule {
         plan = buildDefaultPlanMG(15, 20);
         Storage.set('cultural:book_plan', plan);
         Storage.set('cultural:builder_seed', { mode:'SPREAD', pos:0 });
-        Storage.set('cultural:builder_cache', {}); // limpa cache
+        Storage.set('cultural:builder_cache', {});
         this.app.toast?.('Livro Minas criado ✅');
         renderMain();
       };
 
       area.querySelector('#bb_go_agent').onclick = () => gotoAgent();
+    };
+
+    const saveSeed = (patch={}) => {
+      const next = Object.assign({}, Storage.get('cultural:builder_seed', { mode:'SPREAD', pos:0 }), patch);
+      Storage.set('cultural:builder_seed', next);
+      return next;
+    };
+
+    const renderGridHTML = (gridText, gridN) => {
+      const parsed = parseGridText(gridText);
+      const N = gridN || parsed.N || 15;
+      const grid = parsed.grid;
+
+      // se algo vier vazio, evita quebrar
+      if (!grid || !grid.length) {
+        return `<div class="bb-gridwrap"><div class="bb-mini muted">Sem grade (preview)</div></div>`;
+      }
+
+      // tamanho da letra ajusta com N (13 maior, 15/17 menor)
+      const fontPx = (N <= 13) ? 16 : (N <= 15) ? 14 : 12;
+
+      const cells = [];
+      for (let y = 0; y < grid.length; y++){
+        for (let x = 0; x < grid[y].length; x++){
+          const ch = grid[y][x] || '';
+          cells.push(`<div class="bb-cell" style="font-size:${fontPx}px">${esc(ch)}</div>`);
+        }
+      }
+
+      return `
+        <div class="bb-gridwrap">
+          <div class="bb-grid" style="grid-template-columns:repeat(${N}, 1fr)">
+            ${cells.join('')}
+          </div>
+        </div>
+      `;
     };
 
     const renderMain = () => {
@@ -486,9 +547,7 @@ export class CulturalBookBuilderModule {
       const built = buildSpreads(plan);
       const spreads = built.spreads;
 
-      // pos = cursor de “folhear” (página a página) quando mode=FOLIO
-      // pos = spreadIndex quando mode=SPREAD
-      let state = Storage.get('cultural:builder_seed', { mode:'SPREAD', pos:0 });
+      let state = Storage.get('cultural:builder_seed', { mode:'SPREAD', pos: 0 });
       let mode = (state.mode === 'FOLIO') ? 'FOLIO' : 'SPREAD';
       let pos = Number(state.pos || 0);
 
@@ -500,7 +559,8 @@ export class CulturalBookBuilderModule {
           pos = Math.max(0, Math.min(pos, maxPage));
         }
       };
-      clamp();
+
+      const totalPages = spreads[spreads.length-1]?.right?.pageNo || (spreads.length*2);
 
       area.innerHTML = `
         <div class="bb-toolbar">
@@ -537,22 +597,34 @@ export class CulturalBookBuilderModule {
         const isPuzzle = p.kind === 'puzzle';
 
         const body = isPuzzle
-          ? `<div class="bb-body"><pre class="bb-gridpre">${esc(p.gridText || '')}</pre></div>
-             <div>
-               <div class="bb-meta" style="margin:6px 0 6px 0">Palavras</div>
-               <div class="bb-words">${(p.words||[]).map(w=>`<div>${esc(w)}</div>`).join('')}</div>
-             </div>`
-          : `<div class="bb-body"><pre>${esc(p.body || '')}</pre></div>`;
+          ? `
+              <div class="bb-body">
+                ${renderGridHTML(p.gridText || '', p.grid || 15)}
+                <div>
+                  <div class="bb-meta" style="margin:4px 0 6px 0">Palavras</div>
+                  <div class="bb-words">${(p.words||[]).map(w=>`<div>${esc(w)}</div>`).join('')}</div>
+                </div>
+              </div>
+            `
+          : `
+              <div class="bb-body">
+                <pre>${esc(p.body || '')}</pre>
+              </div>
+            `;
 
         const footer = isPuzzle
-          ? `<div class="bb-footer">
-               <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
-               <button class="btn" data-send="${esc(p.sectionTitle || '')}">Enviar p/ Caça-palavras</button>
-             </div>`
-          : `<div class="bb-footer">
-               <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
-               <span></span>
-             </div>`;
+          ? `
+              <div class="bb-footer">
+                <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
+                <button class="btn" data-send="1">Enviar p/ Caça-palavras</button>
+              </div>
+            `
+          : `
+              <div class="bb-footer">
+                <span>Ilustração P&B: <b>${esc(iconLabel(p.icon))}</b></span>
+                <span></span>
+              </div>
+            `;
 
         return `
           <div class="bb-page">
@@ -580,20 +652,19 @@ export class CulturalBookBuilderModule {
         if (mode === 'SPREAD') {
           const sp = spreads[pos];
           stage.innerHTML = `<div class="bb-spread">${pageHtml(sp.left)}${pageHtml(sp.right)}</div>`;
-          posEl.textContent = `${sp.left.pageNo}/${spreads[spreads.length-1].right.pageNo}`;
+          posEl.textContent = `${sp.left.pageNo}/${totalPages}`;
         } else {
           const spreadIndex = Math.floor(pos / 2);
           const isRight = (pos % 2) === 1;
           const sp = spreads[spreadIndex];
           const p = isRight ? sp.right : sp.left;
           stage.innerHTML = pageHtml(p);
-          posEl.textContent = `${p.pageNo}/${spreads[spreads.length-1].right.pageNo}`;
+          posEl.textContent = `${p.pageNo}/${totalPages}`;
         }
 
-        // bind “Enviar p/ Caça-palavras” (puzzle)
+        // bind “Enviar p/ Caça-palavras”
         stage.querySelectorAll('[data-send]').forEach((btn) => {
           btn.onclick = () => {
-            // encontra a página puzzle atual
             let pz = null;
             if (mode === 'SPREAD') {
               const sp = spreads[pos];
@@ -616,14 +687,13 @@ export class CulturalBookBuilderModule {
             };
             Storage.set('wordsearch:seed', ws);
             this.app.toast?.('Enviado ✅ (abra Caça-palavras e clique Gerar)');
-            this.app.log?.(`[BOOK] sent section=\"${pz.sectionTitle}\" grid=${pz.grid} words=${(pz.words||[]).length}`);
+            this.app.log?.(`[BOOK] sent section="${pz.sectionTitle}" grid=${pz.grid} words=${(pz.words||[]).length}`);
           };
         });
       };
 
       area.querySelector('#bb_mode_sp').onclick = () => { mode='SPREAD'; pos = Math.floor(pos/2); render(); };
       area.querySelector('#bb_mode_fo').onclick = () => {
-        // converte spreadIndex -> página esquerda
         if (mode === 'SPREAD') pos = pos * 2;
         mode='FOLIO';
         render();
@@ -652,7 +722,7 @@ export class CulturalBookBuilderModule {
         this.app.toast?.('Plano baixado ✅');
       };
 
-      // swipe simples no mobile (folhear)
+      // swipe no mobile
       let x0 = null;
       stage.addEventListener('touchstart', (e)=>{ x0 = e.touches?.[0]?.clientX ?? null; }, { passive:true });
       stage.addEventListener('touchend', (e)=>{
