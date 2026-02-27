@@ -1,9 +1,13 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4c PADRÃO (1 ano)
-// V0.4c:
-// - Palavras do puzzle: NÃO usa título inteiro (evita "OQUEEMINAS")
-// - Lista de palavras: não quebra no meio (nowrap + keep-all)
-// - Mantém: sem bolhas internas, 3 colunas, folha fixa
+// Bright Cup Creator — Cultural Book Builder v0.4a PADRÃO (1 ano)
+// V0.4a:
+// - Builder = só folhear/aprovar (layout vem do Agent via plan.meta.layout)
+// - Folha fixa (não estica o app): pageViewport com altura estável + overflow controlado
+// - Caça-palavras sem “bolhas” internas: tira cards/containers extras e usa “paper” direto
+// - Word list em 3 colunas (auto-fit) pra sobrar mais espaço pro grid
+// - Título/metadata mais enxutos (sem exagero) + remove “prévia visual (editorial)” se quiser
+// - Fix navegação no mobile: evita pular 2 páginas (debounce + lock)
+// - Mantém compatibilidade com cultural_agent.js (Storage: cultural:book_plan / wordsearch:*)
 
 import { Storage } from '../core/storage.js';
 
@@ -13,7 +17,7 @@ const $esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
-function normalizeWord(s){
+function normWordGrid(s){
   return String(s || '')
     .trim()
     .toUpperCase()
@@ -22,48 +26,126 @@ function normalizeWord(s){
     .replace(/[^A-Z0-9]/g,'');
 }
 
-function uniqNorm(list){
+function displayWord(s){
+  return String(s || '')
+    .trim()
+    .replace(/\s+/g,' ')
+    .toUpperCase();
+}
+
+function splitWordsText(txt){
+  return String(txt||'')
+    .split(/\r?\n+/)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
+function uniq(list){
   const seen = new Set();
   const out = [];
-  for (const it of (list || [])){
-    const w = normalizeWord(it);
-    if (!w) continue;
-    if (seen.has(w)) continue;
-    seen.add(w);
-    out.push(w);
+  for (const it of list){
+    const key = String(it||'').trim().toUpperCase();
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
   }
   return out;
 }
 
-function pickWordsForGrid(words, gridSize, maxCount){
-  const maxLen = gridSize;
-  const filtered = uniqNorm(words).filter(w => w.length >= 3 && w.length <= maxLen);
-  filtered.sort((a,b) => (Math.abs(a.length-7) - Math.abs(b.length-7)));
-  const take = Math.max(6, Number(maxCount || 0) || 0);
-  return filtered.slice(0, take);
+function chunk(arr, n){
+  const out = [];
+  for (let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n));
+  return out;
 }
 
-// pega palavras úteis do título (ex: "O que é Minas?" -> ["MINAS"])
-function titleKeywords(title, gridSize){
-  const raw = String(title || '')
-    .trim()
-    .toUpperCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .replace(/[^A-Z0-9\s]/g,' ')
-    .replace(/\s+/g,' ')
-    .trim();
+function gridToText(grid){
+  // grid: string[] rows
+  return (grid || []).map(r => r.join ? r.join(' ') : String(r)).join('\n');
+}
 
-  if (!raw) return [];
+function makeFillChar(){
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  return A[Math.floor(Math.random()*A.length)];
+}
 
-  const stop = new Set(['O','A','OS','AS','DE','DO','DA','DOS','DAS','E','EM','NO','NA','QUE','QUAIS','QUAL','UM','UMA','COMO','POR','PARA','SOBRE','SE','EH','E']);
-  const parts = raw.split(' ')
-    .map(w => w.trim())
-    .filter(w => w && !stop.has(w))
-    .map(w => normalizeWord(w))
-    .filter(w => w.length >= 3 && w.length <= (gridSize || 15));
+function makeEmptyGrid(size){
+  const g = [];
+  for (let r=0;r<size;r++){
+    const row = [];
+    for (let c=0;c<size;c++) row.push('');
+    g.push(row);
+  }
+  return g;
+}
 
-  // de-dup
-  return Array.from(new Set(parts));
+function canPlaceWord(grid, word, r, c, dr, dc){
+  const n = word.length;
+  const size = grid.length;
+  const rr = r + dr*(n-1);
+  const cc = c + dc*(n-1);
+  if (rr < 0 || rr >= size || cc < 0 || cc >= size) return false;
+
+  for (let i=0;i<n;i++){
+    const R = r + dr*i;
+    const C = c + dc*i;
+    const ch = word[i];
+    const cur = grid[R][C];
+    if (cur && cur !== ch) return false;
+  }
+  return true;
+}
+
+function placeWord(grid, word, r, c, dr, dc){
+  for (let i=0;i<word.length;i++){
+    const R = r + dr*i;
+    const C = c + dc*i;
+    grid[R][C] = word[i];
+  }
+}
+
+function generateWordSearch(size, words){
+  // words expected already normalized A-Z0-9
+  const directions = [
+    {dr:0, dc:1},   // →
+    {dr:1, dc:0},   // ↓
+    {dr:1, dc:1},   // ↘
+    {dr:-1, dc:1},  // ↗
+  ];
+
+  const grid = makeEmptyGrid(size);
+  const placed = [];
+  const failures = [];
+
+  const sorted = [...words].sort((a,b)=>b.length-a.length);
+
+  for (const w of sorted){
+    let ok = false;
+
+    // tentativas
+    for (let t=0;t<250;t++){
+      const dir = directions[Math.floor(Math.random()*directions.length)];
+      const r = Math.floor(Math.random()*size);
+      const c = Math.floor(Math.random()*size);
+      if (canPlaceWord(grid, w, r, c, dir.dr, dir.dc)){
+        placeWord(grid, w, r, c, dir.dr, dir.dc);
+        placed.push(w);
+        ok = true;
+        break;
+      }
+    }
+
+    if (!ok) failures.push(w);
+  }
+
+  // preencher vazios
+  for (let r=0;r<size;r++){
+    for (let c=0;c<size;c++){
+      if (!grid[r][c]) grid[r][c] = makeFillChar();
+    }
+  }
+
+  return { grid, placed, failures };
 }
 
 function wrapLines(text, max=72){
@@ -79,387 +161,651 @@ function wrapLines(text, max=72){
   return lines.join('\n');
 }
 
-function renderSectionText(s){
-  const lines = [];
-  lines.push(String(s.title || '').toUpperCase());
-  lines.push('-'.repeat(Math.max(18, String(s.title||'').length)));
-  lines.push('');
-  lines.push(wrapLines(s.text, 72));
-  lines.push('');
-  return lines.join('\n').trimEnd();
+function resolveLayout(meta){
+  // layout defaults
+  const L = (meta && meta.layout) || {};
+  return {
+    paperMaxW: Number(L.paperMaxW || 520),     // largura máxima do “papel” no builder
+    pageH:     Number(L.pageH || 720),         // altura fixa do viewport (folha não estica)
+    pad:       Number(L.pad || 22),            // padding interno da folha
+    titleSize: Number(L.titleSize || 26),      // título menor (antes era muito grande)
+    metaSize:  Number(L.metaSize || 13),
+    bodySize:  Number(L.bodySize || 18),
+    gridGap:   Number(L.gridGap || 2),
+    gridBorder:Number(L.gridBorder || 2),
+    gridCell:  Number(L.gridCell || 26),       // tamanho base célula
+    gridFont:  Number(L.gridFont || 14),       // fonte base da letra
+    wordsSize: Number(L.wordsSize || 16),
+    wordsCols: Number(L.wordsCols || 3),       // 3 colunas (pra sobrar espaço)
+    showMetaLine: !!(L.showMetaLine ?? false), // por padrão some com “prévia visual...”
+  };
 }
 
-function buildPagesFromPlan(plan){
-  const pages = [];
-  const meta = plan?.meta || {};
-  const gridDefault = Number(meta.grid_default || 15);
-  const wppDefault  = Number(meta.words_per_puzzle || 16);
-  const includeKey  = !!meta.include_key;
+function styleTag(layout){
+  // CSS do Builder: folha fixa, sem “bolhas” internas no puzzle.
+  return `
+<style>
+  .bc-bookwrap{
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
 
+  .bc-toolbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    flex-wrap:wrap;
+    padding:10px 12px;
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:16px;
+    background:rgba(0,0,0,.16);
+    backdrop-filter: blur(8px);
+  }
+
+  .bc-toolbar .left, .bc-toolbar .right{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+
+  .bc-btn{
+    appearance:none;
+    border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);
+    color:rgba(255,255,255,.92);
+    padding:10px 12px;
+    border-radius:14px;
+    font-weight:700;
+    letter-spacing:.2px;
+  }
+  .bc-btn.primary{
+    background:rgba(90,160,255,.20);
+    border-color:rgba(90,160,255,.35);
+  }
+  .bc-btn:active{ transform: translateY(1px); }
+
+  .bc-view{
+    display:flex;
+    justify-content:center;
+    padding:10px 0 18px;
+  }
+
+  /* VIEWPORT FIXO — não estica o app */
+  .bc-pageViewport{
+    width:min(${layout.paperMaxW}px, calc(100vw - 28px));
+    height:${layout.pageH}px;
+    overflow:hidden; /* folha fixa */
+    border-radius:26px;
+    background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(245,248,248,.95));
+    box-shadow: 0 18px 46px rgba(0,0,0,.35);
+    border:1px solid rgba(0,0,0,.08);
+  }
+
+  /* FOLHA / “PAPEL” */
+  .bc-paper{
+    height:100%;
+    width:100%;
+    display:flex;
+    flex-direction:column;
+    padding:${layout.pad}px;
+    box-sizing:border-box;
+    overflow:hidden; /* impede scroll dentro da folha */
+  }
+
+  .bc-head{
+    display:flex;
+    justify-content:space-between;
+    gap:10px;
+    align-items:flex-start;
+    margin-bottom:8px;
+  }
+  .bc-title{
+    margin:0;
+    font-size:${layout.titleSize}px;
+    line-height:1.04;
+    letter-spacing:-0.3px;
+    color:#141a1f;
+    font-weight:900;
+  }
+  .bc-pno{
+    font-weight:800;
+    color:rgba(20,26,31,.55);
+    font-size:16px;
+    padding-top:4px;
+  }
+
+  .bc-meta{
+    display:flex;
+    gap:10px;
+    align-items:center;
+    flex-wrap:wrap;
+    font-size:${layout.metaSize}px;
+    color:rgba(20,26,31,.55);
+    margin: 2px 0 10px;
+  }
+  .bc-hr{
+    height:1px;
+    background:rgba(20,26,31,.12);
+    margin: 6px 0 14px;
+    flex:0 0 auto;
+  }
+
+  .bc-body{
+    flex: 1 1 auto;
+    overflow:hidden; /* SEM ROLAGEM */
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+  }
+
+  /* TEXTO */
+  .bc-textBox{
+    border:1px solid rgba(20,26,31,.10);
+    border-radius:18px;
+    background:rgba(255,255,255,.55);
+    padding:16px 16px;
+    overflow:hidden; /* não estica */
+  }
+  .bc-text{
+    white-space:pre-wrap;
+    font-size:${layout.bodySize}px;
+    line-height:1.35;
+    color:#141a1f;
+    font-family: ui-serif, Georgia, "Times New Roman", Times, serif;
+  }
+
+  /* PUZZLE: SEM “BOLHA” EXTRA */
+  .bc-puzzleWrap{
+    flex: 1 1 auto;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    overflow:hidden;
+  }
+
+  .bc-grid{
+    width:100%;
+    display:grid;
+    gap:${layout.gridGap}px;
+    background:transparent;
+    padding:0; /* sem container */
+    overflow:hidden;
+  }
+
+  .bc-cell{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    aspect-ratio: 1 / 1;
+    border:${layout.gridBorder}px solid rgba(20,26,31,.65);
+    border-radius:0; /* quadriculado reto */
+    font-size:${layout.gridFont}px;
+    font-weight:900;
+    color:#111;
+    background: rgba(255,255,255,.92);
+    font-family: ui-monospace, Menlo, Consolas, "SFMono-Regular", monospace;
+  }
+
+  /* LISTA DE PALAVRAS: 3 COLUNAS */
+  .bc-wordsTitle{
+    margin: 0;
+    font-size: 34px;
+    letter-spacing:-0.5px;
+    color:#141a1f;
+    font-weight:900;
+  }
+
+  .bc-wordsGrid{
+    display:grid;
+    grid-template-columns: repeat(${layout.wordsCols}, 1fr);
+    gap: 8px 20px;
+    margin-top: 8px;
+    overflow:hidden;
+  }
+
+  .bc-wordRow{
+    display:flex;
+    align-items:flex-end;
+    gap:10px;
+    min-width:0;
+  }
+
+  .bc-word{
+    font-weight:900;
+    font-size:${layout.wordsSize}px;
+    letter-spacing:.6px;
+    color:#141a1f;
+    text-transform:uppercase;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+
+  .bc-dots{
+    flex:1;
+    border-bottom: 3px dotted rgba(20,26,31,.20);
+    transform: translateY(-3px);
+  }
+
+  .bc-foot{
+    margin-top:auto;
+    padding-top:12px;
+    color:rgba(20,26,31,.60);
+    font-size:15px;
+  }
+
+  /* Mobile tweaks */
+  @media (max-width: 420px){
+    .bc-pageViewport{
+      height:${Math.max(640, Math.floor(layout.pageH*0.92))}px;
+    }
+    .bc-title{ font-size:${Math.max(22, layout.titleSize-4)}px; }
+    .bc-wordsTitle{ font-size: 30px; }
+    .bc-wordsGrid{ grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+`;
+}
+
+function buildWordsGridHTML(words, cols=3){
+  const clean = uniq(words.map(displayWord)).filter(Boolean);
+  const perCol = Math.ceil(clean.length / cols);
+  const columns = chunk(clean, perCol);
+
+  // Em vez de “chips”, lista com linha pontilhada (estilo revistinha)
+  // Monta em grid por colunas para controlar espaço.
+  const allRows = [];
+  for (let c=0;c<cols;c++){
+    const col = columns[c] || [];
+    for (let i=0;i<perCol;i++){
+      const w = col[i] || '';
+      allRows.push({ w, col:c, row:i });
+    }
+  }
+
+  // Render em grid linear (CSS já faz colunas)
+  return `
+    <div class="bc-wordsGrid">
+      ${clean.map(w => `
+        <div class="bc-wordRow">
+          <div class="bc-word">${$esc(w)}</div>
+          <div class="bc-dots"></div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function calcGridCell(layout, size){
+  // Ajuste automático: tenta manter a folha fixa sem overflow.
+  // Pegamos largura útil e calculamos cell ideal.
+  const pad = layout.pad;
+  const maxW = layout.paperMaxW;
+  const usable = maxW - pad*2; // aproximado; o viewport usa min() no CSS
+  const gapTotal = (size-1) * layout.gridGap;
+  const borderTotal = 0;
+  const cell = Math.floor((usable - gapTotal - borderTotal) / size);
+  return clamp(cell, 18, layout.gridCell);
+}
+
+function gridHTML(layout, grid){
+  const size = grid.length || 0;
+  const cell = calcGridCell(layout, size);
+
+  // grid template columns inline to avoid CSS recalcs
+  const cols = `repeat(${size}, ${cell}px)`;
+  return `
+    <div class="bc-grid" style="grid-template-columns:${cols}; justify-content:center;">
+      ${grid.map(row => row.map(ch => `<div class="bc-cell" style="width:${cell}px; font-size:${Math.max(11, Math.floor(cell*0.52))}px;">${$esc(ch)}</div>`).join('')).join('')}
+    </div>
+  `;
+}
+
+function pagePuzzleHTML(page, layout){
+  const meta = page.meta || {};
+  const title = page.title || 'Caça-Palavras';
+  const pno = page.pageLabel || '';
+
+  const grid = page.grid || [];
+  const size = Number(meta.size || grid.length || 15);
+  const placed = Number(meta.placed || 0);
+
+  const words = (page.wordsDisplay && page.wordsDisplay.length)
+    ? page.wordsDisplay
+    : (page.words || []);
+
+  return `
+    <div class="bc-paper">
+      <div class="bc-head">
+        <h1 class="bc-title">${$esc(title)}</h1>
+        <div class="bc-pno">${$esc(pno)}</div>
+      </div>
+
+      <div class="bc-meta">
+        <span>grade ${size}x${size}</span>
+        <span>•</span>
+        <span>palavras ${placed || words.length || 0}</span>
+      </div>
+
+      <div class="bc-hr"></div>
+
+      <div class="bc-body">
+        <div class="bc-puzzleWrap">
+          ${gridHTML(layout, grid)}
+          <div>
+            <h2 class="bc-wordsTitle">Palavras</h2>
+            ${buildWordsGridHTML(words, layout.wordsCols)}
+          </div>
+        </div>
+
+        <div class="bc-foot">Ilustração P&amp;B: <b>${$esc(page.illustrationLabel || title)}</b></div>
+      </div>
+    </div>
+  `;
+}
+
+function pageTextHTML(page, layout){
+  const title = page.title || 'Texto';
+  const pno = page.pageLabel || '';
+  const txt = String(page.text || '').trim();
+
+  return `
+    <div class="bc-paper">
+      <div class="bc-head">
+        <h1 class="bc-title">${$esc(title)}</h1>
+        <div class="bc-pno">${$esc(pno)}</div>
+      </div>
+
+      <div class="bc-meta">
+        <span>Texto cultural</span>
+      </div>
+
+      <div class="bc-hr"></div>
+
+      <div class="bc-body">
+        <div class="bc-textBox">
+          <div class="bc-text">${$esc(wrapLines(txt, 72))}</div>
+        </div>
+
+        <div class="bc-foot">Ilustração P&amp;B: <b>${$esc(page.illustrationLabel || 'História')}</b></div>
+      </div>
+    </div>
+  `;
+}
+
+function buildBookPagesFromPlan(plan){
+  // Plano vem do Cultural Agent (cultural:book_plan)
+  const meta = plan?.meta || {};
+  const secs = plan?.sections || [];
+  const pages = [];
+
+  // capa “visual” simples no builder (opcional)
   pages.push({
-    kind:'cover',
-    title: meta.title || 'LIVRO',
-    subtitle: meta.subtitle || '',
-    pageNo: 1
+    type:'text',
+    title: (meta.title || 'LIVRO').toUpperCase(),
+    pageLabel: 'p.1',
+    text: [
+      'Apresentação ' + (meta.subtitle ? ('— ' + meta.subtitle) : ''),
+      '',
+      'Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.',
+      'Cada seção traz um texto curto e um caça-palavras temático. No final, você encontra o gabarito completo.',
+      'Boa leitura e bom passatempo.'
+    ].join('\n'),
+    illustrationLabel: 'História'
   });
 
-  let pageNo = 2;
-  const secs = plan?.sections || [];
+  // para cada seção: página de texto + página de puzzle
+  let p = 2;
   for (const s of secs){
     pages.push({
-      kind:'text',
-      icon: s.icon,
+      type:'text',
       title: s.title,
-      sectionId: s.id,
-      sectionTitle: s.title,
-      doc: renderSectionText(s),
-      imageSlotLabel: (s?.imageSlotLabel || 'Ilustração P&B') + `: ${s.title}`,
-      pageNo: pageNo++
+      pageLabel: `p.${p++}`,
+      text: s.text || '',
+      illustrationLabel: s.illustration || (s.title || 'História')
     });
 
-    // >>> NÃO usa título inteiro como palavra
-    const titleKeys = titleKeywords(s.title, gridDefault);
-
-    const wordsRaw = []
+    // palavras: usamos hints + normaliza p/ grade
+    const hints = []
       .concat(s.wordHints || [])
-      .concat(titleKeys) // só palavras úteis do título
-      .concat(['MINAS', 'CULTURA', 'HISTORIA', 'UAI']);
+      .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
 
-    const wordsNorm = pickWordsForGrid(wordsRaw, gridDefault, wppDefault);
+    const wordsNorm = uniq(hints.map(normWordGrid)).filter(Boolean).filter(w => w.length >= 3);
+
+    const size = Number(meta.grid_default || 15);
+    const maxWords = Number(meta.words_per_puzzle || 14);
+
+    const filtered = wordsNorm.filter(w => w.length <= size);
+    const picked = filtered.slice(0, maxWords);
+
+    const gen = generateWordSearch(size, picked);
+
+    // palavras DISPLAY (mantendo acento/ç quando existir no hint original)
+    // mapeia do norm -> um display preferido
+    const map = new Map();
+    for (const raw of hints){
+      const n = normWordGrid(raw);
+      if (!n) continue;
+      if (!map.has(n)) map.set(n, displayWord(raw));
+    }
+
+    const wordsDisplay = gen.placed.map(n => map.get(n) || n);
 
     pages.push({
-      kind:'puzzle',
-      icon: s.icon,
+      type:'puzzle',
       title: `Caça-Palavras — ${s.title}`,
-      meta: `grade ${gridDefault}x${gridDefault} · palavras ${wordsNorm.length}`,
-      sectionId: s.id,
-      sectionTitle: s.title,
-      grid: gridDefault,
-      maxWords: wppDefault,
-      includeKey,
-      wordsNorm,
-      imageSlotLabel: (s?.imageSlotLabelPuzzle || 'Ilustração P&B') + `: ${s.title}`,
-      pageNo: pageNo++
+      pageLabel: `p.${p++}`,
+      grid: gen.grid,
+      words: gen.placed,
+      wordsDisplay,
+      meta: { size, placed: gen.placed.length },
+      illustrationLabel: s.title
     });
   }
 
   return pages;
 }
 
-function tableGridHTML(grid){
-  const rows = [];
-  for (let r=0; r<grid.length; r++){
-    const tds = [];
-    for (let c=0; c<grid[r].length; c++){
-      const ch = grid[r][c] || ' ';
-      tds.push(`<td class="ws-cell"><span>${$esc(ch)}</span></td>`);
-    }
-    rows.push(`<tr>${tds.join('')}</tr>`);
-  }
-  return `<table class="ws-grid" aria-label="Caça-palavras">${rows.join('')}</table>`;
-}
-
-function splitWordsToCols(words, cols=3){
-  const arr = (words || []).slice();
-  const out = Array.from({length:cols}, ()=>[]);
-  const per = Math.ceil(arr.length / cols);
-  for (let i=0; i<cols; i++){
-    out[i] = arr.slice(i*per, (i+1)*per);
-  }
-  return out;
-}
-
-function wordsHTML(words){
-  const cols = splitWordsToCols(words, 3);
-  const colHtml = cols.map(col => {
-    const items = col.map(w => `<div class="word-item">${$esc(w)}</div>`).join('');
-    return `<div class="word-col">${items}</div>`;
-  }).join('');
-  return `<div class="words-grid">${colHtml}</div>`;
-}
-
 export class CulturalBookBuilderModule {
   constructor(app){
     this.app = app;
     this.id = 'book';
-    this.title = 'Builder';
+    this.title = 'Book Builder';
+    this._navLock = false;
+    this._navTs = 0;
   }
 
   async init(){}
 
   render(root){
     const plan = Storage.get('cultural:book_plan', null);
-    const pages = plan ? buildPagesFromPlan(plan) : [];
+    const fallback = Storage.get('cultural:seed', null);
+
+    const planMeta = plan?.meta || {};
+    const layout = resolveLayout(planMeta);
 
     root.innerHTML = `
-      <div class="builder">
-        <div class="builder-top">
-          <div class="builder-title">
-            <h2>Builder</h2>
-            <p class="muted">Prévia visual do livro (papel branco). Folheie e valide como produto final.</p>
+      ${styleTag(layout)}
+      <div class="bc-bookwrap">
+        <div class="bc-toolbar">
+          <div class="left">
+            <button class="bc-btn" id="bb_spread">Spread</button>
+            <button class="bc-btn primary" id="bb_folhear">Folhear</button>
+            <span class="muted" id="bb_pageLabel" style="opacity:.85;font-weight:800;"></span>
           </div>
-
-          <div class="builder-controls">
-            <button class="btn" id="bb_spread">Spread</button>
-            <button class="btn primary" id="bb_flip">Folhear</button>
-            <div class="pill" id="bb_pageinfo">Página 1/1</div>
-            <button class="btn" id="bb_prev">◀</button>
-            <button class="btn" id="bb_next">▶</button>
-          </div>
-        </div>
-
-        <div class="builder-main">
-          <div class="page-wrap">
-            <div class="page" id="bb_page">
-              <div class="page-inner" id="bb_pageinner">
-                <div class="empty">Nenhum plano ainda. Abra o Cultural Agent e gere o plano.</div>
-              </div>
-            </div>
+          <div class="right">
+            <button class="bc-btn" id="bb_prev">◀</button>
+            <button class="bc-btn" id="bb_next">▶</button>
+            <button class="bc-btn" id="bb_download_plan">Baixar plano (JSON)</button>
+            <button class="bc-btn" id="bb_rebuild">Recriar Minas (PADRÃO)</button>
           </div>
         </div>
 
-        <div class="builder-actions">
-          <button class="btn" id="bb_download_plan">Baixar plano (JSON)</button>
-          <button class="btn" id="bb_recreate">Recriar Minas (PADRÃO)</button>
-          <button class="btn" id="bb_open_agent">Abrir Agent</button>
+        <div class="bc-view">
+          <div class="bc-pageViewport" id="bb_viewport"></div>
         </div>
       </div>
-
-      <style>
-        .builder{display:flex;flex-direction:column;gap:14px;}
-        .builder-top{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-        .builder-title h2{margin:0 0 4px 0;}
-        .builder-title .muted{margin:0;color:rgba(255,255,255,.72);font-size:13px;}
-        .builder-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-        .pill{padding:8px 12px;border:1px solid rgba(255,255,255,.15);border-radius:999px;background:rgba(0,0,0,.18);}
-        .builder-main{display:flex;justify-content:center;}
-        .page-wrap{width:min(92vw, 520px);}
-        .page{background:#fff;border-radius:22px;box-shadow:0 18px 50px rgba(0,0,0,.22);overflow:hidden;}
-        .page-inner{padding:18px 18px 14px 18px; height: 720px; display:flex; flex-direction:column;}
-        .empty{color:#64748b;font-size:14px;}
-
-        .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
-        .page-title{font-size:34px;line-height:1.04;font-weight:900;letter-spacing:-.02em;margin:0;}
-        .page-kind{color:#64748b;font-size:14px;margin-top:6px;}
-        .page-no{font-size:14px;opacity:.7;font-weight:900;min-width:52px;text-align:right;padding-top:6px;}
-        .page-meta{color:#64748b;font-size:14px;margin-top:8px;}
-        .page-hr{height:1px;background:#e5e7eb;margin:10px 0 12px 0;}
-
-        .page-body{flex:1;min-height:0;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;padding:18px;}
-        .page-body .doc{font-family:Georgia, 'Times New Roman', Times, serif; font-size:20px;line-height:1.35;color:#111827;white-space:pre-line;}
-        .img-slot{margin-top:12px;border:2px dashed #cbd5e1;border-radius:16px;padding:14px;color:#64748b;background:rgba(148,163,184,.08);display:flex;align-items:center;justify-content:space-between;gap:12px;}
-        .img-slot b{color:#0f172a;}
-        .img-chip{border:1px solid #cbd5e1;border-radius:12px;padding:6px 10px;background:#fff;color:#334155;font-weight:800;font-size:12px;}
-
-        /* caça-palavras header compacto */
-        .ws-head .page-title{
-          font-size:clamp(18px, 5.0vw, 25px);
-          line-height:1.05;
-          letter-spacing:-.02em;
-        }
-        .ws-meta{
-          font-size:13px;
-          opacity:.70;
-          margin-top:5px;
-        }
-        .ws-head .page-kind{display:none;}
-
-        /* sem bolhas internas */
-        .ws-box{border:none;background:transparent;border-radius:0;padding:0;margin:0;}
-        .ws-grid{border-collapse:collapse;width:100%;table-layout:fixed;}
-        .ws-cell{padding:0;}
-        .ws-cell span{
-          display:flex;align-items:center;justify-content:center;
-          width:100%;height:100%;
-          font-size:clamp(10px, 2.8vw, 16px);
-          font-weight:900;
-          color:#0f172a;
-        }
-        .ws-grid td{border:1px solid #111827; height: clamp(18px, 5vw, 28px);}
-
-        /* palavras: 3 colunas — NÃO quebrar no meio */
-        .words-box{margin-top:10px;border:none;background:transparent;border-radius:0;padding:0;}
-        .words-title{font-weight:900;font-size:24px;margin:0 0 8px 0;color:#0f172a;}
-        .words-grid{display:grid;grid-template-columns:repeat(3, 1fr);gap:10px 18px;}
-        .word-col{display:flex;flex-direction:column;gap:8px;min-width:0;}
-        .word-item{
-          font-weight:900;
-          letter-spacing:.02em;
-          font-size:clamp(14px, 3.6vw, 18px);
-          color:#0f172a;
-          border-bottom:2px dotted rgba(15,23,42,.25);
-          padding-bottom:2px;
-
-          white-space:nowrap;
-          word-break:keep-all;
-          overflow:hidden;
-          text-overflow:ellipsis;
-        }
-
-        .footer-note{margin-top:auto;padding-top:10px;color:#64748b;font-size:14px;}
-        .footer-note b{color:#0f172a;}
-      </style>
     `;
 
     const $ = (s)=>root.querySelector(s);
-    const pageInner = $('#bb_pageinner');
-    const pageInfo = $('#bb_pageinfo');
+    const viewport = $('#bb_viewport');
+    const pageLabel = $('#bb_pageLabel');
 
-    let idx = 0;
+    const renderMain = () => {
+      let currentPlan = Storage.get('cultural:book_plan', null);
 
-    const renderCover = (p) => {
-      return `
-        <div class="page-head">
-          <div>
-            <h1 class="page-title">${$esc(p.title || '')}</h1>
-            <div class="page-meta">${$esc(p.subtitle || '')}</div>
-          </div>
-          <div class="page-no">p.${$esc(String(p.pageNo||1))}</div>
-        </div>
-        <div class="page-hr"></div>
-        <div class="page-body">
-          <div class="doc">${$esc((plan?.meta?.subtitle || '').replace(/\s*\u2022\s*/g, ' • '))}</div>
-        </div>
-      `;
-    };
+      if (!currentPlan && fallback?.planText){
+        // se existir seed, mas sem plano salvo, só mostra placeholder
+      }
 
-    const renderTextPage = (p) => {
-      return `
-        <div class="page-head">
-          <div>
-            <h1 class="page-title">${$esc(p.title || '')}</h1>
-            <div class="page-kind">Texto cultural</div>
-          </div>
-          <div class="page-no">p.${$esc(String(p.pageNo||''))}</div>
-        </div>
-        <div class="page-hr"></div>
-        <div class="page-body">
-          <div class="doc">${$esc(p.doc || '')}</div>
-          <div class="img-slot">
-            <div>
-              <b>${$esc(p.imageSlotLabel || 'Ilustração P&B')}</b>
-              <div>Slot reservado (entra no Export/IA) — nesta página de texto.</div>
+      if (!currentPlan){
+        viewport.innerHTML = `
+          <div class="bc-paper">
+            <div class="bc-head">
+              <h1 class="bc-title">Nenhum plano</h1>
+              <div class="bc-pno"></div>
             </div>
-            <div class="img-chip">Imagem</div>
+            <div class="bc-meta"><span>Abra o Cultural Agent e clique “Gerar Plano do Livro (MG)”</span></div>
+            <div class="bc-hr"></div>
+            <div class="bc-body">
+              <div class="bc-textBox"><div class="bc-text">Sem conteúdo ainda.</div></div>
+              <div class="bc-foot">Ilustração P&amp;B: <b>—</b></div>
+            </div>
           </div>
-        </div>
-      `;
-    };
-
-    const renderPuzzlePage = (p) => {
-      const gridSize = Number(p.grid || 15);
-      const words = (p.wordsNorm || []).slice();
-      const wsSeed = Storage.get('wordsearch:seed', null);
-
-      const outGrid = (wsSeed && wsSeed.output && wsSeed.puzzleId === p.sectionId)
-        ? wsSeed.output
-        : '';
-
-      let grid = [];
-      if (outGrid && typeof outGrid === 'string'){
-        const lines = outGrid.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-        const rows = lines.slice(0, gridSize).map(l => l.replace(/\s+/g,''));
-        grid = rows.map(r => r.split('').slice(0, gridSize));
-      }
-
-      if (!grid.length || grid.length !== gridSize){
-        const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        grid = Array.from({length:gridSize}, () => Array.from({length:gridSize}, () => A[Math.floor(Math.random()*A.length)]));
-      }
-
-      return `
-        <div class="page-head ws-head">
-          <div>
-            <h1 class="page-title">${$esc(p.title || '')}</h1>
-            <div class="ws-meta">${$esc(p.meta || '')}</div>
-          </div>
-          <div class="page-no">p.${$esc(String(p.pageNo||''))}</div>
-        </div>
-        <div class="page-hr"></div>
-
-        <div class="ws-box">
-          ${tableGridHTML(grid)}
-        </div>
-
-        <div class="words-box">
-          <div class="words-title">Palavras</div>
-          ${wordsHTML(words)}
-        </div>
-
-        <div class="footer-note">Ilustração P&B: <b>${$esc(p.sectionTitle || '')}</b></div>
-      `;
-    };
-
-    const paint = () => {
-      if (!pages.length){
-        pageInfo.textContent = 'Página 1/1';
-        pageInner.innerHTML = `<div class="empty">Nenhum plano ainda. Abra o Cultural Agent e gere o plano.</div>`;
+        `;
+        pageLabel.textContent = 'Página 0/0';
         return;
       }
 
-      idx = clamp(idx, 0, pages.length-1);
-      const p = pages[idx];
-      pageInfo.textContent = `Página ${idx+1}/${pages.length}`;
+      const pages = buildBookPagesFromPlan(currentPlan);
+      Storage.set('book:pages', pages);
 
-      if (p.kind === 'cover') pageInner.innerHTML = renderCover(p);
-      else if (p.kind === 'text') pageInner.innerHTML = renderTextPage(p);
-      else pageInner.innerHTML = renderPuzzlePage(p);
+      let idx = Storage.get('book:idx', 0);
+      idx = clamp(idx, 0, Math.max(0, pages.length-1));
+      Storage.set('book:idx', idx);
+
+      const paint = () => {
+        const pagesNow = Storage.get('book:pages', pages) || pages;
+        let i = Storage.get('book:idx', idx);
+        i = clamp(i, 0, Math.max(0, pagesNow.length-1));
+
+        const page = pagesNow[i];
+        pageLabel.textContent = `Página ${i+1}/${pagesNow.length}`;
+
+        if (page.type === 'puzzle'){
+          viewport.innerHTML = pagePuzzleHTML(page, resolveLayout(currentPlan.meta || {}));
+        } else {
+          viewport.innerHTML = pageTextHTML(page, resolveLayout(currentPlan.meta || {}));
+        }
+      };
+
+      const nav = (dir) => {
+        // trava para não pular 2 páginas no mobile (double click / double tap)
+        const now = Date.now();
+        if (this._navLock) return;
+        if (now - this._navTs < 260) return;
+
+        this._navLock = true;
+        this._navTs = now;
+
+        const pagesNow = Storage.get('book:pages', pages) || pages;
+        let i = Storage.get('book:idx', idx);
+        i = clamp(i + dir, 0, Math.max(0, pagesNow.length-1));
+        Storage.set('book:idx', i);
+
+        paint();
+
+        setTimeout(()=>{ this._navLock = false; }, 220);
+      };
+
+      // botões
+      $('#bb_prev').onclick = ()=>nav(-1);
+      $('#bb_next').onclick = ()=>nav(+1);
+
+      // swipe (folhear) no mobile
+      let startX = 0;
+      let startY = 0;
+      let tracking = false;
+
+      viewport.ontouchstart = (e) => {
+        if (!e.touches || e.touches.length !== 1) return;
+        const t = e.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+        tracking = true;
+      };
+
+      viewport.ontouchmove = (e) => {
+        if (!tracking) return;
+        // se for scroll vertical, ignora
+        if (!e.touches || e.touches.length !== 1) return;
+        const t = e.touches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        if (Math.abs(dy) > Math.abs(dx)) return;
+        // previne scroll lateral do browser
+        e.preventDefault?.();
+      };
+
+      viewport.ontouchend = (e) => {
+        if (!tracking) return;
+        tracking = false;
+        const changed = e.changedTouches && e.changedTouches[0];
+        if (!changed) return;
+        const dx = changed.clientX - startX;
+        const dy = changed.clientY - startY;
+        if (Math.abs(dy) > 40) return;
+        if (Math.abs(dx) < 40) return;
+        if (dx < 0) nav(+1);
+        else nav(-1);
+      };
+
+      // clique também (desktop)
+      viewport.onclick = (e) => {
+        // evita clique que vem do touch
+        if (e && e.detail > 1) return;
+      };
+
+      // Spread/Folhear (por enquanto igual — mantém UI)
+      $('#bb_spread').onclick = () => this.app.toast?.('Spread (em breve)');
+      $('#bb_folhear').onclick = () => this.app.toast?.('Folhear ativo ✅');
+
+      // recriar (mantém o padrão: chama botão no agent se existir)
+      $('#bb_rebuild').onclick = () => {
+        // tenta abrir o Cultural Agent e clicar build
+        try{
+          const btn = document.querySelector('.navitem[data-view="cultural"]');
+          btn?.click?.();
+          setTimeout(()=>{
+            const buildBtn = document.querySelector('#ca_build');
+            buildBtn?.click?.();
+            this.app.toast?.('Recriado ✅');
+          }, 350);
+        } catch {
+          this.app.toast?.('Falha ao recriar', 'err');
+        }
+      };
+
+      $('#bb_download_plan').onclick = () => {
+        try{
+          const p = Storage.get('cultural:book_plan', null);
+          if (!p){ this.app.toast?.('Sem plano'); return; }
+          const blob = new Blob([JSON.stringify(p, null, 2)], { type:'application/json' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `book-plan-${(p?.meta?.id||'cultural')}-${Date.now()}.json`;
+          a.click();
+          setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+          this.app.toast?.('Plano baixado ✅');
+        } catch {
+          this.app.toast?.('Falha ao baixar', 'err');
+        }
+      };
+
+      paint();
     };
 
-    const next = () => { idx++; paint(); };
-    const prev = () => { idx--; paint(); };
-
-    $('#bb_next').onclick = next;
-    $('#bb_prev').onclick = prev;
-
-    // swipe simples no mobile
-    let startX = 0;
-    let tracking = false;
-    pageInner.addEventListener('touchstart', (e) => {
-      if (!e.touches?.length) return;
-      tracking = true;
-      startX = e.touches[0].clientX;
-    }, { passive:true });
-
-    pageInner.addEventListener('touchend', (e) => {
-      if (!tracking) return;
-      tracking = false;
-      const endX = e.changedTouches?.[0]?.clientX ?? startX;
-      const dx = endX - startX;
-      if (Math.abs(dx) < 42) return;
-      if (dx < 0) next(); else prev();
-    }, { passive:true });
-
-    $('#bb_open_agent').onclick = () => {
-      const btn = document.querySelector('.navitem[data-view="cultural"]');
-      btn?.click?.();
-    };
-
-    $('#bb_recreate').onclick = () => {
-      try{
-        const btn = document.querySelector('#ca_build');
-        if (btn) btn.click();
-        else this.app.toast?.('Abra o Cultural Agent e clique “Gerar Plano do Livro (MG)”', 'warn');
-      } catch {
-        this.app.toast?.('Falha ao recriar', 'err');
-      }
-    };
-
-    $('#bb_download_plan').onclick = () => {
-      if (!plan){ this.app.toast?.('Nenhum plano salvo', 'warn'); return; }
-      try{
-        const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `book-plan-${(plan?.meta?.id||'cultural')}-${Date.now()}.json`;
-        a.click();
-        setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-        this.app.toast?.('Plano baixado ✅');
-      } catch {
-        this.app.toast?.('Falha ao baixar', 'err');
-      }
-    };
-
-    paint();
+    renderMain();
   }
 }
