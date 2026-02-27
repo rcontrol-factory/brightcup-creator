@@ -1,8 +1,9 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4b PADRÃO (1 ano)
-// V0.4b:
-// - Ajuste fino no header do caça-palavras (título + meta menores e mais compactos)
-// - Mantém: sem bolhas internas, palavras em 3 colunas, folha fixa
+// Bright Cup Creator — Cultural Book Builder v0.4c PADRÃO (1 ano)
+// V0.4c:
+// - Palavras do puzzle: NÃO usa título inteiro (evita "OQUEEMINAS")
+// - Lista de palavras: não quebra no meio (nowrap + keep-all)
+// - Mantém: sem bolhas internas, 3 colunas, folha fixa
 
 import { Storage } from '../core/storage.js';
 
@@ -42,6 +43,29 @@ function pickWordsForGrid(words, gridSize, maxCount){
   return filtered.slice(0, take);
 }
 
+// pega palavras úteis do título (ex: "O que é Minas?" -> ["MINAS"])
+function titleKeywords(title, gridSize){
+  const raw = String(title || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^A-Z0-9\s]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+
+  if (!raw) return [];
+
+  const stop = new Set(['O','A','OS','AS','DE','DO','DA','DOS','DAS','E','EM','NO','NA','QUE','QUAIS','QUAL','UM','UMA','COMO','POR','PARA','SOBRE','SE','EH','E']);
+  const parts = raw.split(' ')
+    .map(w => w.trim())
+    .filter(w => w && !stop.has(w))
+    .map(w => normalizeWord(w))
+    .filter(w => w.length >= 3 && w.length <= (gridSize || 15));
+
+  // de-dup
+  return Array.from(new Set(parts));
+}
+
 function wrapLines(text, max=72){
   const words = String(text||'').split(/\s+/g);
   const lines = [];
@@ -65,12 +89,6 @@ function renderSectionText(s){
   return lines.join('\n').trimEnd();
 }
 
-function presetFromGrid(grid){
-  const g = Number(grid||0);
-  if (g <= 13) return 'BR_POCKET';
-  return 'BR_PLUS';
-}
-
 function buildPagesFromPlan(plan){
   const pages = [];
   const meta = plan?.meta || {};
@@ -78,7 +96,6 @@ function buildPagesFromPlan(plan){
   const wppDefault  = Number(meta.words_per_puzzle || 16);
   const includeKey  = !!meta.include_key;
 
-  // capa
   pages.push({
     kind:'cover',
     title: meta.title || 'LIVRO',
@@ -86,7 +103,6 @@ function buildPagesFromPlan(plan){
     pageNo: 1
   });
 
-  // seções: texto + puzzle
   let pageNo = 2;
   const secs = plan?.sections || [];
   for (const s of secs){
@@ -101,9 +117,13 @@ function buildPagesFromPlan(plan){
       pageNo: pageNo++
     });
 
+    // >>> NÃO usa título inteiro como palavra
+    const titleKeys = titleKeywords(s.title, gridDefault);
+
     const wordsRaw = []
       .concat(s.wordHints || [])
-      .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
+      .concat(titleKeys) // só palavras úteis do título
+      .concat(['MINAS', 'CULTURA', 'HISTORIA', 'UAI']);
 
     const wordsNorm = pickWordsForGrid(wordsRaw, gridDefault, wppDefault);
 
@@ -168,9 +188,7 @@ export class CulturalBookBuilderModule {
   async init(){}
 
   render(root){
-    const seed = Storage.get('cultural:seed', null);
     const plan = Storage.get('cultural:book_plan', null);
-
     const pages = plan ? buildPagesFromPlan(plan) : [];
 
     root.innerHTML = `
@@ -225,7 +243,7 @@ export class CulturalBookBuilderModule {
         .page-kind{color:#64748b;font-size:14px;margin-top:6px;}
         .page-no{font-size:14px;opacity:.7;font-weight:900;min-width:52px;text-align:right;padding-top:6px;}
         .page-meta{color:#64748b;font-size:14px;margin-top:8px;}
-        .page-hr{height:1px;background:#e5e7eb;margin:10px 0 12px 0;} /* menor */
+        .page-hr{height:1px;background:#e5e7eb;margin:10px 0 12px 0;}
 
         .page-body{flex:1;min-height:0;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;padding:18px;}
         .page-body .doc{font-family:Georgia, 'Times New Roman', Times, serif; font-size:20px;line-height:1.35;color:#111827;white-space:pre-line;}
@@ -233,20 +251,20 @@ export class CulturalBookBuilderModule {
         .img-slot b{color:#0f172a;}
         .img-chip{border:1px solid #cbd5e1;border-radius:12px;padding:6px 10px;background:#fff;color:#334155;font-weight:800;font-size:12px;}
 
-        /* caça-palavras: HEADER mais compacto (ajuste pedido) */
+        /* caça-palavras header compacto */
         .ws-head .page-title{
-          font-size:clamp(18px, 5.0vw, 25px); /* ↓ menor */
+          font-size:clamp(18px, 5.0vw, 25px);
           line-height:1.05;
           letter-spacing:-.02em;
         }
         .ws-meta{
-          font-size:13px;               /* ↓ menor */
+          font-size:13px;
           opacity:.70;
-          margin-top:5px;               /* ↓ menor */
+          margin-top:5px;
         }
         .ws-head .page-kind{display:none;}
 
-        /* caça-palavras: sem bolhas/cards internos */
+        /* sem bolhas internas */
         .ws-box{border:none;background:transparent;border-radius:0;padding:0;margin:0;}
         .ws-grid{border-collapse:collapse;width:100%;table-layout:fixed;}
         .ws-cell{padding:0;}
@@ -259,12 +277,24 @@ export class CulturalBookBuilderModule {
         }
         .ws-grid td{border:1px solid #111827; height: clamp(18px, 5vw, 28px);}
 
-        /* palavras: 3 colunas, sem bolha */
-        .words-box{margin-top:10px;border:none;background:transparent;border-radius:0;padding:0;} /* ↓ menor */
-        .words-title{font-weight:900;font-size:24px;margin:0 0 8px 0;color:#0f172a;} /* ↓ menor */
+        /* palavras: 3 colunas — NÃO quebrar no meio */
+        .words-box{margin-top:10px;border:none;background:transparent;border-radius:0;padding:0;}
+        .words-title{font-weight:900;font-size:24px;margin:0 0 8px 0;color:#0f172a;}
         .words-grid{display:grid;grid-template-columns:repeat(3, 1fr);gap:10px 18px;}
-        .word-col{display:flex;flex-direction:column;gap:8px;}
-        .word-item{font-weight:900;letter-spacing:.02em;font-size:18px;color:#0f172a;border-bottom:2px dotted rgba(15,23,42,.25);padding-bottom:2px;}
+        .word-col{display:flex;flex-direction:column;gap:8px;min-width:0;}
+        .word-item{
+          font-weight:900;
+          letter-spacing:.02em;
+          font-size:clamp(14px, 3.6vw, 18px);
+          color:#0f172a;
+          border-bottom:2px dotted rgba(15,23,42,.25);
+          padding-bottom:2px;
+
+          white-space:nowrap;
+          word-break:keep-all;
+          overflow:hidden;
+          text-overflow:ellipsis;
+        }
 
         .footer-note{margin-top:auto;padding-top:10px;color:#64748b;font-size:14px;}
         .footer-note b{color:#0f172a;}
@@ -275,7 +305,6 @@ export class CulturalBookBuilderModule {
     const pageInner = $('#bb_pageinner');
     const pageInfo = $('#bb_pageinfo');
 
-    let mode = 'flip';
     let idx = 0;
 
     const renderCover = (p) => {
@@ -383,18 +412,7 @@ export class CulturalBookBuilderModule {
     $('#bb_next').onclick = next;
     $('#bb_prev').onclick = prev;
 
-    $('#bb_flip').onclick = () => {
-      mode = 'flip';
-      $('#bb_flip').classList.add('primary');
-      $('#bb_spread').classList.remove('primary');
-    };
-
-    $('#bb_spread').onclick = () => {
-      mode = 'spread';
-      $('#bb_spread').classList.add('primary');
-      $('#bb_flip').classList.remove('primary');
-    };
-
+    // swipe simples no mobile
     let startX = 0;
     let tracking = false;
     pageInner.addEventListener('touchstart', (e) => {
