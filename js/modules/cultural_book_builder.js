@@ -1,16 +1,8 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4a PADRÃO (1 ano)
-// V0.4a:
-// - Builder = só folhear/aprovar (layout vem do Agent via plan.meta.layout)
-// - Folha fixa (6x9) sem expandir por conteúdo
-// - Caça-Palavras sem “bolhas” internas (grid e palavras sem cards/bubbles)
-// - Palavras em 3 colunas, compactas (mais espaço pra grade)
-// - Header do puzzle mais enxuto (sem “Prévia visual...”, sem “Puzzle”)
-// - Mantém: pipeline de export/IA e slots de ilustração
-//
-// Observação: este módulo é de “preview editorial”. O PDF final continua vindo do Export.
-//
-// (c) RControl / Bright Cup Creator
+// Bright Cup Creator — Cultural Book Builder v0.4b PADRÃO (1 ano)
+// V0.4b:
+// - Ajuste fino no header do caça-palavras (título + meta menores e mais compactos)
+// - Mantém: sem bolhas internas, palavras em 3 colunas, folha fixa
 
 import { Storage } from '../core/storage.js';
 
@@ -98,7 +90,6 @@ function buildPagesFromPlan(plan){
   let pageNo = 2;
   const secs = plan?.sections || [];
   for (const s of secs){
-    // texto
     pages.push({
       kind:'text',
       icon: s.icon,
@@ -110,14 +101,12 @@ function buildPagesFromPlan(plan){
       pageNo: pageNo++
     });
 
-    // palavras
     const wordsRaw = []
       .concat(s.wordHints || [])
       .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
 
     const wordsNorm = pickWordsForGrid(wordsRaw, gridDefault, wppDefault);
 
-    // puzzle page
     pages.push({
       kind:'puzzle',
       icon: s.icon,
@@ -231,24 +220,30 @@ export class CulturalBookBuilderModule {
         .page-inner{padding:18px 18px 14px 18px; height: 720px; display:flex; flex-direction:column;}
         .empty{color:#64748b;font-size:14px;}
 
-        /* header base */
         .page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
         .page-title{font-size:34px;line-height:1.04;font-weight:900;letter-spacing:-.02em;margin:0;}
         .page-kind{color:#64748b;font-size:14px;margin-top:6px;}
         .page-no{font-size:14px;opacity:.7;font-weight:900;min-width:52px;text-align:right;padding-top:6px;}
         .page-meta{color:#64748b;font-size:14px;margin-top:8px;}
-        .page-hr{height:1px;background:#e5e7eb;margin:10px 0 14px 0;}
+        .page-hr{height:1px;background:#e5e7eb;margin:10px 0 12px 0;} /* menor */
 
-        /* text page */
         .page-body{flex:1;min-height:0;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;padding:18px;}
         .page-body .doc{font-family:Georgia, 'Times New Roman', Times, serif; font-size:20px;line-height:1.35;color:#111827;white-space:pre-line;}
         .img-slot{margin-top:12px;border:2px dashed #cbd5e1;border-radius:16px;padding:14px;color:#64748b;background:rgba(148,163,184,.08);display:flex;align-items:center;justify-content:space-between;gap:12px;}
         .img-slot b{color:#0f172a;}
         .img-chip{border:1px solid #cbd5e1;border-radius:12px;padding:6px 10px;background:#fff;color:#334155;font-weight:800;font-size:12px;}
 
-        /* caça-palavras: header mais enxuto + sem linha extra */
-        .ws-head .page-title{font-size:clamp(20px,5.6vw,28px);line-height:1.06;}
-        .ws-meta{font-size:14px;opacity:.72;margin-top:6px;}
+        /* caça-palavras: HEADER mais compacto (ajuste pedido) */
+        .ws-head .page-title{
+          font-size:clamp(18px, 5.0vw, 25px); /* ↓ menor */
+          line-height:1.05;
+          letter-spacing:-.02em;
+        }
+        .ws-meta{
+          font-size:13px;               /* ↓ menor */
+          opacity:.70;
+          margin-top:5px;               /* ↓ menor */
+        }
         .ws-head .page-kind{display:none;}
 
         /* caça-palavras: sem bolhas/cards internos */
@@ -264,9 +259,9 @@ export class CulturalBookBuilderModule {
         }
         .ws-grid td{border:1px solid #111827; height: clamp(18px, 5vw, 28px);}
 
-        /* palavras: 3 colunas, sem “bolha” */
-        .words-box{margin-top:12px;border:none;background:transparent;border-radius:0;padding:0;}
-        .words-title{font-weight:900;font-size:26px;margin:0 0 8px 0;color:#0f172a;}
+        /* palavras: 3 colunas, sem bolha */
+        .words-box{margin-top:10px;border:none;background:transparent;border-radius:0;padding:0;} /* ↓ menor */
+        .words-title{font-weight:900;font-size:24px;margin:0 0 8px 0;color:#0f172a;} /* ↓ menor */
         .words-grid{display:grid;grid-template-columns:repeat(3, 1fr);gap:10px 18px;}
         .word-col{display:flex;flex-direction:column;gap:8px;}
         .word-item{font-weight:900;letter-spacing:.02em;font-size:18px;color:#0f172a;border-bottom:2px dotted rgba(15,23,42,.25);padding-bottom:2px;}
@@ -327,21 +322,17 @@ export class CulturalBookBuilderModule {
       const words = (p.wordsNorm || []).slice();
       const wsSeed = Storage.get('wordsearch:seed', null);
 
-      // se existir saída gerada do módulo de caça-palavras, tenta usar (preview),
-      // senão mostra “grade vazia” como placeholder.
       const outGrid = (wsSeed && wsSeed.output && wsSeed.puzzleId === p.sectionId)
         ? wsSeed.output
         : '';
 
       let grid = [];
       if (outGrid && typeof outGrid === 'string'){
-        // parse simples: linhas com letras separadas por espaços ou coladas
         const lines = outGrid.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
         const rows = lines.slice(0, gridSize).map(l => l.replace(/\s+/g,''));
         grid = rows.map(r => r.split('').slice(0, gridSize));
       }
 
-      // fallback: se não tem grid válido, cria grid aleatória só pra preencher (visual)
       if (!grid.length || grid.length !== gridSize){
         const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         grid = Array.from({length:gridSize}, () => Array.from({length:gridSize}, () => A[Math.floor(Math.random()*A.length)]));
@@ -404,7 +395,6 @@ export class CulturalBookBuilderModule {
       $('#bb_flip').classList.remove('primary');
     };
 
-    // swipe: folhear (um por gesto)
     let startX = 0;
     let tracking = false;
     pageInner.addEventListener('touchstart', (e) => {
@@ -428,7 +418,6 @@ export class CulturalBookBuilderModule {
     };
 
     $('#bb_recreate').onclick = () => {
-      // botão “PADRÃO”: chama o agent se existir
       try{
         const btn = document.querySelector('#ca_build');
         if (btn) btn.click();
