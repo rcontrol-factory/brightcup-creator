@@ -1,13 +1,10 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4a PADRÃO (1 ano)
-// V0.4a:
-// - Builder = só folhear/aprovar (layout vem do Agent via plan.meta.layout)
-// - Folha fixa (não estica o app): pageViewport com altura estável + overflow controlado
-// - Caça-palavras sem “bolhas” internas: tira cards/containers extras e usa “paper” direto
-// - Word list em 3 colunas (auto-fit) pra sobrar mais espaço pro grid
-// - Título/metadata mais enxutos (sem exagero) + remove “prévia visual (editorial)” se quiser
-// - Fix navegação no mobile: evita pular 2 páginas (debounce + lock)
-// - Mantém compatibilidade com cultural_agent.js (Storage: cultural:book_plan / wordsearch:*)
+// Bright Cup Creator — Cultural Book Builder v0.4b PADRÃO (1 ano)
+// v0.4b FIX:
+// - Grid sempre cabe no iPhone: mede largura REAL do viewport e recalcula cell
+// - Word list sem "..." (remove ellipsis + permite quebrar linha)
+// - Não usa título da seção como palavra (evita "OQUEEMINAS" etc.)
+// - Mantém folha fixa e swipe sem pular 2 páginas
 
 import { Storage } from '../core/storage.js';
 
@@ -33,13 +30,6 @@ function displayWord(s){
     .toUpperCase();
 }
 
-function splitWordsText(txt){
-  return String(txt||'')
-    .split(/\r?\n+/)
-    .map(x => x.trim())
-    .filter(Boolean);
-}
-
 function uniq(list){
   const seen = new Set();
   const out = [];
@@ -51,17 +41,6 @@ function uniq(list){
     out.push(it);
   }
   return out;
-}
-
-function chunk(arr, n){
-  const out = [];
-  for (let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n));
-  return out;
-}
-
-function gridToText(grid){
-  // grid: string[] rows
-  return (grid || []).map(r => r.join ? r.join(' ') : String(r)).join('\n');
 }
 
 function makeFillChar(){
@@ -105,7 +84,6 @@ function placeWord(grid, word, r, c, dr, dc){
 }
 
 function generateWordSearch(size, words){
-  // words expected already normalized A-Z0-9
   const directions = [
     {dr:0, dc:1},   // →
     {dr:1, dc:0},   // ↓
@@ -121,9 +99,7 @@ function generateWordSearch(size, words){
 
   for (const w of sorted){
     let ok = false;
-
-    // tentativas
-    for (let t=0;t<250;t++){
+    for (let t=0;t<280;t++){
       const dir = directions[Math.floor(Math.random()*directions.length)];
       const r = Math.floor(Math.random()*size);
       const c = Math.floor(Math.random()*size);
@@ -134,11 +110,9 @@ function generateWordSearch(size, words){
         break;
       }
     }
-
     if (!ok) failures.push(w);
   }
 
-  // preencher vazios
   for (let r=0;r<size;r++){
     for (let c=0;c<size;c++){
       if (!grid[r][c]) grid[r][c] = makeFillChar();
@@ -162,51 +136,38 @@ function wrapLines(text, max=72){
 }
 
 function resolveLayout(meta){
-  // layout defaults
   const L = (meta && meta.layout) || {};
   return {
-    paperMaxW: Number(L.paperMaxW || 520),     // largura máxima do “papel” no builder
-    pageH:     Number(L.pageH || 720),         // altura fixa do viewport (folha não estica)
-    pad:       Number(L.pad || 22),            // padding interno da folha
-    titleSize: Number(L.titleSize || 26),      // título menor (antes era muito grande)
+    paperMaxW: Number(L.paperMaxW || 520),
+    pageH:     Number(L.pageH || 720),
+    pad:       Number(L.pad || 22),
+    titleSize: Number(L.titleSize || 26),
     metaSize:  Number(L.metaSize || 13),
     bodySize:  Number(L.bodySize || 18),
     gridGap:   Number(L.gridGap || 2),
     gridBorder:Number(L.gridBorder || 2),
-    gridCell:  Number(L.gridCell || 26),       // tamanho base célula
-    gridFont:  Number(L.gridFont || 14),       // fonte base da letra
+    gridCell:  Number(L.gridCell || 26),
+    gridFont:  Number(L.gridFont || 14),
     wordsSize: Number(L.wordsSize || 16),
-    wordsCols: Number(L.wordsCols || 3),       // 3 colunas (pra sobrar espaço)
-    showMetaLine: !!(L.showMetaLine ?? false), // por padrão some com “prévia visual...”
+    wordsCols: Number(L.wordsCols || 3),
   };
 }
 
 function styleTag(layout){
-  // CSS do Builder: folha fixa, sem “bolhas” internas no puzzle.
   return `
 <style>
-  .bc-bookwrap{
-    display:flex;
-    flex-direction:column;
-    gap:12px;
-  }
+  .bc-bookwrap{ display:flex; flex-direction:column; gap:12px; }
 
   .bc-toolbar{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:10px;
-    flex-wrap:wrap;
+    display:flex; align-items:center; justify-content:space-between;
+    gap:10px; flex-wrap:wrap;
     padding:10px 12px;
     border:1px solid rgba(255,255,255,.10);
     border-radius:16px;
     background:rgba(0,0,0,.16);
     backdrop-filter: blur(8px);
   }
-
-  .bc-toolbar .left, .bc-toolbar .right{
-    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-  }
+  .bc-toolbar .left, .bc-toolbar .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 
   .bc-btn{
     appearance:none;
@@ -215,33 +176,24 @@ function styleTag(layout){
     color:rgba(255,255,255,.92);
     padding:10px 12px;
     border-radius:14px;
-    font-weight:700;
+    font-weight:800;
     letter-spacing:.2px;
   }
-  .bc-btn.primary{
-    background:rgba(90,160,255,.20);
-    border-color:rgba(90,160,255,.35);
-  }
+  .bc-btn.primary{ background:rgba(90,160,255,.20); border-color:rgba(90,160,255,.35); }
   .bc-btn:active{ transform: translateY(1px); }
 
-  .bc-view{
-    display:flex;
-    justify-content:center;
-    padding:10px 0 18px;
-  }
+  .bc-view{ display:flex; justify-content:center; padding:10px 0 18px; }
 
-  /* VIEWPORT FIXO — não estica o app */
   .bc-pageViewport{
     width:min(${layout.paperMaxW}px, calc(100vw - 28px));
     height:${layout.pageH}px;
-    overflow:hidden; /* folha fixa */
+    overflow:hidden;
     border-radius:26px;
     background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(245,248,248,.95));
     box-shadow: 0 18px 46px rgba(0,0,0,.35);
     border:1px solid rgba(0,0,0,.08);
   }
 
-  /* FOLHA / “PAPEL” */
   .bc-paper{
     height:100%;
     width:100%;
@@ -249,16 +201,10 @@ function styleTag(layout){
     flex-direction:column;
     padding:${layout.pad}px;
     box-sizing:border-box;
-    overflow:hidden; /* impede scroll dentro da folha */
+    overflow:hidden;
   }
 
-  .bc-head{
-    display:flex;
-    justify-content:space-between;
-    gap:10px;
-    align-items:flex-start;
-    margin-bottom:8px;
-  }
+  .bc-head{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px; }
   .bc-title{
     margin:0;
     font-size:${layout.titleSize}px;
@@ -267,44 +213,30 @@ function styleTag(layout){
     color:#141a1f;
     font-weight:900;
   }
-  .bc-pno{
-    font-weight:800;
-    color:rgba(20,26,31,.55);
-    font-size:16px;
-    padding-top:4px;
-  }
+  .bc-pno{ font-weight:800; color:rgba(20,26,31,.55); font-size:16px; padding-top:4px; }
 
   .bc-meta{
-    display:flex;
-    gap:10px;
-    align-items:center;
-    flex-wrap:wrap;
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
     font-size:${layout.metaSize}px;
     color:rgba(20,26,31,.55);
     margin: 2px 0 10px;
   }
-  .bc-hr{
-    height:1px;
-    background:rgba(20,26,31,.12);
-    margin: 6px 0 14px;
-    flex:0 0 auto;
-  }
+  .bc-hr{ height:1px; background:rgba(20,26,31,.12); margin: 6px 0 14px; flex:0 0 auto; }
 
   .bc-body{
     flex: 1 1 auto;
-    overflow:hidden; /* SEM ROLAGEM */
+    overflow:hidden;
     display:flex;
     flex-direction:column;
     gap:14px;
   }
 
-  /* TEXTO */
   .bc-textBox{
     border:1px solid rgba(20,26,31,.10);
     border-radius:18px;
     background:rgba(255,255,255,.55);
     padding:16px 16px;
-    overflow:hidden; /* não estica */
+    overflow:hidden;
   }
   .bc-text{
     white-space:pre-wrap;
@@ -314,7 +246,6 @@ function styleTag(layout){
     font-family: ui-serif, Georgia, "Times New Roman", Times, serif;
   }
 
-  /* PUZZLE: SEM “BOLHA” EXTRA */
   .bc-puzzleWrap{
     flex: 1 1 auto;
     display:flex;
@@ -328,7 +259,7 @@ function styleTag(layout){
     display:grid;
     gap:${layout.gridGap}px;
     background:transparent;
-    padding:0; /* sem container */
+    padding:0;
     overflow:hidden;
   }
 
@@ -336,18 +267,15 @@ function styleTag(layout){
     display:flex;
     align-items:center;
     justify-content:center;
-    width:100%;
     aspect-ratio: 1 / 1;
     border:${layout.gridBorder}px solid rgba(20,26,31,.65);
-    border-radius:0; /* quadriculado reto */
-    font-size:${layout.gridFont}px;
+    border-radius:0;
     font-weight:900;
     color:#111;
     background: rgba(255,255,255,.92);
     font-family: ui-monospace, Menlo, Consolas, "SFMono-Regular", monospace;
   }
 
-  /* LISTA DE PALAVRAS: 3 COLUNAS */
   .bc-wordsTitle{
     margin: 0;
     font-size: 34px;
@@ -359,7 +287,7 @@ function styleTag(layout){
   .bc-wordsGrid{
     display:grid;
     grid-template-columns: repeat(${layout.wordsCols}, 1fr);
-    gap: 8px 20px;
+    gap: 8px 18px;
     margin-top: 8px;
     overflow:hidden;
   }
@@ -371,21 +299,25 @@ function styleTag(layout){
     min-width:0;
   }
 
+  /* IMPORTANT: sem "..." */
   .bc-word{
     font-weight:900;
     font-size:${layout.wordsSize}px;
     letter-spacing:.6px;
     color:#141a1f;
     text-transform:uppercase;
-    white-space:nowrap;
-    overflow:hidden;
-    text-overflow:ellipsis;
+    white-space:normal;       /* permite quebrar linha */
+    overflow:visible;         /* sem corte */
+    text-overflow:clip;
+    word-break:break-word;
+    line-height:1.05;
   }
 
   .bc-dots{
     flex:1;
     border-bottom: 3px dotted rgba(20,26,31,.20);
     transform: translateY(-3px);
+    min-width:18px;
   }
 
   .bc-foot{
@@ -395,36 +327,18 @@ function styleTag(layout){
     font-size:15px;
   }
 
-  /* Mobile tweaks */
   @media (max-width: 420px){
-    .bc-pageViewport{
-      height:${Math.max(640, Math.floor(layout.pageH*0.92))}px;
-    }
+    .bc-pageViewport{ height:${Math.max(640, Math.floor(layout.pageH*0.92))}px; }
     .bc-title{ font-size:${Math.max(22, layout.titleSize-4)}px; }
     .bc-wordsTitle{ font-size: 30px; }
-    .bc-wordsGrid{ grid-template-columns: repeat(2, 1fr); }
+    .bc-wordsGrid{ grid-template-columns: repeat(3, 1fr); }
   }
 </style>
 `;
 }
 
-function buildWordsGridHTML(words, cols=3){
+function buildWordsGridHTML(words){
   const clean = uniq(words.map(displayWord)).filter(Boolean);
-  const perCol = Math.ceil(clean.length / cols);
-  const columns = chunk(clean, perCol);
-
-  // Em vez de “chips”, lista com linha pontilhada (estilo revistinha)
-  // Monta em grid por colunas para controlar espaço.
-  const allRows = [];
-  for (let c=0;c<cols;c++){
-    const col = columns[c] || [];
-    for (let i=0;i<perCol;i++){
-      const w = col[i] || '';
-      allRows.push({ w, col:c, row:i });
-    }
-  }
-
-  // Render em grid linear (CSS já faz colunas)
   return `
     <div class="bc-wordsGrid">
       ${clean.map(w => `
@@ -437,32 +351,33 @@ function buildWordsGridHTML(words, cols=3){
   `;
 }
 
-function calcGridCell(layout, size){
-  // Ajuste automático: tenta manter a folha fixa sem overflow.
-  // Pegamos largura útil e calculamos cell ideal.
+function calcGridCell(layout, size, viewportW){
+  // viewportW = largura REAL do bb_viewport (no iPhone isso resolve o corte)
   const pad = layout.pad;
-  const maxW = layout.paperMaxW;
-  const usable = maxW - pad*2; // aproximado; o viewport usa min() no CSS
+  const effectiveW = Math.min(layout.paperMaxW, Number(viewportW || layout.paperMaxW));
+  const usable = Math.max(240, effectiveW - pad*2);
   const gapTotal = (size-1) * layout.gridGap;
-  const borderTotal = 0;
-  const cell = Math.floor((usable - gapTotal - borderTotal) / size);
-  return clamp(cell, 18, layout.gridCell);
+  const cell = Math.floor((usable - gapTotal) / size);
+  return clamp(cell, 16, 34);
 }
 
-function gridHTML(layout, grid){
+function gridHTML(layout, grid, viewportW){
   const size = grid.length || 0;
-  const cell = calcGridCell(layout, size);
-
-  // grid template columns inline to avoid CSS recalcs
+  const cell = calcGridCell(layout, size, viewportW);
   const cols = `repeat(${size}, ${cell}px)`;
+
+  const font = clamp(Math.floor(cell*0.52), 10, 16);
+
   return `
     <div class="bc-grid" style="grid-template-columns:${cols}; justify-content:center;">
-      ${grid.map(row => row.map(ch => `<div class="bc-cell" style="width:${cell}px; font-size:${Math.max(11, Math.floor(cell*0.52))}px;">${$esc(ch)}</div>`).join('')).join('')}
+      ${grid.map(row => row.map(ch => `
+        <div class="bc-cell" style="width:${cell}px; font-size:${font}px;">${$esc(ch)}</div>
+      `).join('')).join('')}
     </div>
   `;
 }
 
-function pagePuzzleHTML(page, layout){
+function pagePuzzleHTML(page, layout, viewportW){
   const meta = page.meta || {};
   const title = page.title || 'Caça-Palavras';
   const pno = page.pageLabel || '';
@@ -492,10 +407,10 @@ function pagePuzzleHTML(page, layout){
 
       <div class="bc-body">
         <div class="bc-puzzleWrap">
-          ${gridHTML(layout, grid)}
+          ${gridHTML(layout, grid, viewportW)}
           <div>
             <h2 class="bc-wordsTitle">Palavras</h2>
-            ${buildWordsGridHTML(words, layout.wordsCols)}
+            ${buildWordsGridHTML(words)}
           </div>
         </div>
 
@@ -517,17 +432,13 @@ function pageTextHTML(page, layout){
         <div class="bc-pno">${$esc(pno)}</div>
       </div>
 
-      <div class="bc-meta">
-        <span>Texto cultural</span>
-      </div>
-
+      <div class="bc-meta"><span>Texto cultural</span></div>
       <div class="bc-hr"></div>
 
       <div class="bc-body">
         <div class="bc-textBox">
           <div class="bc-text">${$esc(wrapLines(txt, 72))}</div>
         </div>
-
         <div class="bc-foot">Ilustração P&amp;B: <b>${$esc(page.illustrationLabel || 'História')}</b></div>
       </div>
     </div>
@@ -535,12 +446,10 @@ function pageTextHTML(page, layout){
 }
 
 function buildBookPagesFromPlan(plan){
-  // Plano vem do Cultural Agent (cultural:book_plan)
   const meta = plan?.meta || {};
   const secs = plan?.sections || [];
   const pages = [];
 
-  // capa “visual” simples no builder (opcional)
   pages.push({
     type:'text',
     title: (meta.title || 'LIVRO').toUpperCase(),
@@ -549,13 +458,12 @@ function buildBookPagesFromPlan(plan){
       'Apresentação ' + (meta.subtitle ? ('— ' + meta.subtitle) : ''),
       '',
       'Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.',
-      'Cada seção traz um texto curto e um caça-palavras temático. No final, você encontra o gabarito completo.',
+      'Cada seção traz um texto curto e um caça-palavras temático.',
       'Boa leitura e bom passatempo.'
     ].join('\n'),
     illustrationLabel: 'História'
   });
 
-  // para cada seção: página de texto + página de puzzle
   let p = 2;
   for (const s of secs){
     pages.push({
@@ -566,12 +474,14 @@ function buildBookPagesFromPlan(plan){
       illustrationLabel: s.illustration || (s.title || 'História')
     });
 
-    // palavras: usamos hints + normaliza p/ grade
+    // IMPORTANT: não usa s.title como palavra (evita OQUEEMINAS etc.)
     const hints = []
       .concat(s.wordHints || [])
-      .concat([s.title, 'Minas', 'Cultura', 'História', 'Uai']);
+      .concat(['Minas', 'Cultura', 'História', 'Uai']);
 
-    const wordsNorm = uniq(hints.map(normWordGrid)).filter(Boolean).filter(w => w.length >= 3);
+    const wordsNorm = uniq(hints.map(normWordGrid))
+      .filter(Boolean)
+      .filter(w => w.length >= 3);
 
     const size = Number(meta.grid_default || 15);
     const maxWords = Number(meta.words_per_puzzle || 14);
@@ -581,8 +491,6 @@ function buildBookPagesFromPlan(plan){
 
     const gen = generateWordSearch(size, picked);
 
-    // palavras DISPLAY (mantendo acento/ç quando existir no hint original)
-    // mapeia do norm -> um display preferido
     const map = new Map();
     for (const raw of hints){
       const n = normWordGrid(raw);
@@ -656,7 +564,7 @@ export class CulturalBookBuilderModule {
       let currentPlan = Storage.get('cultural:book_plan', null);
 
       if (!currentPlan && fallback?.planText){
-        // se existir seed, mas sem plano salvo, só mostra placeholder
+        // placeholder
       }
 
       if (!currentPlan){
@@ -693,15 +601,18 @@ export class CulturalBookBuilderModule {
         const page = pagesNow[i];
         pageLabel.textContent = `Página ${i+1}/${pagesNow.length}`;
 
+        // MEDIDA REAL do viewport (resolve corte lateral no iPhone)
+        const vw = viewport?.clientWidth || (currentPlan?.meta?.layout?.paperMaxW || 520);
+
+        const lay = resolveLayout(currentPlan.meta || {});
         if (page.type === 'puzzle'){
-          viewport.innerHTML = pagePuzzleHTML(page, resolveLayout(currentPlan.meta || {}));
+          viewport.innerHTML = pagePuzzleHTML(page, lay, vw);
         } else {
-          viewport.innerHTML = pageTextHTML(page, resolveLayout(currentPlan.meta || {}));
+          viewport.innerHTML = pageTextHTML(page, lay);
         }
       };
 
       const nav = (dir) => {
-        // trava para não pular 2 páginas no mobile (double click / double tap)
         const now = Date.now();
         if (this._navLock) return;
         if (now - this._navTs < 260) return;
@@ -715,15 +626,13 @@ export class CulturalBookBuilderModule {
         Storage.set('book:idx', i);
 
         paint();
-
         setTimeout(()=>{ this._navLock = false; }, 220);
       };
 
-      // botões
       $('#bb_prev').onclick = ()=>nav(-1);
       $('#bb_next').onclick = ()=>nav(+1);
 
-      // swipe (folhear) no mobile
+      // swipe
       let startX = 0;
       let startY = 0;
       let tracking = false;
@@ -738,13 +647,11 @@ export class CulturalBookBuilderModule {
 
       viewport.ontouchmove = (e) => {
         if (!tracking) return;
-        // se for scroll vertical, ignora
         if (!e.touches || e.touches.length !== 1) return;
         const t = e.touches[0];
         const dx = t.clientX - startX;
         const dy = t.clientY - startY;
         if (Math.abs(dy) > Math.abs(dx)) return;
-        // previne scroll lateral do browser
         e.preventDefault?.();
       };
 
@@ -761,19 +668,10 @@ export class CulturalBookBuilderModule {
         else nav(-1);
       };
 
-      // clique também (desktop)
-      viewport.onclick = (e) => {
-        // evita clique que vem do touch
-        if (e && e.detail > 1) return;
-      };
-
-      // Spread/Folhear (por enquanto igual — mantém UI)
       $('#bb_spread').onclick = () => this.app.toast?.('Spread (em breve)');
       $('#bb_folhear').onclick = () => this.app.toast?.('Folhear ativo ✅');
 
-      // recriar (mantém o padrão: chama botão no agent se existir)
       $('#bb_rebuild').onclick = () => {
-        // tenta abrir o Cultural Agent e clicar build
         try{
           const btn = document.querySelector('.navitem[data-view="cultural"]');
           btn?.click?.();
@@ -804,6 +702,8 @@ export class CulturalBookBuilderModule {
       };
 
       paint();
+      // re-paint curto depois pra garantir medida certa no iOS (às vezes viewport muda após render)
+      setTimeout(()=>{ try{ paint(); } catch {} }, 60);
     };
 
     renderMain();
