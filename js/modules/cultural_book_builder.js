@@ -138,104 +138,100 @@ function buildPagesFromPlan(plan){
     for (const d of wordsDisplay){
       const n = normalizeWord(d);
       if (!n) continue;
-      if (!mapDisp[n] || mapDisp[n].length < d.length) mapDisp[n] = d;
+      const hasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(d);
+      if (!mapDisp[n]) mapDisp[n] = d;
+      else {
+        const prevHas = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(mapDisp[n]);
+        if (!prevHas && hasAccent) mapDisp[n] = d;
+      }
     }
-
-    const finalDisplay = wordsNorm.map(n => mapDisp[n] || n);
+    const wordsDisplayPicked = wordsNorm.map(n => mapDisp[n] || n);
 
     pages.push({
       kind:'puzzle',
       icon: s.icon,
-      title: s.title,
+      title: `Caça-Palavras — ${s.title}`,
+      meta: `grade ${gridDefault}x${gridDefault} • palavras ${wordsNorm.length}`,
+      sectionId: s.id,
       sectionTitle: s.title,
-      meta: `Caça-Palavras ${gridDefault}x${gridDefault}`,
       grid: gridDefault,
       wordsNorm,
-      wordsDisplay: finalDisplay,
-      sectionId: s.id,
-      sectionTitle: s.title
+      wordsDisplay: wordsDisplayPicked
     });
   });
 
-  // gabarito (placeholder: o WordSearch module usa includeKey; aqui só reserva)
   pages.push({
     kind:'text',
     icon:'history',
-    title:'GABARITO',
-    meta:'Respostas',
+    title:'Gabarito (no final)',
+    meta:'(entra completo no Export PDF)',
     body: wrap(
-      `Gabarito\n\nAs soluções completas são geradas no módulo Caça-Palavras ao exportar.\n\n` +
-      `Esta página é reservada para o gabarito final no PDF.`,
+      `O gabarito completo entra na fase do Export PDF (KDP).\n\n` +
+      `Aqui no Builder a gente valida: ordem, texto, tema, grade e padrão editorial.`,
       72
     ),
-    sectionId:'key'
+    sectionId: 'key'
   });
 
-  // numeração
-  pages.forEach((p, i) => (p.pageNo = i + 1));
+  pages.forEach((p,i)=> p.pageNo = i+1);
   return pages;
 }
 
 function seedKeyForPlan(plan){
-  const id = plan?.meta?.id || 'cultural';
-  return `cultural:seed:${id}`;
+  const pid = String(plan?.meta?.id || 'book');
+  const ts = String(plan?.meta?.createdAt || '');
+  return `cultural:builder_cache:${pid}:${ts}`;
 }
 
 function getPuzzleCache(plan){
-  const key = `cultural:puzzle_cache:${plan?.meta?.id || 'cultural'}`;
-  return Storage.get(key) || {};
+  return Storage.get(seedKeyForPlan(plan), { puzzles:{} });
 }
 
 function setPuzzleCache(plan, cache){
-  const key = `cultural:puzzle_cache:${plan?.meta?.id || 'cultural'}`;
-  Storage.set(key, cache || {});
+  Storage.set(seedKeyForPlan(plan), cache || { puzzles:{} });
 }
 
 function ensurePuzzleGenerated(plan, page){
   if (!page || page.kind !== 'puzzle') return null;
-
   const cache = getPuzzleCache(plan);
-  const pid = page.sectionId || page.title || String(page.pageNo || '');
-  if (cache[pid]) return cache[pid];
+  const key = `p${page.pageNo}:${page.sectionId || ''}:${page.grid || ''}`;
+  if (cache?.puzzles?.[key]) return cache.puzzles[key];
 
-  const size = Number(page.grid || 15);
-  const words = (page.wordsNorm || []).slice(0, 40);
-
-  const res = generateWordSearch({
-    size,
-    words,
-    fillMode: 'RANDOM',
-    includeKey: true
+  const gen = generateWordSearch({
+    size: page.grid || 15,
+    words: page.wordsNorm || [],
+    maxWords: (page.wordsNorm || []).length || 16,
+    allowDiagonal: true,
+    allowBackwards: true
   });
 
-  const item = {
-    size,
-    words,
-    placedCount: res?.placedCount || 0,
-    grid: res?.grid || [],
-    key: res?.key || null
+  const payload = {
+    size: gen.size,
+    grid: gen.grid,
+    placedCount: (gen.placed || []).length,
+    wordsUsed: (gen.words || []).length
   };
 
-  cache[pid] = item;
+  cache.puzzles = cache.puzzles || {};
+  cache.puzzles[key] = payload;
   setPuzzleCache(plan, cache);
-  return item;
+
+  return payload;
 }
 
 function renderGridHTML(grid){
-  const g = grid || [];
-  if (!g.length) return '';
-  const rows = g.length;
-  const cols = g[0]?.length || 0;
+  const N = grid?.length || 0;
+  if (!N) return '<div class="ws-empty">Grade vazia</div>';
 
-  let html = `<table class="ws-table" aria-label="Grade ${rows} por ${cols}">`;
-  for (let r=0; r<rows; r++){
-    html += `<tr>`;
-    for (let c=0; c<cols; c++){
-      html += `<td>${esc(g[r][c] || '')}</td>`;
+  let html = '<table class="ws-table" aria-label="Caça-palavras"><tbody>';
+  for (let y=0;y<N;y++){
+    html += '<tr>';
+    for (let x=0;x<N;x++){
+      html += `<td>${esc(grid[y][x] || '')}</td>`;
     }
-    html += `</tr>`;
+    html += '</tr>';
   }
-  html += `</table>`;
+  html += '</tbody></table>';
   return html;
 }
 
@@ -270,543 +266,592 @@ function renderWordsColumns(wordsDisplay){
 function bindSwipe(el, onPrev, onNext){
   if (!el) return;
 
-  // Teardown seguro: se este container for re-renderizado, não acumula listeners
+  // Teardown seguro (compatível): remove listeners antigos antes de adicionar novos
   try {
-    if (el.__bccSwipeAbort) el.__bccSwipeAbort.abort();
-  } catch {}
-  const ac = new AbortController();
-  try { el.__bccSwipeAbort = ac; } catch {}
+    const prev = el.__bccSwipe;
+    if (prev && typeof prev.teardown === 'function') prev.teardown();
+  } catch (e) {}
 
-  // Preferir Pointer Events (iOS moderno), com fallback por touch
-  let pointerId = null;
   let startX = 0, startY = 0;
   let dx = 0, dy = 0;
-  let moved = false;
-  let handled = false;
+  let tracking = false;
   let locked = false;
+  let pointerId = null;
 
   const MIN_DIST = 42;
   const MAX_OFF_AXIS = 55;
   const COOLDOWN_MS = 220;
-
-  const reset = () => {
-    pointerId = null;
-    startX = 0; startY = 0;
-    dx = 0; dy = 0;
-    moved = false;
-    handled = false;
-  };
 
   const cooldown = () => {
     locked = true;
     setTimeout(() => { locked = false; }, COOLDOWN_MS);
   };
 
-  const tryFire = () => {
-    if (handled || locked) return;
+  const fire = () => {
+    if (locked) return;
     const adx = Math.abs(dx);
     const ady = Math.abs(dy);
     if (adx < MIN_DIST) return;
     if (ady > MAX_OFF_AXIS) return;
     if (adx < ady * 1.15) return;
 
-    handled = true;
     cooldown();
-
-    if (dx > 0) onPrev?.();
-    else onNext?.();
+    if (dx > 0) { if (typeof onPrev === 'function') onPrev(); }
+    else { if (typeof onNext === 'function') onNext(); }
   };
 
-  // Pointer
-  el.addEventListener('pointerdown', (e) => {
+  // Touch (mais compatível no iOS/PWA)
+  const onTouchStart = (e) => {
     if (locked) return;
-    if (e.pointerType === 'mouse') return; // comportamento mobile
-    pointerId = e.pointerId;
-    startX = e.clientX;
-    startY = e.clientY;
-    dx = 0; dy = 0;
-    moved = false;
-    handled = false;
-    try { el.setPointerCapture(pointerId); } catch {}
-  }, { passive: true, signal: ac.signal });
-
-  el.addEventListener('pointermove', (e) => {
-    if (pointerId == null) return;
-    if (e.pointerId !== pointerId) return;
-    dx = e.clientX - startX;
-    dy = e.clientY - startY;
-
-    if (!moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) moved = true;
-
-    // se for horizontal, impede scroll
-    if (moved && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-      try { e.preventDefault(); } catch {}
-    }
-  }, { passive: false, signal: ac.signal });
-
-  el.addEventListener('pointerup', (e) => {
-    if (pointerId == null) return;
-    if (e.pointerId !== pointerId) return;
-    tryFire();
-    try { el.releasePointerCapture(pointerId); } catch {}
-    reset();
-  }, { passive: true, signal: ac.signal });
-
-  el.addEventListener('pointercancel', (e) => {
-    if (pointerId == null) return;
-    if (e.pointerId !== pointerId) return;
-    try { el.releasePointerCapture(pointerId); } catch {}
-    reset();
-  }, { passive: true, signal: ac.signal });
-
-  // Touch fallback (caso Pointer não dispare em algum webview)
-  el.addEventListener('touchstart', (e) => {
-    if (locked) return;
-    const t = e.touches?.[0];
+    const t = e && e.touches && e.touches[0];
     if (!t) return;
+    tracking = true;
     startX = t.clientX;
     startY = t.clientY;
     dx = 0; dy = 0;
-    moved = false;
-    handled = false;
-  }, { passive: true, signal: ac.signal });
+  };
 
-  el.addEventListener('touchmove', (e) => {
-    const t = e.touches?.[0];
+  const onTouchMove = (e) => {
+    if (!tracking) return;
+    const t = e && e.touches && e.touches[0];
     if (!t) return;
     dx = t.clientX - startX;
     dy = t.clientY - startY;
 
-    if (!moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) moved = true;
-
-    if (moved && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-      try { e.preventDefault(); } catch {}
+    // se gesto é horizontal, impede scroll para não "correr"
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      try { e.preventDefault(); } catch (err) {}
     }
-  }, { passive: false, signal: ac.signal });
+  };
 
-  el.addEventListener('touchend', () => {
-    tryFire();
-  }, { passive: true, signal: ac.signal });
+  const onTouchEnd = () => {
+    if (!tracking) return;
+    tracking = false;
+    fire();
+  };
 
-  el.addEventListener('touchcancel', () => {
-    reset();
-  }, { passive: true, signal: ac.signal });
+  const onTouchCancel = () => {
+    tracking = false;
+  };
+
+  // Pointer (se existir) — sem AbortController/signal (compat)
+  const onPointerDown = (e) => {
+    if (locked) return;
+    if (!e) return;
+    pointerId = e.pointerId;
+    tracking = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    dx = 0; dy = 0;
+    try { el.setPointerCapture(pointerId); } catch (err) {}
+  };
+
+  const onPointerMove = (e) => {
+    if (!tracking) return;
+    if (pointerId != null && e.pointerId !== pointerId) return;
+
+    dx = e.clientX - startX;
+    dy = e.clientY - startY;
+
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      try { e.preventDefault(); } catch (err) {}
+    }
+  };
+
+  const onPointerUp = (e) => {
+    if (!tracking) return;
+    if (pointerId != null && e.pointerId !== pointerId) return;
+
+    tracking = false;
+    try { if (pointerId != null) el.releasePointerCapture(pointerId); } catch (err) {}
+    pointerId = null;
+    fire();
+  };
+
+  const onPointerCancel = () => {
+    tracking = false;
+    try { if (pointerId != null) el.releasePointerCapture(pointerId); } catch (err) {}
+    pointerId = null;
+  };
+
+  // attach
+  el.addEventListener('touchstart', onTouchStart, { passive: true });
+  el.addEventListener('touchmove', onTouchMove, { passive: false });
+  el.addEventListener('touchend', onTouchEnd, { passive: true });
+  el.addEventListener('touchcancel', onTouchCancel, { passive: true });
+
+  // pointer (optional)
+  el.addEventListener('pointerdown', onPointerDown, { passive: true });
+  el.addEventListener('pointermove', onPointerMove, { passive: false });
+  el.addEventListener('pointerup', onPointerUp, { passive: true });
+  el.addEventListener('pointercancel', onPointerCancel, { passive: true });
+
+  // save teardown
+  el.__bccSwipe = {
+    teardown(){
+      try { el.removeEventListener('touchstart', onTouchStart); } catch (e) {}
+      try { el.removeEventListener('touchmove', onTouchMove); } catch (e) {}
+      try { el.removeEventListener('touchend', onTouchEnd); } catch (e) {}
+      try { el.removeEventListener('touchcancel', onTouchCancel); } catch (e) {}
+      try { el.removeEventListener('pointerdown', onPointerDown); } catch (e) {}
+      try { el.removeEventListener('pointermove', onPointerMove); } catch (e) {}
+      try { el.removeEventListener('pointerup', onPointerUp); } catch (e) {}
+      try { el.removeEventListener('pointercancel', onPointerCancel); } catch (e) {}
+    }
+  };
 }
 
-export class CulturalBookBuilder {
+export class CulturalBookBuilderModule {
   constructor(app){
     this.app = app;
+    this.id = 'book';
+    this.title = 'Livro (Builder)';
   }
 
-  mount(root){
-    this.root = root;
-    this.render();
-  }
+  async init(){}
 
-  render(){
-    const root = this.root;
-    if (!root) return;
+  render(root){
+    let plan = Storage.get('cultural:book_plan', null);
+    const seed = Storage.get('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
 
-    const plan = Storage.get('cultural:book_plan') || null;
-    const pages = plan ? buildPagesFromPlan(plan) : [];
-    let idx = 0;
+    const saveSeed = (next) => Storage.set('cultural:builder_seed', next);
 
-    const renderMain = () => {
-      root.innerHTML = `
-        <div class="bb-wrap">
-          <div class="bb-head">
-            <div>
-              <div class="bb-title">Cultural Book Builder</div>
-              <div class="bb-sub">Builder = só folhear/aprovar. O Agent define layout e conteúdo.</div>
-              <div class="bb-mini">
-                <span>• páginas <b>${esc(String(pages.length || 0))}</b></span>
-                <span>• estilo <b>${esc(plan?.meta?.layout?.style || 'RETRO')}</b></span>
-              </div>
-            </div>
+    root.innerHTML = `
+      <style>
+        .bb-wrap{ display:grid; gap:14px; }
 
-            <div class="bb-actions">
-              <button class="btn" data-act="prev">◀</button>
-              <button class="btn" data-act="next">▶</button>
-              <button class="btn" data-act="download">Baixar plano</button>
-            </div>
-          </div>
-
-          <div class="bb-stage" data-stage></div>
-        </div>
-      `;
-
-      const stage = root.querySelector('[data-stage]');
-      const btnPrev = root.querySelector('[data-act="prev"]');
-      const btnNext = root.querySelector('[data-act="next"]');
-
-      const goPrev = () => { idx = Math.max(0, idx - 1); paint(); };
-      const goNext = () => { idx = Math.min((pages.length||1)-1, idx + 1); paint(); };
-
-      btnPrev?.addEventListener('click', goPrev);
-      btnNext?.addEventListener('click', goNext);
-
-      bindSwipe(stage, goPrev, goNext);
-
-      const renderPage = (page, plan, withSend=true) => {
-        if (!page) return '';
-        const layout = plan?.meta?.layout || {};
-        const pageSize = layout.pageSize || plan?.meta?.format || '6x9';
-        const maxw = (String(pageSize) === '8.5x11') ? '720px' : '560px';
-
-        if (page.kind === 'text') {
-          return `
-            <div class="paper" style="--page-maxw:${esc(maxw)}">
-              <div class="page" data-size="${esc(pageSize)}">
-                <div class="page-inner">
-                  <div class="page-head">
-                    <div>
-                      <div class="page-title">${esc(page.title || '')}</div>
-                      <div class="page-meta">${esc(page.meta || '')}</div>
-                    </div>
-                    <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
-                  </div>
-
-                  <div class="page-body">
-                    <pre class="page-text">${esc(page.body || '')}</pre>
-                  </div>
-
-                  <div class="illus">
-                    <div>
-                      <div class="t">Ilustração P&B: ${esc(iconLabel(page.icon))}</div>
-                      <div class="s">Slot reservado (entra no Export/IA) — nesta página de texto.</div>
-                    </div>
-                    <div class="badge">Imagem</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          `;
+        /* folha (sem bolha) */
+        .paper{
+          width: 100%;
+          display:flex;
+          justify-content:center;
         }
 
-        const gen = ensurePuzzleGenerated(plan, page);
-        const gridHtml = renderGridHTML(gen?.grid);
+        .page{
+          background: #ffffff;
+          color: #0b0f16;
+          border-radius: 0;
+          border: 1px solid rgba(0,0,0,.75);
+          box-shadow: 0 10px 28px rgba(0,0,0,.22);
+          overflow:hidden;
+          position:relative;
+          width: min(100%, var(--page-maxw, 560px));
+          aspect-ratio: 6 / 9; /* default */
+          touch-action: pan-y; /* swipe horizontal tratado no bindSwipe */
+        }
+        .page[data-size="8.5x11"]{ aspect-ratio: 8.5 / 11; }
+        .page[data-size="6x9"]{ aspect-ratio: 6 / 9; }
 
+        .page-inner{
+          padding: 18px;
+          height: 100%;
+          overflow: hidden;
+          display:grid;
+          grid-template-rows: auto 1fr;
+          gap:10px;
+        }
+
+        .page-head{
+          display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+          border-bottom: 1px solid rgba(0,0,0,.12);
+          padding-bottom: 10px;
+        }
+        .page-title{
+          font-size: clamp(20px, 4.6vw, 28px);
+          line-height: 1.06;
+          font-weight: 900;
+          letter-spacing: -0.2px;
+        }
+        .ws-title{
+          font-size: 15px;
+          letter-spacing: .6px;
+          text-transform: uppercase;
+        }
+        .ws-meta{
+          font-size: 11px;
+          opacity: .72;
+          margin-top: 6px;
+        }
+        .page-meta{
+          font-size: clamp(13px, 3.7vw, 16px);
+          opacity: .72;
+          margin-top: 6px;
+        }
+        .page-no{
+          font-size: 14px;
+          opacity:.7;
+          font-weight: 900;
+          min-width: 52px;
+          text-align:right;
+          padding-top: 6px;
+        }
+
+        /* texto */
+        .page-body{
+          border: 1px solid rgba(0,0,0,.12);
+          background: #ffffff;
+          padding: 14px;
+          border-radius: 12px;
+        }
+        .page-body pre{
+          margin:0;
+          white-space:pre-wrap;
+          overflow-wrap:anywhere;
+          word-break:break-word;
+          font-family: ui-serif, Georgia, "Times New Roman", serif;
+          font-size: clamp(16px, 4.2vw, 19px);
+          line-height: 1.42;
+        }
+
+        /* caça-palavras: grade quadriculada (revistinha) */
+        .ws-box{
+          border: none;
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+          overflow: hidden;
+        }
+        .ws-table{
+          border-collapse: collapse;
+          margin: 0 auto;
+          border: 2px solid rgba(0,0,0,.55);
+        }
+        .ws-table td{
+          border: 1px solid rgba(0,0,0,.35);
+          width: 22px;
+          height: 22px;
+          text-align:center;
+          vertical-align:middle;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-weight: 900;
+          font-size: 14px;
+          line-height: 1;
+          padding: 0;
+        }
+        @media (max-width: 420px){
+          .ws-table td{ width: 20px; height: 20px; font-size: 13px; }
+        }
+
+        /* palavras: estilo “impresso”, 3 colunas e sem truncar */
+        .words-box{
+          border: none;
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+        }
+        .words-title{
+          font-weight: 900;
+          font-size: 12px;
+          letter-spacing: .6px;
+          text-transform: uppercase;
+          margin: 10px 0 6px;
+        }
+        .words-grid{
+          display:block;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-weight: 900;
+          font-size: 13px;
+        }
+        .ws-words-cols{
+          display:grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 7px 18px;
+          font-size: calc(13px * var(--wsw, 1));
+        }
+        .ws-col{
+          display:flex;
+          flex-direction:column;
+          gap: 6px;
+          min-width: 0;
+        }
+        .ws-item{
+          display:flex;
+          align-items:baseline;
+          gap: 8px;
+          min-width: 0;
+          white-space: nowrap;
+        }
+        .ws-word{
+          overflow: visible;
+          text-overflow: clip;
+        }
+        .ws-leader{
+          flex: 1;
+          border-bottom: 1px dotted rgba(0,0,0,.55);
+          transform: translateY(-2px);
+        }
+        .ws-w{
+          white-space: nowrap;
+          word-break: normal;
+          overflow: visible;
+          text-overflow: clip;
+        }
+
+        /* ilustração (só no TEXTO) */
+        .illus{
+          border: 1px dashed rgba(0,0,0,.35);
+          background: #ffffff;
+          padding: 10px 12px;
+          border-radius: 12px;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+        }
+        .illus .t{ font-weight: 900; }
+        .illus .s{ opacity:.7; font-size: 12px; margin-top: 2px; }
+        .illus .badge{
+          border: 1px solid rgba(0,0,0,.25);
+          border-radius: 10px;
+          padding: 7px 10px;
+          font-weight: 900;
+          font-size: 12px;
+          opacity:.85;
+        }
+
+        .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+        .bb-toolbar .left, .bb-toolbar .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        .bb-top{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-top:6px; }
+        .bb-tabs{ display:flex; gap:8px; align-items:center; }
+        .bb-mini{ font-size:12px; opacity:.78; }
+
+        .spread{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+        @media (max-width: 860px){
+          .spread{ grid-template-columns: 1fr; }
+          .page-inner{ padding: 14px; }
+        }
+      </style>
+
+      <div class="bb-wrap">
+        <div class="card">
+          <h2>Livro Cultural — Builder</h2>
+          <p class="muted">Preview visual do livro (<b>folha limpa</b>). <b>O Agent define layout</b>. Aqui é só folhear e aprovar.</p>
+          <div id="bb_area"></div>
+        </div>
+      </div>
+    `;
+
+    const area = root.querySelector('#bb_area');
+
+    const renderEmpty = () => {
+      area.innerHTML = `
+        <div class="bb-empty">
+          <p class="muted"><b>Nenhum livro carregado.</b> Isso pode acontecer se o Safari limpar o armazenamento.</p>
+          <div class="row">
+            <button class="btn primary" id="bb_go_agent">Abrir Cultural Agent</button>
+          </div>
+          <p class="bb-mini muted">Dica: no Agent, clique “Gerar Plano” e volte pra cá.</p>
+        </div>
+      `;
+      area.querySelector('#bb_go_agent').onclick = () => {
+        const btn = document.querySelector('.navitem[data-view="cultural"]');
+        if (btn && typeof btn.click === 'function') btn.click();
+      };
+    };
+
+    const renderPage = (page, plan, withSend=true) => {
+      if (!page) return '';
+      const layout = plan?.meta?.layout || {};
+      const pageSize = layout.pageSize || plan?.meta?.format || '6x9';
+      const maxw = (String(pageSize) === '8.5x11') ? '720px' : '560px';
+
+      if (page.kind === 'text') {
         return `
           <div class="paper" style="--page-maxw:${esc(maxw)}">
             <div class="page" data-size="${esc(pageSize)}">
               <div class="page-inner">
                 <div class="page-head">
                   <div>
-                    <div class="page-title ws-title">CAÇA-PALAVRAS — ${esc(page.sectionTitle || page.title || '')}</div>
-                    <div class="page-meta ws-meta">${esc(page.meta || '')}</div>
+                    <div class="page-title">${esc(page.title || '')}</div>
+                    <div class="page-meta">${esc(page.meta || '')}</div>
                   </div>
                   <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
                 </div>
 
-                <div class="ws-box">${gridHtml}</div>
+                <div class="page-body"><pre>${esc(page.body || '')}</pre></div>
 
-                <div class="words-box">
-                  <div class="words-title">Palavras</div>
-                  <div class="words-grid">${renderWordsColumns(page.wordsDisplay || page.wordsNorm || [])}</div>
+                <div class="illus">
+                  <div>
+                    <div class="t">Ilustração P&B: ${esc(iconLabel(page.icon))}</div>
+                    <div class="s">Slot reservado (entra no Export/IA) — nesta página de texto.</div>
+                  </div>
+                  <div class="badge">Imagem</div>
                 </div>
-
-                ${
-                  withSend
-                    ? `<div style="display:flex; justify-content:flex-end;">
-                        <button class="btn" data-send="ws">Enviar p/ Caça-Palavras</button>
-                      </div>`
-                    : ``
-                }
               </div>
             </div>
           </div>
         `;
-      };
+      }
 
-      const sendPageToWordSearch = (page, plan) => {
-        if (!page || page.kind !== 'puzzle') return;
-        const ws = {
-          title: page.title || `Caça-Palavras ${page.grid}x${page.grid}`,
-          preset: (page.grid || 15) <= 13 ? 'BR_POCKET' : 'BR_PLUS',
-          size: page.grid || 15,
-          maxWords: (page.wordsNorm || []).length || 16,
-          includeKey: true,
-          words: (page.wordsNorm || []).join('\n'), // normalizado
-          puzzleId: page.sectionId || '',
-          sectionId: page.sectionId || '',
-          sectionTitle: page.sectionTitle || '',
-          output: '',
-          ts: Date.now()
-        };
-        Storage.set('wordsearch:seed', ws);
-        this.app.toast?.('Enviado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
-        try { this.app.log?.(`[BOOK] sent section="${page.sectionTitle || page.title}" => wordsearch:seed`); } catch {}
+      const gen = ensurePuzzleGenerated(plan, page);
+      const gridHtml = renderGridHTML(gen?.grid);
+
+      return `
+        <div class="paper" style="--page-maxw:${esc(maxw)}">
+          <div class="page" data-size="${esc(pageSize)}">
+            <div class="page-inner">
+              <div class="page-head">
+                <div>
+                  <div class="page-title ws-title">CAÇA-PALAVRAS — ${esc(page.sectionTitle || page.title || '')}</div>
+                  <div class="page-meta ws-meta">${esc(page.meta || '')}</div>
+                </div>
+                <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
+              </div>
+
+              <div class="ws-box">${gridHtml}</div>
+
+              <div class="words-box">
+                <div class="words-title">Palavras</div>
+                <div class="words-grid">${renderWordsColumns(page.wordsDisplay || page.wordsNorm || [])}</div>
+              </div>
+
+              ${
+                withSend
+                  ? `<div style="display:flex; justify-content:flex-end;">
+                      <button class="btn" data-send="ws">Enviar p/ Caça-Palavras</button>
+                    </div>`
+                  : ``
+              }
+            </div>
+          </div>
+        </div>
+      `;
+    };
+
+    const sendPageToWordSearch = (page, plan) => {
+      if (!page || page.kind !== 'puzzle') return;
+      const ws = {
+        title: page.title || `Caça-Palavras ${page.grid}x${page.grid}`,
+        preset: (page.grid || 15) <= 13 ? 'BR_POCKET' : 'BR_PLUS',
+        size: page.grid || 15,
+        maxWords: (page.wordsNorm || []).length || 16,
+        includeKey: true,
+        words: (page.wordsNorm || []).join('\n'),
+        puzzleId: page.sectionId || '',
+        sectionId: page.sectionId || '',
+        sectionTitle: page.sectionTitle || '',
+        output: '',
+        ts: Date.now()
       };
+      Storage.set('wordsearch:seed', ws);
+      if (this.app && typeof this.app.toast === 'function') this.app.toast('Enviado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
+      try {
+        if (this.app && typeof this.app.log === 'function') {
+          this.app.log(`[BOOK] sent section="${page.sectionTitle || ''}" grid=${ws.size} words=${(page.wordsNorm||[]).length}`);
+        }
+      } catch {}
+    };
+
+    const renderMain = () => {
+      plan = Storage.get('cultural:book_plan', null);
+      if (!plan) return renderEmpty();
+
+      const pages = buildPagesFromPlan(plan);
+      let mode = seed.mode === 'SPREAD' ? 'SPREAD' : 'FOLHEAR';
+      let pageIndex = Math.max(0, Math.min(seed.pageIndex || 0, pages.length - 1));
+
+      const save = () => saveSeed({ mode, pageIndex });
+
+      const goPrev = () => { pageIndex = Math.max(0, pageIndex - 1); save(); paint(); };
+      const goNext = () => { pageIndex = Math.min(pages.length - 1, pageIndex + 1); save(); paint(); };
+
+      area.innerHTML = `
+        <div class="bb-toolbar">
+          <div class="left">
+            <span class="bb-mini"><b>${esc(plan.meta?.title || 'LIVRO')}</b></span>
+            <span class="bb-mini">• estilo <b>${esc(plan.meta?.layout?.style || 'RETRO')}</b></span>
+            <span class="bb-mini">• formato <b>${esc(plan.meta?.layout?.pageSize || plan.meta?.format || '6x9')}</b></span>
+          </div>
+          <div class="right">
+            <button class="btn" id="bb_prev">◀</button>
+            <button class="btn" id="bb_next">▶</button>
+          </div>
+        </div>
+
+        <div class="bb-top">
+          <div class="bb-tabs">
+            <button class="btn ${mode==='SPREAD'?'primary':''}" id="bb_mode_spread">Spread</button>
+            <button class="btn ${mode==='FOLHEAR'?'primary':''}" id="bb_mode_folhear">Folhear</button>
+          </div>
+          <div class="bb-mini">Página <b id="bb_pos"></b> • <span class="bb-mini muted">No mobile: arraste pro lado (folhear)</span></div>
+        </div>
+
+        <div id="bb_view"></div>
+
+        <div class="bb-toolbar" style="margin-top:10px;">
+          <div class="left">
+            <button class="btn" id="bb_download_plan">Baixar plano (JSON)</button>
+          </div>
+          <div class="right">
+            <button class="btn" id="bb_go_agent">Abrir Agent</button>
+          </div>
+        </div>
+      `;
+
+      const view = area.querySelector('#bb_view');
 
       const paint = () => {
-        if (!stage) return;
+        area.querySelector('#bb_pos').textContent = `${pageIndex+1}/${pages.length}`;
 
-        if (!plan){
-          stage.innerHTML = `
-            <div class="bb-empty">
-              <div class="bb-card">
-                <h3>Sem plano</h3>
-                <p>Gere um plano no Cultural Agent e salve em <code>cultural:book_plan</code>.</p>
-              </div>
-            </div>
-          `;
+        if (mode === 'FOLHEAR') {
+          const p = pages[pageIndex];
+          view.innerHTML = renderPage(p, plan, true);
+
+          bindSwipe(view, goPrev, goNext);
+
+          const btn = view.querySelector('[data-send="ws"]');
+          if (btn) btn.onclick = () => sendPageToWordSearch(p, plan);
           return;
         }
 
-        const page = pages[idx];
-        stage.innerHTML = `
-          <style>
-            .bb-wrap{ display:grid; gap:12px; }
-            .bb-head{
-              display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
-              padding:12px;
-              border:1px solid rgba(255,255,255,.10);
-              border-radius:14px;
-              background: rgba(0,0,0,.18);
-            }
-            .bb-title{ font-weight:900; letter-spacing:.2px; font-size:14px; }
-            .bb-sub{ opacity:.85; font-size:12px; margin-top:4px; }
-            .bb-mini{ display:flex; gap:10px; opacity:.85; font-size:12px; margin-top:6px; flex-wrap:wrap; }
-            .bb-actions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
-            .btn{
-              border:1px solid rgba(255,255,255,.14);
-              background:rgba(255,255,255,.06);
-              color:#fff;
-              padding:8px 10px;
-              border-radius:10px;
-              font-weight:800;
-              letter-spacing:.2px;
-            }
-            .btn:active{ transform:translateY(1px); }
+        const left = pages[pageIndex];
+        const right = pages[pageIndex+1] || null;
 
-            .bb-stage{
-              width:100%;
-              display:flex;
-              justify-content:center;
-              align-items:flex-start;
-              touch-action: pan-y;
-            }
-
-            .bb-empty{ padding:22px; display:flex; justify-content:center; }
-            .bb-card{
-              max-width:720px;
-              border:1px solid rgba(255,255,255,.10);
-              border-radius:14px;
-              background: rgba(0,0,0,.18);
-              padding:16px;
-            }
-            .bb-card h3{ margin:0 0 6px; }
-            .bb-card p{ margin:0; opacity:.85; }
-
-            /* PAPER + PAGE */
-            .paper{
-              width: 100%;
-              display:flex;
-              justify-content:center;
-            }
-
-            .page{
-              background: #ffffff;
-              color: #0b0f16;
-              border-radius: 0;
-              border: 1px solid rgba(0,0,0,.75);
-              box-shadow: 0 10px 28px rgba(0,0,0,.22);
-              overflow:hidden;
-              position:relative;
-              width: min(100%, var(--page-maxw, 560px));
-              aspect-ratio: 6 / 9; /* default */
-              touch-action: pan-y; /* swipe horizontal tratado no bindSwipe */
-            }
-            .page[data-size="8.5x11"]{ aspect-ratio: 8.5 / 11; }
-            .page[data-size="6x9"]{ aspect-ratio: 6 / 9; }
-
-            .page-inner{
-              padding: 18px;
-              height: 100%;
-              overflow: hidden;
-              display:grid;
-              grid-template-rows: auto 1fr;
-              gap:10px;
-            }
-
-            .page-head{
-              display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
-              border-bottom: 1px solid rgba(0,0,0,.12);
-              padding-bottom: 10px;
-            }
-            .page-title{
-              /* menor e mais “impresso” (evita ocupar área do puzzle) */
-              font-size: clamp(20px, 4.6vw, 28px);
-              line-height: 1.06;
-              font-weight: 900;
-              letter-spacing: -0.2px;
-              text-transform: uppercase;
-            }
-            .ws-title{
-              font-size: 15px;
-              letter-spacing: .6px;
-              text-transform: uppercase;
-            }
-            .page-meta{
-              font-size: clamp(13px, 3.7vw, 16px);
-              opacity: .72;
-              margin-top: 6px;
-            }
-            .ws-meta{
-              font-size: 11px;
-              opacity: .72;
-              margin-top: 6px;
-            }
-            .page-no{
-              font-size: 14px;
-              opacity:.7;
-              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-              font-weight: 900;
-              white-space:nowrap;
-              margin-top: 2px;
-            }
-
-            .page-body{
-              overflow:hidden; /* fixo */
-            }
-            .page-text{
-              margin: 0;
-              white-space:pre-wrap;
-              overflow-wrap:anywhere;
-              word-break:break-word;
-              font-family: ui-serif, Georgia, "Times New Roman", serif;
-              font-size: clamp(16px, 4.2vw, 19px);
-              line-height: 1.42;
-            }
-
-            /* caça-palavras: grade quadriculada (revistinha) */
-            .ws-box{
-              border: none;
-              background: transparent;
-              padding: 0;
-              border-radius: 0;
-              overflow: hidden;
-            }
-            .ws-table{
-              border-collapse: collapse;
-              margin: 0 auto;
-              border: 2px solid rgba(0,0,0,.55);
-            }
-            .ws-table td{
-              border: 1px solid rgba(0,0,0,.35);
-              width: 22px;
-              height: 22px;
-              text-align:center;
-              vertical-align:middle;
-              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-              font-weight: 900;
-              font-size: 14px;
-              line-height: 1;
-              padding: 0;
-            }
-            @media (max-width: 420px){
-              .ws-table td{ width: 20px; height: 20px; font-size: 13px; }
-            }
-
-            /* palavras: estilo “impresso”, 3 colunas e sem quebrar */
-            .words-box{
-              border: none;
-              background: transparent;
-              padding: 0;
-              border-radius: 0;
-            }
-            .words-title{
-              font-weight: 900;
-              font-size: 12px;
-              letter-spacing: .6px;
-              text-transform: uppercase;
-              margin: 10px 0 6px;
-            }
-            .words-grid{
-              display:block;
-              font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-              font-weight: 900;
-              font-size: 13px;
-            }
-            .ws-words-cols{
-              display:grid;
-              grid-template-columns: repeat(3, minmax(0, 1fr));
-              gap: 7px 18px;
-              font-size: calc(13px * var(--wsw, 1));
-            }
-            .ws-col{
-              display:flex;
-              flex-direction:column;
-              gap: 6px;
-              min-width: 0;
-            }
-            .ws-item{
-              display:flex;
-              align-items:baseline;
-              gap: 8px;
-              min-width: 0;
-              white-space: nowrap;
-            }
-            .ws-word{
-              overflow: visible;
-              text-overflow: clip;
-            }
-            .ws-leader{
-              flex: 1;
-              border-bottom: 1px dotted rgba(0,0,0,.55);
-              transform: translateY(-2px);
-            }
-
-            .ws-w{
-              white-space: nowrap;
-              word-break: normal;
-              overflow: visible;
-              text-overflow: clip;
-            }
-
-            /* ilustração (só no TEXTO) */
-            .illus{
-              border: 1px dashed rgba(0,0,0,.35);
-              border-radius: 12px;
-              padding: 12px;
-              display:flex;
-              justify-content:space-between;
-              gap:12px;
-              align-items:center;
-              background: rgba(0,0,0,.03);
-            }
-            .illus .t{ font-weight: 900; }
-            .illus .s{ opacity:.75; font-size: 12px; margin-top: 2px; }
-            .illus .badge{
-              font-weight: 900;
-              border: 1px solid rgba(0,0,0,.25);
-              border-radius: 999px;
-              padding: 6px 10px;
-              font-size: 12px;
-              background: rgba(255,255,255,.75);
-            }
-          </style>
-
-          ${renderPage(page, plan, true)}
+        view.innerHTML = `
+          <div class="spread">
+            <div>${renderPage(left, plan, true)}</div>
+            <div>${right ? renderPage(right, plan, true) : ''}</div>
+          </div>
         `;
 
-        const sendBtn = stage.querySelector('[data-send="ws"]');
-        sendBtn?.addEventListener('click', () => sendPageToWordSearch(page, plan));
+        bindSwipe(
+          view,
+          ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); },
+          ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); }
+        );
+
+        const sendBtns = view.querySelectorAll('[data-send="ws"]');
+        sendBtns.forEach((b, i)=>{
+          const page = i===0 ? left : right;
+          b.onclick = () => sendPageToWordSearch(page, plan);
+        });
       };
 
-      root.querySelector('[data-act="download"]')?.addEventListener('click', () => {
-        try {
-          const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' });
+      area.querySelector('#bb_prev').onclick = goPrev;
+      area.querySelector('#bb_next').onclick = goNext;
+
+      area.querySelector('#bb_mode_spread').onclick = () => { mode='SPREAD'; save(); renderMain(); };
+      area.querySelector('#bb_mode_folhear').onclick = () => { mode='FOLHEAR'; save(); renderMain(); };
+
+      area.querySelector('#bb_go_agent').onclick = () => {
+        const btn = document.querySelector('.navitem[data-view="cultural"]');
+        if (btn && typeof btn.click === 'function') btn.click();
+      };
+
+      area.querySelector('#bb_download_plan').onclick = () => {
+        if (!plan) return;
+        try{
+          const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
           a.download = `book-plan-${(plan?.meta?.id||'cultural')}-${Date.now()}.json`;
           a.click();
           setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-          this.app.toast?.('Plano baixado ✅');
+          if (this.app && typeof this.app.toast === 'function') this.app.toast('Plano baixado ✅');
         } catch {
-          this.app.toast?.('Falha ao baixar', 'err');
+          if (this.app && typeof this.app.toast === 'function') this.app.toast('Falha ao baixar', 'err');
         }
-      });
+      };
 
       paint();
     };
