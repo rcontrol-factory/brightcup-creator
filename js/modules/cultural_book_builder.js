@@ -263,6 +263,7 @@ function renderWordsColumns(wordsDisplay){
   return `<div class="ws-words-cols" style="--wsw:${shrink.toFixed(3)}">${colHtml}</div>`;
 }
 
+
 function bindSwipe(el, onPrev, onNext){
   if (!el) return;
 
@@ -287,17 +288,24 @@ function bindSwipe(el, onPrev, onNext){
     setTimeout(() => { locked = false; }, COOLDOWN_MS);
   };
 
-  const fire = () => {
-    if (locked) return;
+  const shouldFire = () => {
     const adx = Math.abs(dx);
     const ady = Math.abs(dy);
-    if (adx < MIN_DIST) return;
-    if (ady > MAX_OFF_AXIS) return;
-    if (adx < ady * 1.15) return;
+    if (adx < MIN_DIST) return false;
+    if (ady > MAX_OFF_AXIS) return false;
+    if (adx < ady * 1.15) return false;
+    return true;
+  };
 
+  const fire = () => {
+    if (locked) return;
+    if (!shouldFire()) return;
     cooldown();
-    if (dx > 0) { if (typeof onPrev === 'function') onPrev(); }
-    else { if (typeof onNext === 'function') onNext(); }
+    if (dx > 0) {
+      if (typeof onPrev === 'function') onPrev();
+    } else {
+      if (typeof onNext === 'function') onNext();
+    }
   };
 
   // Touch (mais compatível no iOS/PWA)
@@ -318,7 +326,7 @@ function bindSwipe(el, onPrev, onNext){
     dx = t.clientX - startX;
     dy = t.clientY - startY;
 
-    // se gesto é horizontal, impede scroll para não "correr"
+    // se gesto é horizontal, impede scroll para não “correr”
     if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
       try { e.preventDefault(); } catch (err) {}
     }
@@ -334,7 +342,7 @@ function bindSwipe(el, onPrev, onNext){
     tracking = false;
   };
 
-  // Pointer (se existir) — sem AbortController/signal (compat)
+  // Pointer events (se existir) — sem AbortController/signal (compat)
   const onPointerDown = (e) => {
     if (locked) return;
     if (!e) return;
@@ -348,11 +356,9 @@ function bindSwipe(el, onPrev, onNext){
 
   const onPointerMove = (e) => {
     if (!tracking) return;
-    if (pointerId != null && e.pointerId !== pointerId) return;
-
+    if (pointerId !== null && e.pointerId !== pointerId) return;
     dx = e.clientX - startX;
     dy = e.clientY - startY;
-
     if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
       try { e.preventDefault(); } catch (err) {}
     }
@@ -360,17 +366,17 @@ function bindSwipe(el, onPrev, onNext){
 
   const onPointerUp = (e) => {
     if (!tracking) return;
-    if (pointerId != null && e.pointerId !== pointerId) return;
-
+    if (pointerId !== null && e.pointerId !== pointerId) return;
     tracking = false;
-    try { if (pointerId != null) el.releasePointerCapture(pointerId); } catch (err) {}
+    try { if (pointerId !== null) el.releasePointerCapture(pointerId); } catch (err) {}
     pointerId = null;
     fire();
   };
 
-  const onPointerCancel = () => {
+  const onPointerCancel = (e) => {
+    if (pointerId !== null && e && e.pointerId !== pointerId) return;
     tracking = false;
-    try { if (pointerId != null) el.releasePointerCapture(pointerId); } catch (err) {}
+    try { if (pointerId !== null) el.releasePointerCapture(pointerId); } catch (err) {}
     pointerId = null;
   };
 
@@ -457,6 +463,7 @@ export class CulturalBookBuilderModule {
           padding-bottom: 10px;
         }
         .page-title{
+          /* menor e mais “impresso” (evita ocupar área do puzzle) */
           font-size: clamp(20px, 4.6vw, 28px);
           line-height: 1.06;
           font-weight: 900;
@@ -505,15 +512,66 @@ export class CulturalBookBuilderModule {
 
         /* caça-palavras: grade quadriculada (revistinha) */
         .ws-box{
+          /* sem card arredondado/scroll interno */
           border: none;
           background: transparent;
           padding: 0;
           border-radius: 0;
           overflow: hidden;
         }
+
+        /* layout retro em UMA folha (modelo clássico) */
+        .ws-frame{
+          height: 100%;
+          border: 2px solid rgba(0,0,0,.78);
+          padding: 16px 16px 14px;
+          display:flex;
+          flex-direction:column;
+          gap: 10px;
+          overflow:hidden; /* papel fixo */
+        }
+        .ws-headline{
+          text-align:center;
+          font-weight: 900;
+          letter-spacing: .8px;
+          text-transform: uppercase;
+          font-size: clamp(22px, 5.4vw, 34px);
+          line-height: 1.05;
+          margin-top: 2px;
+        }
+        .ws-subline{
+          text-align:center;
+          font-weight: 800;
+          letter-spacing: .4px;
+          font-size: 12px;
+          opacity: .78;
+          margin-top: -2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .ws-hr{
+          height: 1px;
+          background: rgba(0,0,0,.55);
+          margin: 2px 0 0;
+          flex: 0 0 auto;
+        }
+        .ws-gridwrap{
+          display:flex;
+          justify-content:center;
+          align-items:flex-start;
+          overflow:hidden;
+          padding-top: 4px;
+        }
+        .ws-wordswrap{
+          margin-top: 2px;
+          overflow:hidden;
+        }
+
         .ws-table{
           border-collapse: collapse;
           margin: 0 auto;
+          /* moldura externa (estilo impresso) */
           border: 2px solid rgba(0,0,0,.55);
         }
         .ws-table td{
@@ -547,6 +605,7 @@ export class CulturalBookBuilderModule {
           margin: 10px 0 6px;
         }
         .words-grid{
+          /* container neutro (estrutura real em .ws-words-cols) */
           display:block;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
@@ -569,7 +628,7 @@ export class CulturalBookBuilderModule {
           align-items:baseline;
           gap: 8px;
           min-width: 0;
-          white-space: nowrap;
+          white-space: nowrap; /* NÃO quebrar no meio */
         }
         .ws-word{
           overflow: visible;
@@ -580,6 +639,7 @@ export class CulturalBookBuilderModule {
           border-bottom: 1px dotted rgba(0,0,0,.55);
           transform: translateY(-2px);
         }
+        /* permite frases e acentos sem cortar */
         .ws-w{
           white-space: nowrap;
           word-break: normal;
@@ -645,7 +705,7 @@ export class CulturalBookBuilderModule {
       `;
       area.querySelector('#bb_go_agent').onclick = () => {
         const btn = document.querySelector('.navitem[data-view="cultural"]');
-        if (btn && typeof btn.click === 'function') btn.click();
+        btn?.click?.();
       };
     };
 
@@ -686,36 +746,40 @@ export class CulturalBookBuilderModule {
       const gen = ensurePuzzleGenerated(plan, page);
       const gridHtml = renderGridHTML(gen?.grid);
 
+      
       return `
         <div class="paper" style="--page-maxw:${esc(maxw)}">
           <div class="page" data-size="${esc(pageSize)}">
             <div class="page-inner">
-              <div class="page-head">
+              <div class="ws-frame">
                 <div>
-                  <div class="page-title ws-title">CAÇA-PALAVRAS — ${esc(page.sectionTitle || page.title || '')}</div>
-                  <div class="page-meta ws-meta">${esc(page.meta || '')}</div>
+                  <div class="ws-headline">CAÇA-PALAVRAS</div>
+                  <div class="ws-subline">${esc(page.sectionTitle || page.title || '')}</div>
+                  <div class="ws-hr"></div>
                 </div>
-                <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
+
+                <div class="ws-gridwrap">
+                  <div class="ws-box">${gridHtml}</div>
+                </div>
+
+                <div class="ws-wordswrap">
+                  <div class="words-title" style="text-align:center; margin: 2px 0 8px;">PALAVRAS</div>
+                  <div class="words-grid">${renderWordsColumns(page.wordsDisplay || page.wordsNorm || [])}</div>
+                </div>
+
+                ${
+                  withSend
+                    ? `<div style="display:flex; justify-content:flex-end;">
+                        <button class="btn" data-send="ws">Enviar p/ Caça-Palavras</button>
+                      </div>`
+                    : ``
+                }
               </div>
-
-              <div class="ws-box">${gridHtml}</div>
-
-              <div class="words-box">
-                <div class="words-title">Palavras</div>
-                <div class="words-grid">${renderWordsColumns(page.wordsDisplay || page.wordsNorm || [])}</div>
-              </div>
-
-              ${
-                withSend
-                  ? `<div style="display:flex; justify-content:flex-end;">
-                      <button class="btn" data-send="ws">Enviar p/ Caça-Palavras</button>
-                    </div>`
-                  : ``
-              }
             </div>
           </div>
         </div>
       `;
+
     };
 
     const sendPageToWordSearch = (page, plan) => {
@@ -726,7 +790,7 @@ export class CulturalBookBuilderModule {
         size: page.grid || 15,
         maxWords: (page.wordsNorm || []).length || 16,
         includeKey: true,
-        words: (page.wordsNorm || []).join('\n'),
+        words: (page.wordsNorm || []).join('\n'), // normalizado
         puzzleId: page.sectionId || '',
         sectionId: page.sectionId || '',
         sectionTitle: page.sectionTitle || '',
@@ -734,12 +798,8 @@ export class CulturalBookBuilderModule {
         ts: Date.now()
       };
       Storage.set('wordsearch:seed', ws);
-      if (this.app && typeof this.app.toast === 'function') this.app.toast('Enviado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
-      try {
-        if (this.app && typeof this.app.log === 'function') {
-          this.app.log(`[BOOK] sent section="${page.sectionTitle || ''}" grid=${ws.size} words=${(page.wordsNorm||[]).length}`);
-        }
-      } catch {}
+      this.app.toast?.('Enviado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
+      try { this.app.log?.(`[BOOK] sent section="${page.sectionTitle || ''}" grid=${ws.size} words=${(page.wordsNorm||[]).length}`); } catch {}
     };
 
     const renderMain = () => {
@@ -797,6 +857,7 @@ export class CulturalBookBuilderModule {
           const p = pages[pageIndex];
           view.innerHTML = renderPage(p, plan, true);
 
+          // swipe no container (mais confiável)
           bindSwipe(view, goPrev, goNext);
 
           const btn = view.querySelector('[data-send="ws"]');
@@ -835,7 +896,7 @@ export class CulturalBookBuilderModule {
 
       area.querySelector('#bb_go_agent').onclick = () => {
         const btn = document.querySelector('.navitem[data-view="cultural"]');
-        if (btn && typeof btn.click === 'function') btn.click();
+        btn?.click?.();
       };
 
       area.querySelector('#bb_download_plan').onclick = () => {
@@ -847,9 +908,9 @@ export class CulturalBookBuilderModule {
           a.download = `book-plan-${(plan?.meta?.id||'cultural')}-${Date.now()}.json`;
           a.click();
           setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-          if (this.app && typeof this.app.toast === 'function') this.app.toast('Plano baixado ✅');
+          this.app.toast?.('Plano baixado ✅');
         } catch {
-          if (this.app && typeof this.app.toast === 'function') this.app.toast('Falha ao baixar', 'err');
+          this.app.toast?.('Falha ao baixar', 'err');
         }
       };
 
