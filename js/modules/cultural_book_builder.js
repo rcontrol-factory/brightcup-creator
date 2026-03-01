@@ -559,13 +559,15 @@ export class CulturalBookBuilderModule {
         .ws-gridwrap{
           display:flex;
           justify-content:center;
-          align-items:flex-start;
+          align-items:center;
+          flex: 1 1 auto;
           overflow:hidden;
           padding-top: 4px;
         }
         .ws-wordswrap{
-          margin-top: 2px;
+          margin-top: auto;
           overflow:hidden;
+          padding-bottom: 2px;
         }
 
         .ws-table{
@@ -576,18 +578,18 @@ export class CulturalBookBuilderModule {
         }
         .ws-table td{
           border: 1px solid rgba(0,0,0,.35);
-          width: 22px;
-          height: 22px;
+          width: 20px;
+          height: 20px;
           text-align:center;
           vertical-align:middle;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 14px;
+          font-size: 13px;
           line-height: 1;
           padding: 0;
         }
         @media (max-width: 420px){
-          .ws-table td{ width: 20px; height: 20px; font-size: 13px; }
+          .ws-table td{ width: 18px; height: 18px; font-size: 12px; }
         }
 
         /* palavras: estilo “impresso”, 3 colunas e sem truncar */
@@ -609,13 +611,13 @@ export class CulturalBookBuilderModule {
           display:block;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 13px;
+          font-size: 12px;
         }
         .ws-words-cols{
           display:grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 7px 18px;
-          font-size: calc(13px * var(--wsw, 1));
+          font-size: calc(12px * var(--wsw, 1));
         }
         .ws-col{
           display:flex;
@@ -859,9 +861,6 @@ export class CulturalBookBuilderModule {
 
           // swipe no container (mais confiável)
           bindSwipe(view, goPrev, goNext);
-
-          const btn = view.querySelector('[data-send="ws"]');
-          if (btn) btn.onclick = () => sendPageToWordSearch(p, plan);
           return;
         }
 
@@ -880,11 +879,6 @@ export class CulturalBookBuilderModule {
           ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); },
           ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); }
         );
-
-        const sendBtns = view.querySelectorAll('[data-send="ws"]');
-        sendBtns.forEach((b, i)=>{
-          const page = i===0 ? left : right;
-          b.onclick = () => sendPageToWordSearch(page, plan);
         });
       };
 
