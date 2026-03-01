@@ -1,711 +1,757 @@
-/* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4b PADRÃO (1 ano)
-// v0.4b FIX:
-// - Grid sempre cabe no iPhone: mede largura REAL do viewport e recalcula cell
-// - Word list sem "..." (remove ellipsis + permite quebrar linha)
-// - Não usa título da seção como palavra (evita "OQUEEMINAS" etc.)
-// - Mantém folha fixa e swipe sem pular 2 páginas
+/* cultural_book_builder.js
+   Bright Cup Creator — Cultural Book Builder (folheamento/preview editorial)
+   - Renderiza páginas fixas com aspecto de livro (8.5x11 por padrão)
+   - Suporta páginas de texto e páginas de caça-palavras
+   - Swipe estável (1 página por gesto)
+*/
 
-import { Storage } from '../core/storage.js';
+(function(){
+  const MOD = {};
+  const VERSION = '1.0.0';
 
-const $esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-}[c]));
-
-function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
-
-function normWordGrid(s){
-  return String(s || '')
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g,'')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
-    .replace(/[^A-Z0-9]/g,'');
-}
-
-function displayWord(s){
-  return String(s || '')
-    .trim()
-    .replace(/\s+/g,' ')
-    .toUpperCase();
-}
-
-function uniq(list){
-  const seen = new Set();
-  const out = [];
-  for (const it of list){
-    const key = String(it||'').trim().toUpperCase();
-    if (!key) continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(it);
+  // ---------- utils ----------
+  function esc(s){
+    return String(s ?? '')
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/\"/g,'&quot;')
+      .replace(/\'/g,'&#39;');
   }
-  return out;
-}
 
-function makeFillChar(){
-  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return A[Math.floor(Math.random()*A.length)];
-}
+  function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
-function makeEmptyGrid(size){
-  const g = [];
-  for (let r=0;r<size;r++){
-    const row = [];
-    for (let c=0;c<size;c++) row.push('');
-    g.push(row);
+  function normalizeWord(w){
+    return String(w||'')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')   // remove acentos
+      .replace(/[^A-Za-z0-9]/g,'')                      // só alnum
+      .toUpperCase();
   }
-  return g;
-}
 
-function canPlaceWord(grid, word, r, c, dr, dc){
-  const n = word.length;
-  const size = grid.length;
-  const rr = r + dr*(n-1);
-  const cc = c + dc*(n-1);
-  if (rr < 0 || rr >= size || cc < 0 || cc >= size) return false;
-
-  for (let i=0;i<n;i++){
-    const R = r + dr*i;
-    const C = c + dc*i;
-    const ch = word[i];
-    const cur = grid[R][C];
-    if (cur && cur !== ch) return false;
+  function displayWord(w){
+    // mantém acentos/space do display se vier assim; fallback para string
+    return String(w||'').trim();
   }
-  return true;
-}
 
-function placeWord(grid, word, r, c, dr, dc){
-  for (let i=0;i<word.length;i++){
-    const R = r + dr*i;
-    const C = c + dc*i;
-    grid[R][C] = word[i];
+  // ---------- puzzle: word placement ----------
+  function tryPlaceWord(grid, word, x, y, dx, dy){
+    const n = grid.length;
+    for (let i=0;i<word.length;i++){
+      const xx = x + dx*i, yy = y + dy*i;
+      if (xx<0||yy<0||xx>=n||yy>=n) return false;
+      const c = grid[yy][xx];
+      if (c && c !== word[i]) return false;
+    }
+    for (let i=0;i<word.length;i++){
+      const xx = x + dx*i, yy = y + dy*i;
+      grid[yy][xx] = word[i];
+    }
+    return true;
   }
-}
 
-function generateWordSearch(size, words){
-  const directions = [
-    {dr:0, dc:1},   // →
-    {dr:1, dc:0},   // ↓
-    {dr:1, dc:1},   // ↘
-    {dr:-1, dc:1},  // ↗
-  ];
-
-  const grid = makeEmptyGrid(size);
-  const placed = [];
-  const failures = [];
-
-  const sorted = [...words].sort((a,b)=>b.length-a.length);
-
-  for (const w of sorted){
-    let ok = false;
-    for (let t=0;t<280;t++){
-      const dir = directions[Math.floor(Math.random()*directions.length)];
-      const r = Math.floor(Math.random()*size);
-      const c = Math.floor(Math.random()*size);
-      if (canPlaceWord(grid, w, r, c, dir.dr, dir.dc)){
-        placeWord(grid, w, r, c, dir.dr, dir.dc);
-        placed.push(w);
-        ok = true;
-        break;
+  function fillRandom(grid){
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    for (let y=0;y<grid.length;y++){
+      for (let x=0;x<grid.length;x++){
+        if (!grid[y][x]) grid[y][x] = letters[Math.floor(Math.random()*letters.length)];
       }
     }
-    if (!ok) failures.push(w);
   }
 
-  for (let r=0;r<size;r++){
-    for (let c=0;c<size;c++){
-      if (!grid[r][c]) grid[r][c] = makeFillChar();
+  function generateWordSearch(words, size){
+    const n = size;
+    const grid = Array.from({length:n}, ()=> Array(n).fill(''));
+    const dirs = [
+      [1,0],[0,1],[1,1],[-1,1],
+      [-1,0],[0,-1],[-1,-1],[1,-1],
+    ];
+
+    const placed = [];
+    const sorted = [...words].sort((a,b)=> b.length - a.length);
+
+    for (const w of sorted){
+      const word = normalizeWord(w);
+      if (!word || word.length < 3) continue;
+      if (word.length > n) continue;
+
+      let ok = false;
+      for (let attempt=0; attempt<260 && !ok; attempt++){
+        const [dx,dy] = dirs[Math.floor(Math.random()*dirs.length)];
+        const x = Math.floor(Math.random()*n);
+        const y = Math.floor(Math.random()*n);
+        if (tryPlaceWord(grid, word, x,y, dx,dy)){
+          ok = true;
+          placed.push(word);
+        }
+      }
     }
+
+    fillRandom(grid);
+    return { grid, placed };
   }
 
-  return { grid, placed, failures };
-}
-
-function wrapLines(text, max=72){
-  const words = String(text||'').split(/\s+/g);
-  const lines = [];
-  let line = '';
-  for (const w of words){
-    if (!line) { line = w; continue; }
-    if ((line + ' ' + w).length <= max) line += ' ' + w;
-    else { lines.push(line); line = w; }
-  }
-  if (line) lines.push(line);
-  return lines.join('\n');
-}
-
-function resolveLayout(meta){
-  const L = (meta && meta.layout) || {};
-  return {
-    paperMaxW: Number(L.paperMaxW || 520),
-    pageH:     Number(L.pageH || 720),
-    pad:       Number(L.pad || 22),
-    titleSize: Number(L.titleSize || 26),
-    metaSize:  Number(L.metaSize || 13),
-    bodySize:  Number(L.bodySize || 18),
-    gridGap:   Number(L.gridGap || 2),
-    gridBorder:Number(L.gridBorder || 2),
-    gridCell:  Number(L.gridCell || 26),
-    gridFont:  Number(L.gridFont || 14),
-    wordsSize: Number(L.wordsSize || 16),
-    wordsCols: Number(L.wordsCols || 3),
-  };
-}
-
-function styleTag(layout){
-  return `
-<style>
-  .bc-bookwrap{ display:flex; flex-direction:column; gap:12px; }
-
-  .bc-toolbar{
-    display:flex; align-items:center; justify-content:space-between;
-    gap:10px; flex-wrap:wrap;
-    padding:10px 12px;
-    border:1px solid rgba(255,255,255,.10);
-    border-radius:16px;
-    background:rgba(0,0,0,.16);
-    backdrop-filter: blur(8px);
-  }
-  .bc-toolbar .left, .bc-toolbar .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-
-  .bc-btn{
-    appearance:none;
-    border:1px solid rgba(255,255,255,.14);
-    background:rgba(255,255,255,.06);
-    color:rgba(255,255,255,.92);
-    padding:10px 12px;
-    border-radius:14px;
-    font-weight:800;
-    letter-spacing:.2px;
-  }
-  .bc-btn.primary{ background:rgba(90,160,255,.20); border-color:rgba(90,160,255,.35); }
-  .bc-btn:active{ transform: translateY(1px); }
-
-  .bc-view{ display:flex; justify-content:center; padding:10px 0 18px; }
-
-  .bc-pageViewport{
-    width:min(${layout.paperMaxW}px, calc(100vw - 28px));
-    height:${layout.pageH}px;
-    overflow:hidden;
-    border-radius:26px;
-    background: linear-gradient(180deg, rgba(255,255,255,.95), rgba(245,248,248,.95));
-    box-shadow: 0 18px 46px rgba(0,0,0,.35);
-    border:1px solid rgba(0,0,0,.08);
-  }
-
-  .bc-paper{
-    height:100%;
-    width:100%;
-    display:flex;
-    flex-direction:column;
-    padding:${layout.pad}px;
-    box-sizing:border-box;
-    overflow:hidden;
-  }
-
-  .bc-head{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px; }
-  .bc-title{
-    margin:0;
-    font-size:${layout.titleSize}px;
-    line-height:1.04;
-    letter-spacing:-0.3px;
-    color:#141a1f;
-    font-weight:900;
-  }
-  .bc-pno{ font-weight:800; color:rgba(20,26,31,.55); font-size:16px; padding-top:4px; }
-
-  .bc-meta{
-    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-    font-size:${layout.metaSize}px;
-    color:rgba(20,26,31,.55);
-    margin: 2px 0 10px;
-  }
-  .bc-hr{ height:1px; background:rgba(20,26,31,.12); margin: 6px 0 14px; flex:0 0 auto; }
-
-  .bc-body{
-    flex: 1 1 auto;
-    overflow:hidden;
-    display:flex;
-    flex-direction:column;
-    gap:14px;
-  }
-
-  .bc-textBox{
-    border:1px solid rgba(20,26,31,.10);
-    border-radius:18px;
-    background:rgba(255,255,255,.55);
-    padding:16px 16px;
-    overflow:hidden;
-  }
-  .bc-text{
-    white-space:pre-wrap;
-    font-size:${layout.bodySize}px;
-    line-height:1.35;
-    color:#141a1f;
-    font-family: ui-serif, Georgia, "Times New Roman", Times, serif;
-  }
-
-  .bc-puzzleWrap{
-    flex: 1 1 auto;
-    display:flex;
-    flex-direction:column;
-    gap:12px;
-    overflow:hidden;
-  }
-
-  .bc-grid{
-    width:100%;
-    display:grid;
-    gap:${layout.gridGap}px;
-    background:transparent;
-    padding:0;
-    overflow:hidden;
-  }
-
-  .bc-cell{
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    aspect-ratio: 1 / 1;
-    border:${layout.gridBorder}px solid rgba(20,26,31,.65);
-    border-radius:0;
-    font-weight:900;
-    color:#111;
-    background: rgba(255,255,255,.92);
-    font-family: ui-monospace, Menlo, Consolas, "SFMono-Regular", monospace;
-  }
-
-  .bc-wordsTitle{
-    margin: 0;
-    font-size: 34px;
-    letter-spacing:-0.5px;
-    color:#141a1f;
-    font-weight:900;
-  }
-
-  .bc-wordsGrid{
-    display:grid;
-    grid-template-columns: repeat(${layout.wordsCols}, 1fr);
-    gap: 8px 18px;
-    margin-top: 8px;
-    overflow:hidden;
-  }
-
-  .bc-wordRow{
-    display:flex;
-    align-items:flex-end;
-    gap:10px;
-    min-width:0;
-  }
-
-  /* IMPORTANT: sem "..." */
-  .bc-word{
-    font-weight:900;
-    font-size:${layout.wordsSize}px;
-    letter-spacing:.6px;
-    color:#141a1f;
-    text-transform:uppercase;
-    white-space:normal;       /* permite quebrar linha */
-    overflow:visible;         /* sem corte */
-    text-overflow:clip;
-    word-break:break-word;
-    line-height:1.05;
-  }
-
-  .bc-dots{
-    flex:1;
-    border-bottom: 3px dotted rgba(20,26,31,.20);
-    transform: translateY(-3px);
-    min-width:18px;
-  }
-
-  .bc-foot{
-    margin-top:auto;
-    padding-top:12px;
-    color:rgba(20,26,31,.60);
-    font-size:15px;
-  }
-
-  @media (max-width: 420px){
-    .bc-pageViewport{ height:${Math.max(640, Math.floor(layout.pageH*0.92))}px; }
-    .bc-title{ font-size:${Math.max(22, layout.titleSize-4)}px; }
-    .bc-wordsTitle{ font-size: 30px; }
-    .bc-wordsGrid{ grid-template-columns: repeat(3, 1fr); }
-  }
-</style>
-`;
-}
-
-function buildWordsGridHTML(words){
-  const clean = uniq(words.map(displayWord)).filter(Boolean);
-  return `
-    <div class="bc-wordsGrid">
-      ${clean.map(w => `
-        <div class="bc-wordRow">
-          <div class="bc-word">${$esc(w)}</div>
-          <div class="bc-dots"></div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-}
-
-function calcGridCell(layout, size, viewportW){
-  // viewportW = largura REAL do bb_viewport (no iPhone isso resolve o corte)
-  const pad = layout.pad;
-  const effectiveW = Math.min(layout.paperMaxW, Number(viewportW || layout.paperMaxW));
-  const usable = Math.max(240, effectiveW - pad*2);
-  const gapTotal = (size-1) * layout.gridGap;
-  const cell = Math.floor((usable - gapTotal) / size);
-  return clamp(cell, 16, 34);
-}
-
-function gridHTML(layout, grid, viewportW){
-  const size = grid.length || 0;
-  const cell = calcGridCell(layout, size, viewportW);
-  const cols = `repeat(${size}, ${cell}px)`;
-
-  const font = clamp(Math.floor(cell*0.52), 10, 16);
-
-  return `
-    <div class="bc-grid" style="grid-template-columns:${cols}; justify-content:center;">
-      ${grid.map(row => row.map(ch => `
-        <div class="bc-cell" style="width:${cell}px; font-size:${font}px;">${$esc(ch)}</div>
-      `).join('')).join('')}
-    </div>
-  `;
-}
-
-function pagePuzzleHTML(page, layout, viewportW){
-  const meta = page.meta || {};
-  const title = page.title || 'Caça-Palavras';
-  const pno = page.pageLabel || '';
-
-  const grid = page.grid || [];
-  const size = Number(meta.size || grid.length || 15);
-  const placed = Number(meta.placed || 0);
-
-  const words = (page.wordsDisplay && page.wordsDisplay.length)
-    ? page.wordsDisplay
-    : (page.words || []);
-
-  return `
-    <div class="bc-paper">
-      <div class="bc-head">
-        <h1 class="bc-title">${$esc(title)}</h1>
-        <div class="bc-pno">${$esc(pno)}</div>
-      </div>
-
-      <div class="bc-meta">
-        <span>grade ${size}x${size}</span>
-        <span>•</span>
-        <span>palavras ${placed || words.length || 0}</span>
-      </div>
-
-      <div class="bc-hr"></div>
-
-      <div class="bc-body">
-        <div class="bc-puzzleWrap">
-          ${gridHTML(layout, grid, viewportW)}
-          <div>
-            <h2 class="bc-wordsTitle">Palavras</h2>
-            ${buildWordsGridHTML(words)}
-          </div>
-        </div>
-
-        <div class="bc-foot">Ilustração P&amp;B: <b>${$esc(page.illustrationLabel || title)}</b></div>
-      </div>
-    </div>
-  `;
-}
-
-function pageTextHTML(page, layout){
-  const title = page.title || 'Texto';
-  const pno = page.pageLabel || '';
-  const txt = String(page.text || '').trim();
-
-  return `
-    <div class="bc-paper">
-      <div class="bc-head">
-        <h1 class="bc-title">${$esc(title)}</h1>
-        <div class="bc-pno">${$esc(pno)}</div>
-      </div>
-
-      <div class="bc-meta"><span>Texto cultural</span></div>
-      <div class="bc-hr"></div>
-
-      <div class="bc-body">
-        <div class="bc-textBox">
-          <div class="bc-text">${$esc(wrapLines(txt, 72))}</div>
-        </div>
-        <div class="bc-foot">Ilustração P&amp;B: <b>${$esc(page.illustrationLabel || 'História')}</b></div>
-      </div>
-    </div>
-  `;
-}
-
-function buildBookPagesFromPlan(plan){
-  const meta = plan?.meta || {};
-  const secs = plan?.sections || [];
-  const pages = [];
-
-  pages.push({
-    type:'text',
-    title: (meta.title || 'LIVRO').toUpperCase(),
-    pageLabel: 'p.1',
-    text: [
-      'Apresentação ' + (meta.subtitle ? ('— ' + meta.subtitle) : ''),
-      '',
-      'Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.',
-      'Cada seção traz um texto curto e um caça-palavras temático.',
-      'Boa leitura e bom passatempo.'
-    ].join('\n'),
-    illustrationLabel: 'História'
-  });
-
-  let p = 2;
-  for (const s of secs){
-    pages.push({
-      type:'text',
-      title: s.title,
-      pageLabel: `p.${p++}`,
-      text: s.text || '',
-      illustrationLabel: s.illustration || (s.title || 'História')
-    });
-
-    // IMPORTANT: não usa s.title como palavra (evita OQUEEMINAS etc.)
-    const hints = []
-      .concat(s.wordHints || [])
-      .concat(['Minas', 'Cultura', 'História', 'Uai']);
-
-    const wordsNorm = uniq(hints.map(normWordGrid))
+  // ---------- words list: columns ----------
+  function renderWordsColumns(wordsDisplay){
+    const list = (wordsDisplay || [])
+      .map(displayWord)
       .filter(Boolean)
-      .filter(w => w.length >= 3);
+      .map(s => s.trim())
+      .filter(s => s.length >= 2);
 
-    const size = Number(meta.grid_default || 15);
-    const maxWords = Number(meta.words_per_puzzle || 14);
+    if (!list.length) return '';
 
-    const filtered = wordsNorm.filter(w => w.length <= size);
-    const picked = filtered.slice(0, maxWords);
+    // 3 colunas (equilíbrio simples por “round-robin”)
+    const cols = 3;
+    const buckets = Array.from({length:cols}, ()=>[]);
+    list.forEach((w,i)=> buckets[i % cols].push(w));
 
-    const gen = generateWordSearch(size, picked);
+    const colHtml = buckets.map(col => {
+      const items = col.map(w => `
+        <div class="ws-item">
+          <span class="ws-word">${esc(w)}</span>
+          <span class="ws-leader"></span>
+        </div>
+      `).join('');
+      return `<div class="ws-col">${items}</div>`;
+    }).join('');
 
-    const map = new Map();
-    for (const raw of hints){
-      const n = normWordGrid(raw);
-      if (!n) continue;
-      if (!map.has(n)) map.set(n, displayWord(raw));
+    return `<div class="ws-words-cols">${colHtml}</div>`;
+  }
+
+  // ---------- swipe ----------
+  function bindSwipe(el, onPrev, onNext){
+    if (!el) return;
+
+    // evita múltiplos binds (causa “pular 2 páginas” quando re-renderiza)
+    try {
+      if (el.dataset && el.dataset.swipeBound === '1') return;
+      if (el.dataset) el.dataset.swipeBound = '1';
+    } catch {}
+
+    let startX = 0;
+    let startY = 0;
+    let dx = 0;
+    let dy = 0;
+    let down = false;
+
+    function onStart(e){
+      const t = e.touches ? e.touches[0] : e;
+      startX = t.clientX; startY = t.clientY;
+      dx = 0; dy = 0;
+      down = true;
     }
 
-    const wordsDisplay = gen.placed.map(n => map.get(n) || n);
+    function onMove(e){
+      if (!down) return;
+      const t = e.touches ? e.touches[0] : e;
+      dx = t.clientX - startX;
+      dy = t.clientY - startY;
+      // scroll vertical continua; só bloqueia quando já virou swipe horizontal
+      if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy)) {
+        try { e.preventDefault(); } catch {}
+      }
+    }
 
+    function onEnd(){
+      if (!down) return;
+      down = false;
+      if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy)){
+        if (dx > 0) onPrev && onPrev();
+        else onNext && onNext();
+      }
+    }
+
+    el.addEventListener('touchstart', onStart, {passive:true});
+    el.addEventListener('touchmove', onMove, {passive:false});
+    el.addEventListener('touchend', onEnd, {passive:true});
+
+    // desktop
+    el.addEventListener('mousedown', onStart);
+    el.addEventListener('mousemove', onMove);
+    el.addEventListener('mouseup', onEnd);
+    el.addEventListener('mouseleave', onEnd);
+  }
+
+  // ---------- rendering ----------
+  function buildPagesFromPlan(plan){
+    const pages = [];
+
+    const book = plan?.book || {};
+    const sections = book?.sections || [];
+    const size = book?.pageSize || '8.5x11';
+
+    const gridDefault = plan?.puzzles?.defaultGrid || 15;
+
+    // capa simples (opcional)
+    if (book?.title){
+      pages.push({
+        type:'cover',
+        title: String(book.title),
+        meta: '',
+        text: book?.subtitle ? String(book.subtitle) : '',
+        illustrationTag: 'Capa',
+      });
+    }
+
+    // miolo
+    for (const s of sections){
+      // texto
+      pages.push({
+        type:'text',
+        title: s.title || 'Texto',
+        meta: 'Texto cultural',
+        text: s.text || '',
+        illustrationTag: s.illustrationTag || (s.title || ''),
+      });
+
+      // puzzle
+      const wantPuzzle = s.wordsearch || s.puzzle || s.wordSearch;
+      if (wantPuzzle){
+        // Evita frases longas (ex: "O que é Minas?") como "palavra" no puzzle.
+        // Se o Agent não mandou wordHints, a gente usa fallback com tokens do título.
+        const titleTokens = String(s.title || '')
+          .split(/\s+/g)
+          .map(t => t.trim())
+          .filter(Boolean)
+          .filter(t => t.length >= 3);
+
+        const rawHints = []
+          .concat(s.wordHints || [])
+          .concat(titleTokens)
+          .concat(['Minas','Cultura','História','Uai']);
+
+        const wordsNorm = rawHints
+          .map(normalizeWord)
+          .filter(Boolean)
+          .filter(w => w.length >= 3 && w.length <= gridDefault);
+
+        // dedupe mantendo ordem
+        const seen = new Set();
+        const uniq = [];
+        for (const w of wordsNorm){
+          if (!seen.has(w)){ seen.add(w); uniq.push(w); }
+        }
+
+        const gridSize = s.gridSize || gridDefault;
+        const { grid, placed } = generateWordSearch(uniq, gridSize);
+
+        // display words: usa original dos hints, mas só os que cabem
+        const displayHints = (s.wordHints && s.wordHints.length) ? s.wordHints : titleTokens;
+        const wordsDisplayPicked = (displayHints || [])
+          .map(displayWord)
+          .map(w => w.trim())
+          .filter(Boolean)
+          .filter(w => normalizeWord(w).length >= 3 && normalizeWord(w).length <= gridSize);
+
+        pages.push({
+          type:'wordsearch',
+          title: `Caça-Palavras — ${s.title || 'Tema'}`,
+          meta: `grade ${gridSize}x${gridSize}`,
+          gridSize,
+          grid,
+          placedCount: placed.length,
+          wordsDisplay: wordsDisplayPicked.length ? wordsDisplayPicked : placed,
+          illustrationTag: s.illustrationTag || (s.title || ''),
+        });
+      }
+    }
+
+    // contra-capa
     pages.push({
-      type:'puzzle',
-      title: `Caça-Palavras — ${s.title}`,
-      pageLabel: `p.${p++}`,
-      grid: gen.grid,
-      words: gen.placed,
-      wordsDisplay,
-      meta: { size, placed: gen.placed.length },
-      illustrationLabel: s.title
+      type:'end',
+      title: 'Fim',
+      meta: '',
+      text: '',
+      illustrationTag: '',
     });
+
+    return { pages, pageSize: size };
   }
 
-  return pages;
-}
-
-export class CulturalBookBuilderModule {
-  constructor(app){
-    this.app = app;
-    this.id = 'book';
-    this.title = 'Book Builder';
-    this._navLock = false;
-    this._navTs = 0;
+  function renderTableGrid(grid){
+    const rows = grid.map(r => {
+      const tds = r.map(c => `<td>${esc(c)}</td>`).join('');
+      return `<tr>${tds}</tr>`;
+    }).join('');
+    return `<table class="ws-table" aria-label="Caça-palavras"><tbody>${rows}</tbody></table>`;
   }
 
-  async init(){}
+  function renderPage(p, index, total){
+    const pageNum = index+1;
 
-  render(root){
-    const plan = Storage.get('cultural:book_plan', null);
-    const fallback = Storage.get('cultural:seed', null);
+    if (p.type === 'wordsearch'){
+      const grid = renderTableGrid(p.grid || []);
+      const words = renderWordsColumns(p.wordsDisplay || []);
+      const meta = `${esc(p.meta || '')} · palavras ${esc(p.wordsDisplay?.length ?? p.placedCount ?? 0)}`;
 
-    const planMeta = plan?.meta || {};
-    const layout = resolveLayout(planMeta);
-
-    root.innerHTML = `
-      ${styleTag(layout)}
-      <div class="bc-bookwrap">
-        <div class="bc-toolbar">
-          <div class="left">
-            <button class="bc-btn" id="bb_spread">Spread</button>
-            <button class="bc-btn primary" id="bb_folhear">Folhear</button>
-            <span class="muted" id="bb_pageLabel" style="opacity:.85;font-weight:800;"></span>
+      return `
+        <div class="page ws-page" data-page="${pageNum}">
+          <div class="page-head">
+            <div class="page-title-row">
+              <h1 class="page-title">${esc(p.title || '')}</h1>
+              <div class="page-num">p.${pageNum}</div>
+            </div>
+            <div class="page-meta">${meta}</div>
+            <div class="rule"></div>
           </div>
-          <div class="right">
-            <button class="bc-btn" id="bb_prev">◀</button>
-            <button class="bc-btn" id="bb_next">▶</button>
-            <button class="bc-btn" id="bb_download_plan">Baixar plano (JSON)</button>
-            <button class="bc-btn" id="bb_rebuild">Recriar Minas (PADRÃO)</button>
+
+          <div class="ws-box">
+            ${grid}
+          </div>
+
+          <div class="words-box">
+            <div class="words-title">Palavras</div>
+            ${words || ''}
+          </div>
+
+          <div class="page-foot">
+            <div class="foot-note">Ilustração P&amp;B: <b>${esc(p.illustrationTag || '')}</b></div>
+            <button class="btn-send" type="button" data-action="send-puzzle">Enviar p/ Caça-palavras</button>
           </div>
         </div>
+      `;
+    }
 
-        <div class="bc-view">
-          <div class="bc-pageViewport" id="bb_viewport"></div>
+    if (p.type === 'cover'){
+      return `
+        <div class="page cover-page" data-page="${pageNum}">
+          <div class="cover-center">
+            <div class="cover-title">${esc(p.title || '')}</div>
+            ${p.text ? `<div class="cover-subtitle">${esc(p.text)}</div>` : ''}
+          </div>
+          <div class="cover-foot">Ilustração P&amp;B: <b>${esc(p.illustrationTag || 'Capa')}</b></div>
+        </div>
+      `;
+    }
+
+    if (p.type === 'end'){
+      return `
+        <div class="page end-page" data-page="${pageNum}">
+          <div class="end-center">— FIM —</div>
+        </div>
+      `;
+    }
+
+    // texto
+    return `
+      <div class="page text-page" data-page="${pageNum}">
+        <div class="page-head">
+          <div class="page-title-row">
+            <h1 class="page-title">${esc(p.title || '')}</h1>
+            <div class="page-num">p.${pageNum}</div>
+          </div>
+          ${p.meta ? `<div class="page-meta">${esc(p.meta)}</div>` : ''}
+          <div class="rule"></div>
+        </div>
+
+        <div class="text-box">
+          <div class="text-content">${esc(p.text || '').replace(/\n/g,'<br>')}</div>
+        </div>
+
+        <div class="ill-slot">
+          <div class="ill-title">Ilustração P&amp;B: <b>${esc(p.illustrationTag || '')}</b></div>
+          <div class="ill-sub">Slot reservado (entra no Export/IA) — nesta página de texto.</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderUI(root, state){
+    const { pages=[] } = state;
+
+    const html = `
+      <style>
+        .bc-builder{
+          color:#0b1220;
+          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        }
+
+        .book-viewport{
+          width:min(920px, 92vw);
+          margin: 0 auto;
+          padding: 14px 0 10px;
+          user-select: none;
+        }
+
+        .toolbar{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap: 10px;
+          margin: 4px 0 10px;
+        }
+
+        .toolbar-left{display:flex; gap:8px; align-items:center;}
+        .toolbar-right{display:flex; gap:8px; align-items:center;}
+
+        .pill{
+          padding: 8px 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.10);
+          background: rgba(255,255,255,.06);
+          color: rgba(255,255,255,.85);
+          font-weight: 700;
+          font-size: 14px;
+        }
+
+        .btn{
+          padding: 8px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.06);
+          color: rgba(255,255,255,.90);
+          font-weight: 700;
+          font-size: 14px;
+        }
+
+        .btn:active{transform: translateY(1px);}
+
+        .page-wrap{
+          display:flex;
+          justify-content:center;
+          align-items:center;
+        }
+
+        .page{
+          width: min(860px, 92vw);
+          aspect-ratio: 8.5 / 11;
+          background: #f6f7f9;
+          border-radius: 22px;
+          box-shadow: 0 10px 30px rgba(0,0,0,.18);
+          overflow: hidden; /* página fixa, sem crescer */
+          position: relative;
+          padding: 18px;
+        }
+
+        .page-head{padding-bottom: 6px;}
+        .page-title-row{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
+        .page-title{
+          /* menor e mais “impresso” (evita ocupar área do puzzle) */
+          font-size: clamp(20px, 4.6vw, 28px);
+          line-height: 1.06;
+          font-weight: 900;
+          letter-spacing: -0.2px;
+          margin: 0;
+          max-width: calc(100% - 70px);
+        }
+
+        .page-num{
+          font-weight: 800;
+          font-size: 20px;
+          opacity: .55;
+          padding-top: 4px;
+        }
+
+        .page-meta{
+          font-size: 14px;
+          opacity: .70;
+          margin-top: 8px;
+        }
+
+        .rule{
+          height: 1px;
+          background: rgba(0,0,0,.12);
+          margin-top: 10px;
+        }
+
+        .text-box{
+          margin-top: 14px;
+          background: rgba(255,255,255,.85);
+          border: 1px solid rgba(0,0,0,.10);
+          border-radius: 18px;
+          padding: 18px;
+          height: calc(100% - 180px);
+          overflow: hidden;
+        }
+
+        .text-content{
+          font-family: ui-serif, Georgia, 'Times New Roman', Times, serif;
+          font-size: 30px;
+          line-height: 1.32;
+          letter-spacing: 0.1px;
+        }
+
+        .ill-slot{
+          position: absolute;
+          left: 18px;
+          right: 18px;
+          bottom: 18px;
+          border: 2px dashed rgba(0,0,0,.18);
+          border-radius: 18px;
+          padding: 12px 14px;
+          background: rgba(255,255,255,.55);
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap: 12px;
+        }
+
+        .ill-title{font-weight:900;}
+        .ill-sub{opacity:.75; font-size:14px; max-width: 72%;}
+
+        /* wordsearch page layout */
+        .ws-page{
+          display:grid;
+          grid-template-rows: auto 1fr auto auto;
+          gap: 12px;
+        }
+
+        .ws-box{
+          /* sem card arredondado/scroll interno */
+          border: none;
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+          overflow: hidden;
+        }
+
+        .ws-table{
+          border-collapse:collapse;
+          border: 2px solid rgba(0,0,0,.55);
+          width:100%;
+          table-layout: fixed;
+        }
+
+        .ws-table td{
+          border: 1px solid rgba(0,0,0,.55);
+          text-align:center;
+          vertical-align:middle;
+          font-weight: 900;
+          font-size: clamp(14px, 2.4vw, 22px);
+          padding: 0;
+          height: clamp(22px, 3.2vw, 34px);
+          box-shadow: inset 0 0 0 2px rgba(0,0,0,.12);
+        }
+
+        /* palavras: estilo revista/impressa, sem “bolha” */
+        .words-box{
+          border: none;
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+        }
+
+        .words-title{
+          font-weight: 900;
+          font-size: 26px;
+          margin: 6px 0 10px 0;
+        }
+
+        .words-grid{
+          display:grid;
+          grid-template-columns: repeat(3, minmax(0,1fr));
+          gap: 8px 18px;
+        }
+
+        .ws-w{
+          font-weight: 900;
+          letter-spacing: .5px;
+          font-size: 20px;
+          line-height: 1.15;
+          white-space: normal;
+          overflow: visible;
+          text-overflow: clip;
+          word-break: break-word;
+          border-bottom: 3px dotted rgba(0,0,0,.22);
+          padding-bottom: 6px;
+        }
+
+        /* novo renderer (líder pontilhado) */
+        .ws-words-cols{
+          display:grid;
+          grid-template-columns: repeat(3, minmax(0,1fr));
+          gap: 10px 22px;
+        }
+
+        .ws-item{
+          display:flex;
+          align-items:flex-end;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+
+        .ws-word{
+          font-weight: 900;
+          letter-spacing: .4px;
+          font-size: 20px;
+          line-height: 1.1;
+          white-space: normal;
+          word-break: break-word;
+        }
+
+        .ws-leader{
+          flex:1;
+          border-bottom: 3px dotted rgba(0,0,0,.22);
+          transform: translateY(-2px);
+          min-width: 14px;
+        }
+
+        .page-foot{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap: 10px;
+        }
+
+        .foot-note{opacity:.75;}
+
+        .btn-send{
+          padding: 10px 14px;
+          border-radius: 14px;
+          border: 1px solid rgba(0,0,0,.15);
+          background: rgba(0,0,0,.06);
+          font-weight: 900;
+          color: rgba(0,0,0,.55);
+        }
+
+        /* cover */
+        .cover-page{
+          background: #f6f7f9;
+          display:flex;
+          flex-direction:column;
+          justify-content:space-between;
+        }
+        .cover-center{padding: 52px 22px; text-align:center;}
+        .cover-title{font-weight: 900; font-size: 52px; letter-spacing: -0.4px;}
+        .cover-subtitle{margin-top: 12px; opacity:.75; font-size: 20px;}
+        .cover-foot{padding: 18px; opacity:.70;}
+
+        .end-page{
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          font-weight: 900;
+          font-size: 42px;
+        }
+
+        @media (max-width: 430px){
+          .text-content{font-size: 26px;}
+          .words-title{font-size: 24px;}
+          .ws-word, .ws-w{font-size: 18px;}
+          .ws-table td{font-size: 16px;}
+          .ws-words-cols{gap: 8px 14px;}
+        }
+
+        @media print{
+          body{background:#fff;}
+          .page{
+            box-shadow:none;
+            border-radius: 0;
+            width: 8.5in;
+            height: 11in;
+            aspect-ratio: auto;
+          }
+        }
+      </style>
+
+      <div class="bc-builder">
+        <div class="book-viewport">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <button class="btn" data-action="spread">Spread</button>
+              <button class="btn" data-action="flip">Folhear</button>
+              <div class="pill">Página ${state.pageIndex+1}/${pages.length || 0}</div>
+              <button class="btn" data-action="prev">◀️</button>
+              <button class="btn" data-action="next">▶️</button>
+            </div>
+            <div class="toolbar-right">
+              <button class="btn" data-action="download-plan">Baixar plano (JSON)</button>
+              <button class="btn" data-action="rebuild">Recriar (PADRÃO)</button>
+            </div>
+          </div>
+
+          <div class="page-wrap">
+            ${pages.length ? renderPage(pages[state.pageIndex], state.pageIndex, pages.length) : `<div class="pill">Sem páginas ainda</div>`}
+          </div>
         </div>
       </div>
     `;
 
-    const $ = (s)=>root.querySelector(s);
-    const viewport = $('#bb_viewport');
-    const pageLabel = $('#bb_pageLabel');
+    root.innerHTML = html;
 
-    const renderMain = () => {
-      let currentPlan = Storage.get('cultural:book_plan', null);
+    // attach actions
+    const wrap = root.querySelector('.page-wrap');
+    bindSwipe(wrap, ()=> state.goPrev(), ()=> state.goNext());
 
-      if (!currentPlan && fallback?.planText){
-        // placeholder
-      }
+    root.querySelectorAll('[data-action]').forEach(btn=>{
+      btn.addEventListener('click', (e)=>{
+        const act = btn.getAttribute('data-action');
+        if (act === 'prev') state.goPrev();
+        if (act === 'next') state.goNext();
+        if (act === 'spread') state.setMode('spread');
+        if (act === 'flip') state.setMode('flip');
+        if (act === 'download-plan') state.downloadPlan();
+        if (act === 'rebuild') state.rebuild();
+      });
+    });
+  }
 
-      if (!currentPlan){
-        viewport.innerHTML = `
-          <div class="bc-paper">
-            <div class="bc-head">
-              <h1 class="bc-title">Nenhum plano</h1>
-              <div class="bc-pno"></div>
-            </div>
-            <div class="bc-meta"><span>Abra o Cultural Agent e clique “Gerar Plano do Livro (MG)”</span></div>
-            <div class="bc-hr"></div>
-            <div class="bc-body">
-              <div class="bc-textBox"><div class="bc-text">Sem conteúdo ainda.</div></div>
-              <div class="bc-foot">Ilustração P&amp;B: <b>—</b></div>
-            </div>
-          </div>
-        `;
-        pageLabel.textContent = 'Página 0/0';
-        return;
-      }
+  // ---------- state ----------
+  function createState(root, plan){
+    const st = {
+      root,
+      plan,
+      pages: [],
+      pageIndex: 0,
+      mode: 'flip',
 
-      const pages = buildBookPagesFromPlan(currentPlan);
-      Storage.set('book:pages', pages);
+      build(){
+        const res = buildPagesFromPlan(st.plan || {});
+        st.pages = res.pages || [];
+        st.pageIndex = clamp(st.pageIndex, 0, Math.max(0, st.pages.length-1));
+      },
 
-      let idx = Storage.get('book:idx', 0);
-      idx = clamp(idx, 0, Math.max(0, pages.length-1));
-      Storage.set('book:idx', idx);
+      render(){
+        renderUI(st.root, st);
+      },
 
-      const paint = () => {
-        const pagesNow = Storage.get('book:pages', pages) || pages;
-        let i = Storage.get('book:idx', idx);
-        i = clamp(i, 0, Math.max(0, pagesNow.length-1));
+      setMode(m){
+        st.mode = m || 'flip';
+        st.render();
+      },
 
-        const page = pagesNow[i];
-        pageLabel.textContent = `Página ${i+1}/${pagesNow.length}`;
+      goPrev(){
+        st.pageIndex = clamp(st.pageIndex - 1, 0, Math.max(0, st.pages.length-1));
+        st.render();
+      },
 
-        // MEDIDA REAL do viewport (resolve corte lateral no iPhone)
-        const vw = viewport?.clientWidth || (currentPlan?.meta?.layout?.paperMaxW || 520);
+      goNext(){
+        st.pageIndex = clamp(st.pageIndex + 1, 0, Math.max(0, st.pages.length-1));
+        st.render();
+      },
 
-        const lay = resolveLayout(currentPlan.meta || {});
-        if (page.type === 'puzzle'){
-          viewport.innerHTML = pagePuzzleHTML(page, lay, vw);
-        } else {
-          viewport.innerHTML = pageTextHTML(page, lay);
-        }
-      };
-
-      const nav = (dir) => {
-        const now = Date.now();
-        if (this._navLock) return;
-        if (now - this._navTs < 260) return;
-
-        this._navLock = true;
-        this._navTs = now;
-
-        const pagesNow = Storage.get('book:pages', pages) || pages;
-        let i = Storage.get('book:idx', idx);
-        i = clamp(i + dir, 0, Math.max(0, pagesNow.length-1));
-        Storage.set('book:idx', i);
-
-        paint();
-        setTimeout(()=>{ this._navLock = false; }, 220);
-      };
-
-      $('#bb_prev').onclick = ()=>nav(-1);
-      $('#bb_next').onclick = ()=>nav(+1);
-
-      // swipe
-      let startX = 0;
-      let startY = 0;
-      let tracking = false;
-
-      viewport.ontouchstart = (e) => {
-        if (!e.touches || e.touches.length !== 1) return;
-        const t = e.touches[0];
-        startX = t.clientX;
-        startY = t.clientY;
-        tracking = true;
-      };
-
-      viewport.ontouchmove = (e) => {
-        if (!tracking) return;
-        if (!e.touches || e.touches.length !== 1) return;
-        const t = e.touches[0];
-        const dx = t.clientX - startX;
-        const dy = t.clientY - startY;
-        if (Math.abs(dy) > Math.abs(dx)) return;
-        e.preventDefault?.();
-      };
-
-      viewport.ontouchend = (e) => {
-        if (!tracking) return;
-        tracking = false;
-        const changed = e.changedTouches && e.changedTouches[0];
-        if (!changed) return;
-        const dx = changed.clientX - startX;
-        const dy = changed.clientY - startY;
-        if (Math.abs(dy) > 40) return;
-        if (Math.abs(dx) < 40) return;
-        if (dx < 0) nav(+1);
-        else nav(-1);
-      };
-
-      $('#bb_spread').onclick = () => this.app.toast?.('Spread (em breve)');
-      $('#bb_folhear').onclick = () => this.app.toast?.('Folhear ativo ✅');
-
-      $('#bb_rebuild').onclick = () => {
+      downloadPlan(){
         try{
-          const btn = document.querySelector('.navitem[data-view="cultural"]');
-          btn?.click?.();
-          setTimeout(()=>{
-            const buildBtn = document.querySelector('#ca_build');
-            buildBtn?.click?.();
-            this.app.toast?.('Recriado ✅');
-          }, 350);
-        } catch {
-          this.app.toast?.('Falha ao recriar', 'err');
-        }
-      };
-
-      $('#bb_download_plan').onclick = () => {
-        try{
-          const p = Storage.get('cultural:book_plan', null);
-          if (!p){ this.app.toast?.('Sem plano'); return; }
-          const blob = new Blob([JSON.stringify(p, null, 2)], { type:'application/json' });
+          const blob = new Blob([JSON.stringify(st.plan || {}, null, 2)], {type:'application/json'});
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = `book-plan-${(p?.meta?.id||'cultural')}-${Date.now()}.json`;
+          a.download = 'brightcup-plan.json';
           a.click();
-          setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-          this.app.toast?.('Plano baixado ✅');
-        } catch {
-          this.app.toast?.('Falha ao baixar', 'err');
+          setTimeout(()=> URL.revokeObjectURL(a.href), 1200);
+        }catch(err){
+          console.error(err);
         }
-      };
+      },
 
-      paint();
-      // re-paint curto depois pra garantir medida certa no iOS (às vezes viewport muda após render)
-      setTimeout(()=>{ try{ paint(); } catch {} }, 60);
+      rebuild(){
+        st.build();
+        st.render();
+      }
     };
 
-    renderMain();
+    st.build();
+    return st;
   }
-}
+
+  // ---------- public API ----------
+  MOD.mount = function(rootEl, plan){
+    const st = createState(rootEl, plan || {});
+    st.render();
+    return st;
+  };
+
+  MOD.VERSION = VERSION;
+
+  // attach to window for loader
+  window.CulturalBookBuilder = MOD;
+})();
