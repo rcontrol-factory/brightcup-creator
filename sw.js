@@ -1,7 +1,7 @@
 /* FILE: /sw.js */
 /* Bright Cup Creator — Service Worker (offline-first, iOS Safari SAFE) */
 
-const CACHE = 'bcc-v2.0.1'; // <-- sempre suba quando fizer releases importantes
+const CACHE = "bcc-v2.0.2"; // HOTFIX cache bump
 
 const ASSETS = [
   './',
@@ -14,12 +14,15 @@ const ASSETS = [
   './js/core/storage.js',
   './js/core/prompt_engine.js',
   './js/core/comfy.js',
+  "./js/core/wordsearch_gen.js",
   './js/modules/coloring.js',
   './js/modules/covers.js',
   './js/modules/wordsearch.js',
   './js/modules/crossword.js',
   './js/modules/mandala.js',
   './js/modules/settings.js',
+  "./js/modules/cultural_agent.js",
+  "./js/modules/cultural_book_builder.js",
   './assets/icon-192.png',
   './assets/icon-512.png'
 ];
