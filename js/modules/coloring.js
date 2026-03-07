@@ -1,310 +1,319 @@
-/* FILE: /js/modules/coloring.js */
-// Bright Cup Creator — Coloring Pages (PADRÃO SAFE)
-// Fixes:
-// - NÃO envia se faltar Base URL / Workflow
-// - NÃO quebra se tryGetLatestImages não existir (compat)
-// - Batch interrompe seguro quando faltar config
-
 import { Storage } from '../core/storage.js';
 
 export class ColoringModule {
-  constructor(app){ this.app = app; this.id='coloring'; this.title='Coloring Pages'; }
+  constructor(app){
+    this.app = app;
+    this.lastImages = [];
+  }
+
   async init(){}
 
   render(root){
-    const themes = this.app.themes;
+    const cfg = this._getConfig();
+    const workflowText = cfg.workflowText || '';
+    const hasWorkflow = !!workflowText || !!(cfg.workflow && Object.keys(cfg.workflow).length);
 
-    const packOptions = (themes.packs||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
     root.innerHTML = `
       <div class="grid">
         <div class="card">
-          <h2>Gerar páginas para colorir</h2>
+          <h2>Coloring Page Generator</h2>
+          <p class="muted">Gera imagem via ComfyUI usando o workflow salvo em Config.</p>
+
+          <label class="lbl">Prompt</label>
+          <textarea id="col_prompt" class="txt" rows="5" placeholder="cute baby fox coloring page, clean outlines, white background, no shading"></textarea>
+
+          <label class="lbl">Negative Prompt</label>
+          <textarea id="col_negative" class="txt" rows="3" placeholder="gray, shading, blur, photorealistic, text, watermark"></textarea>
 
           <div class="row">
-            <div>
-              <label>Tema</label>
-              <select id="packSel">${packOptions}</select>
+            <div style="flex:1">
+              <label class="lbl">Size</label>
+              <input id="col_size" class="inp" type="number" min="256" step="64" value="1024" />
             </div>
-            <div>
-              <label>Faixa etária</label>
-              <select id="ageSel">
-                <option value="2-5">2–5 anos</option>
-                <option value="4-8">4–8 anos</option>
-                <option value="7-11">7–11 anos</option>
-              </select>
+            <div style="flex:1">
+              <label class="lbl">Steps</label>
+              <input id="col_steps" class="inp" type="number" min="1" step="1" value="20" />
             </div>
-          </div>
-
-          <label>Assunto / personagem</label>
-          <input id="subjectInput" placeholder="ex: baby elephant, lion cub, farm tractor, ocean turtle..." />
-
-          <div class="row">
-            <div>
-              <label>Estilo</label>
-              <select id="styleSel">
-                <option value="coloring_clean">Line art limpo (papel branco)</option>
-                <option value="coloring_simple">Bem simples (2–5)</option>
-                <option value="coloring_detail">Mais detalhado (7–11)</option>
-              </select>
-            </div>
-            <div>
-              <label>Complexidade (fundo)</label>
-              <select id="bgSel">
-                <option value="low">Pouco fundo</option>
-                <option value="medium">Médio</option>
-                <option value="high">Mais cheio (sem poluir)</option>
-              </select>
+            <div style="flex:1">
+              <label class="lbl">Seed</label>
+              <input id="col_seed" class="inp" type="number" step="1" value="-1" />
             </div>
           </div>
 
           <div class="row">
-            <div>
-              <label>Tamanho</label>
-              <select id="sizeSel">
-                <option value="1024">1024 (rápido)</option>
-                <option value="1536">1536 (melhor)</option>
-              </select>
-            </div>
-            <div>
-              <label>Seed</label>
-              <input id="seedInput" placeholder="vazio = aleatório" />
-            </div>
+            <button id="col_ping" class="btn secondary">Ping</button>
+            <button id="col_queue" class="btn secondary">Queue</button>
+            <button id="col_generate" class="btn">Generate</button>
           </div>
 
-          <div class="row">
-            <button class="btn" id="btnBuild">Gerar Prompt</button>
-            <button class="btn primary" id="btnSend">Enviar para ComfyUI</button>
-            <button class="btn ghost" id="btnSave">Salvar projeto</button>
-          </div>
+          <div id="col_status" class="hint"></div>
 
-          <hr style="border:0;border-top:1px solid rgba(255,255,255,.08);margin:14px 0"/>
+          <div class="sep"></div>
 
-          <h3>Batch (acelerar produção)</h3>
-          <p class="muted">Gera <b>N</b> variações do mesmo assunto (seeds automáticas). Seguro: bloqueia duplo clique.</p>
-          <div class="row">
-            <div>
-              <label>Quantidade (N)</label>
-              <select id="batchN">
-                <option value="5">5</option>
-                <option value="10" selected>10</option>
-                <option value="20">20</option>
-              </select>
-            </div>
-            <div>
-              <label>Seed base (opcional)</label>
-              <input id="batchSeed" placeholder="vazio = aleatório" />
-            </div>
-          </div>
-          <div class="row">
-            <button class="btn" id="btnBatchPlan">Gerar Batch (só plano)</button>
-            <button class="btn primary" id="btnBatchSend">Enviar Batch (N)</button>
-          </div>
-
-          <p class="muted">Dica: primeiro clique <b>Gerar Prompt</b>, revise. Depois envie.</p>
+          <div class="mono" id="col_cfg_preview"></div>
         </div>
 
         <div class="card">
-          <h2>Prompt</h2>
-          <label>POSITIVE</label>
-          <textarea id="posOut" spellcheck="false"></textarea>
-          <label>NEGATIVE</label>
-          <textarea id="negOut" spellcheck="false"></textarea>
-        </div>
-
-        <div class="card">
-          <h2>Status / Saída</h2>
-          <div class="row">
-            <button class="btn" id="btnPing">Testar conexão</button>
-            <button class="btn" id="btnQueue">Ver fila</button>
-          </div>
-          <pre class="log" id="logBox"></pre>
-          <div id="imgOut" class="imgout"></div>
-          <p class="muted">Se a imagem não aparecer aqui, pode baixar no ComfyUI (Safari às vezes bloqueia preview/CORS).</p>
+          <h2>Preview</h2>
+          <div id="col_preview" class="gallery"></div>
         </div>
       </div>
     `;
 
-    const $ = (id)=>root.querySelector(id);
-    const log = (m)=>{ const el=$('#logBox'); el.textContent += m + "\n"; el.scrollTop=el.scrollHeight; };
+    const $ = function(sel){ return root.querySelector(sel); };
+    const statusEl = $('#col_status');
+    const previewEl = $('#col_preview');
+    const cfgPreviewEl = $('#col_cfg_preview');
 
-    let sending = false;
+    cfgPreviewEl.textContent = [
+      'baseUrl: ' + (cfg.baseUrl || '(empty)'),
+      'workflow: ' + (hasWorkflow ? 'loaded' : 'missing'),
+      'workflowMap: ' + JSON.stringify(cfg.workflowMap || {}, null, 2)
+    ].join('\n');
 
-    const loadLast = ()=>{
-      const last = Storage.get('last_coloring', null);
-      if(!last) return;
-      $('#packSel').value = last.packId || (themes.packs?.[0]?.id||'jungle');
-      $('#ageSel').value = last.age || '2-5';
-      $('#subjectInput').value = last.subject || '';
-      $('#styleSel').value = last.style || 'coloring_clean';
-      $('#bgSel').value = last.background || 'low';
-      $('#sizeSel').value = String(last.size || 1024);
-      $('#seedInput').value = last.seed || '';
-      $('#posOut').value = last.pos || '';
-      $('#negOut').value = last.neg || '';
-    };
-
-    const build = ()=>{
-      const packId = $('#packSel').value;
-      const age = $('#ageSel').value;
-      const subject = ($('#subjectInput').value || '').trim();
-      if(!subject){ log('⚠️ Digite um assunto.'); return null; }
-      const style = $('#styleSel').value;
-      const background = $('#bgSel').value;
-      const size = parseInt($('#sizeSel').value, 10);
-      const seed = ($('#seedInput').value||'').trim();
-
-      const out = this.app.promptEngine.buildColoringPrompt({
-        packId, subject, age, style, background, size
-      });
-      $('#posOut').value = out.positive;
-      $('#negOut').value = out.negative;
-
-      Storage.set('last_coloring', { packId, age, subject, style, background, size, seed, pos: out.positive, neg: out.negative });
-      log('✅ Prompt gerado.');
-      return { packId, age, subject, style, background, size, seed, pos: out.positive, neg: out.negative };
-    };
-
-    const ensureComfyReady = ()=>{
-      const cfg = this.app.getConfig?.() || {};
-      if(!cfg.baseUrl){
-        log('⚠️ Falta Base URL. Vá em Config e salve o ComfyUI Base URL.');
-        return null;
-      }
-      if(!cfg.workflowJson){
-        log('⚠️ Falta Workflow JSON. Vá em Config e cole o Workflow (API).');
-        return null;
-      }
-      let workflow = null;
-      try { workflow = JSON.parse(cfg.workflowJson); }
-      catch(e){
-        log('❌ Workflow JSON inválido: ' + (e?.message||e));
-        return null;
-      }
-      if(!this.app.comfy || typeof this.app.comfy.enqueuePrompt !== 'function'){
-        log('❌ Bridge Comfy não carregou (this.app.comfy ausente). Recarregue a página.');
-        return null;
-      }
-      return { cfg, workflow };
-    };
-
-    const sendOnce = async(st, seedOverride=null)=>{
-      const ready = ensureComfyReady();
-      if(!ready) return null;
-
-      const { cfg, workflow } = ready;
-      const map = cfg.workflowMap || null;
-
-      const patched = this.app.comfy.patchWorkflowText(workflow, {
-        positive: st.pos,
-        negative: st.neg,
-        seed: seedOverride != null ? String(seedOverride) : st.seed,
-        size: st.size
-      }, map);
-
-      return await this.app.comfy.enqueuePrompt(patched);
-    };
-
-    $('#btnBuild').addEventListener('click', ()=>build());
-
-    $('#btnSave').addEventListener('click', ()=>{
-      const st = build();
-      if(!st) return;
-      const projects = Storage.get('projects', []);
-      const id = 'p_' + Date.now();
-      projects.unshift({ id, type:'coloring', createdAt: new Date().toISOString(), ...st });
-      Storage.set('projects', projects.slice(0,200));
-      log('💾 Projeto salvo.');
-    });
-
-    $('#btnPing').addEventListener('click', async()=>{
-      try{ await this.app.comfy.ping(); log('✅ ComfyUI OK'); }
-      catch(e){ log('❌ Falha ping: ' + (e?.message||e)); }
-    });
-
-    $('#btnQueue').addEventListener('click', async()=>{
-      try{ const q = await this.app.comfy.getQueue(); log('📦 Queue: ' + JSON.stringify(q)); }
-      catch(e){ log('❌ Falha queue: ' + (e?.message||e)); }
-    });
-
-    $('#btnSend').addEventListener('click', async()=>{
-      const st = build();
-      if(!st) return;
-
-      try{
-        log('➡️ Enviando (1)...');
-        const res = await sendOnce(st, null);
-        if(!res){
-          log('⛔ Não enviado: falta config (Base URL / Workflow) ou bridge Comfy.');
-          return;
+    $('#col_ping').onclick = async () => {
+      statusEl.textContent = 'Ping...';
+      try {
+        const comfy = this._getComfy();
+        if (!comfy || typeof comfy.ping !== 'function') {
+          throw new Error('Comfy bridge indisponível.');
         }
-        log('✅ Enviado. prompt_id=' + (res?.prompt_id||'?'));
 
-        // SAFE: preview só se existir
-        const fn = this.app.comfy?.tryGetLatestImages;
-        const imgs = (typeof fn === 'function') ? await fn.call(this.app.comfy) : [];
-        if(imgs?.length){
-          $('#imgOut').innerHTML = imgs.map(u=>`<img src="${u}" alt="output" />`).join('');
-          log('🖼️ Preview carregado (se CORS permitir).');
-        } else {
-          log('ℹ️ Sem preview aqui. Veja no ComfyUI.');
-        }
-      }catch(e){
-        log('❌ Erro ao enviar: ' + (e?.message||e));
+        const ok = await comfy.ping();
+        statusEl.textContent = ok ? '✅ ComfyUI respondeu.' : '⚠️ Sem resposta.';
+      } catch (e) {
+        statusEl.textContent = '❌ ' + shortErr(e, 200);
       }
-    });
-
-    const makeBatchPlan = ()=>{
-      const st = build();
-      if(!st) return null;
-      const N = parseInt($('#batchN').value,10);
-      const base = ($('#batchSeed').value||'').trim();
-      const baseSeed = base ? parseInt(base,10) : Math.floor(Math.random()*900000)+100000;
-
-      const plan = [];
-      for(let i=0;i<N;i++){
-        plan.push({ i, seed: baseSeed + i });
-      }
-      Storage.set('coloring:batch_plan', { createdAt: new Date().toISOString(), N, baseSeed, state: st, plan });
-      log(`📦 Batch plan criado ✅ N=${N} baseSeed=${baseSeed}`);
-      return { st, plan };
     };
 
-    $('#btnBatchPlan').addEventListener('click', ()=>makeBatchPlan());
-
-    $('#btnBatchSend').addEventListener('click', async()=>{
-      if(sending){ log('⏳ Já tem um envio em andamento...'); return; }
-      const built = makeBatchPlan();
-      if(!built) return;
-      const { st, plan } = built;
-
-      // Antes de começar batch, valida config/bridge UMA vez
-      const ready = ensureComfyReady();
-      if(!ready){
-        log('⛔ Batch cancelado: falta config (Base URL / Workflow) ou bridge Comfy.');
-        return;
-      }
-
-      sending = true;
-      try{
-        log(`➡️ Enviando batch (${plan.length})...`);
-        for(const item of plan){
-          log(`• ${item.i+1}/${plan.length} seed=${item.seed}`);
-          const res = await sendOnce(st, item.seed);
-          if(!res){
-            log('⛔ Batch interrompido: falha ao enviar (config/bridge).');
-            break;
-          }
-          log(`  ✅ prompt_id=${res?.prompt_id||'?'}`);
-          await new Promise(r=>setTimeout(r, 250));
+    $('#col_queue').onclick = async () => {
+      statusEl.textContent = 'Lendo queue...';
+      try {
+        const comfy = this._getComfy();
+        if (!comfy || typeof comfy.getQueue !== 'function') {
+          throw new Error('Comfy queue indisponível.');
         }
-        if(sending) log('🎉 Batch finalizado ✅');
-      }catch(e){
-        log('❌ Erro batch: ' + (e?.message||e));
-      }finally{
-        sending = false;
-      }
-    });
 
-    loadLast();
+        const queue = await comfy.getQueue();
+        statusEl.textContent = '✅ Queue carregada.';
+        cfgPreviewEl.textContent = [
+          'baseUrl: ' + (cfg.baseUrl || '(empty)'),
+          'workflow: ' + (hasWorkflow ? 'loaded' : 'missing'),
+          '',
+          'queue:',
+          JSON.stringify(queue, null, 2)
+        ].join('\n');
+      } catch (e) {
+        statusEl.textContent = '❌ ' + shortErr(e, 220);
+      }
+    };
+
+    $('#col_generate').onclick = async () => {
+      statusEl.textContent = 'Preparando workflow...';
+
+      try {
+        const comfy = this._getComfy();
+        if (!comfy) {
+          throw new Error('Comfy bridge indisponível.');
+        }
+
+        if (typeof comfy.enqueuePrompt !== 'function') {
+          throw new Error('enqueuePrompt() não disponível.');
+        }
+
+        const currentCfg = this._getConfig();
+        const rawWorkflow = this._getWorkflowObject(currentCfg);
+
+        if (!rawWorkflow || !Object.keys(rawWorkflow).length) {
+          throw new Error('Workflow não encontrado. Vá em Config e salve o Workflow JSON.');
+        }
+
+        const values = {
+          positive: ($('#col_prompt').value || '').trim(),
+          negative: ($('#col_negative').value || '').trim(),
+          steps: toSafeNumber($('#col_steps').value, 20),
+          size: toSafeNumber($('#col_size').value, 1024),
+          seed: normalizeSeed($('#col_seed').value)
+        };
+
+        let patchedWorkflow = rawWorkflow;
+
+        if (typeof comfy.patchWorkflowText === 'function') {
+          patchedWorkflow = comfy.patchWorkflowText(
+            rawWorkflow,
+            values,
+            currentCfg.workflowMap || {}
+          );
+        }
+
+        statusEl.textContent = 'Enviando para o ComfyUI...';
+        const result = await comfy.enqueuePrompt(patchedWorkflow);
+
+        statusEl.textContent = '✅ Prompt enviado.';
+        cfgPreviewEl.textContent = [
+          'baseUrl: ' + (currentCfg.baseUrl || '(empty)'),
+          'workflow: loaded',
+          '',
+          'lastResult:',
+          JSON.stringify(result, null, 2)
+        ].join('\n');
+
+        await this._refreshPreview(previewEl, statusEl);
+      } catch (e) {
+        statusEl.textContent = '❌ ' + shortErr(e, 240);
+      }
+    };
+
+    if (this.lastImages && this.lastImages.length) {
+      renderImages(previewEl, this.lastImages);
+    } else {
+      previewEl.innerHTML = '<p class="muted">Nenhuma imagem ainda.</p>';
+    }
   }
+
+  _getComfy(){
+    if (this.app && this.app.comfy) return this.app.comfy;
+    return null;
+  }
+
+  _getConfig(){
+    const cfg = this.app && typeof this.app.getConfig === 'function'
+      ? this.app.getConfig()
+      : (Storage.get('config', {}) || {});
+
+    return normalizeCfg(cfg);
+  }
+
+  _getWorkflowObject(cfg){
+    const safe = cfg || {};
+
+    if (safe.workflow && typeof safe.workflow === 'object' && Object.keys(safe.workflow).length) {
+      return safe.workflow;
+    }
+
+    if (safe.workflowText) {
+      try {
+        return JSON.parse(safe.workflowText);
+      } catch (e) {
+        return {};
+      }
+    }
+
+    return {};
+  }
+
+  async _refreshPreview(previewEl, statusEl){
+    const comfy = this._getComfy();
+
+    if (!comfy || typeof comfy.tryGetLatestImages !== 'function') {
+      return;
+    }
+
+    statusEl.textContent = 'Buscando preview...';
+
+    let tries = 0;
+    let imgs = [];
+
+    while (tries < 6) {
+      try {
+        imgs = await comfy.tryGetLatestImages();
+      } catch (e) {
+        imgs = [];
+      }
+
+      if (imgs && imgs.length) break;
+
+      tries += 1;
+      await delay(1500);
+    }
+
+    this.lastImages = Array.isArray(imgs) ? imgs.slice() : [];
+
+    if (this.lastImages.length) {
+      renderImages(previewEl, this.lastImages);
+      statusEl.textContent = '✅ Preview atualizado.';
+    } else {
+      previewEl.innerHTML = '<p class="muted">Ainda sem imagens retornadas pelo ComfyUI.</p>';
+      statusEl.textContent = '⚠️ Prompt enviado, mas sem preview ainda.';
+    }
+  }
+}
+
+function normalizeCfg(cfg){
+  const safe = cfg && typeof cfg === 'object' ? cfg : {};
+  const workflow = safe.workflow && typeof safe.workflow === 'object' ? safe.workflow : {};
+  const workflowText = safe.workflowJson
+    ? String(safe.workflowJson)
+    : (Object.keys(workflow).length ? JSON.stringify(workflow, null, 2) : '');
+
+  return {
+    baseUrl: String(safe.baseUrl || safe.comfyBase || '').trim(),
+    comfyBase: String(safe.comfyBase || safe.baseUrl || '').trim(),
+    workflow: workflow,
+    workflowText: workflowText,
+    workflowMap: safe.workflowMap && typeof safe.workflowMap === 'object' ? safe.workflowMap : {}
+  };
+}
+
+function renderImages(root, images){
+  const imgs = Array.isArray(images) ? images : [];
+
+  if (!imgs.length) {
+    root.innerHTML = '<p class="muted">Nenhuma imagem ainda.</p>';
+    return;
+  }
+
+  const html = imgs.map(function(url, i){
+    return `
+      <div class="card" style="margin-bottom:12px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <strong>Imagem ${i + 1}</strong>
+          <a class="btn secondary" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">Abrir</a>
+        </div>
+        <div class="sep"></div>
+        <img src="${escapeAttr(url)}" alt="Generated image ${i + 1}" style="width:100%;height:auto;display:block;border-radius:12px" />
+      </div>
+    `;
+  }).join('');
+
+  root.innerHTML = html;
+}
+
+function delay(ms){
+  return new Promise(function(resolve){
+    setTimeout(resolve, ms);
+  });
+}
+
+function toSafeNumber(value, fallback){
+  var n = Number(value);
+  if (!isFinite(n)) return fallback;
+  return n;
+}
+
+function normalizeSeed(value){
+  var raw = String(value == null ? '' : value).trim();
+  if (!raw || raw === '-1') {
+    return Math.floor(Math.random() * 2147483647);
+  }
+
+  var n = Number(raw);
+  if (!isFinite(n)) {
+    return Math.floor(Math.random() * 2147483647);
+  }
+
+  return Math.floor(n);
+}
+
+function shortErr(e, max){
+  var s = String((e && e.message) || e || '');
+  return s.slice(0, max || 160);
+}
+
+function escapeAttr(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
