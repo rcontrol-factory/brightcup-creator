@@ -1,14 +1,16 @@
 /* FILE: /js/modules/coloring_review.js */
-// Bright Cub Creator — Coloring Review v0.1 SAFE
+// Bright Cub Creator — Coloring Review v0.2 SAFE
 // Objetivo:
 // - revisão visual/humana do coloring pipeline
-// - sem imagem real ainda
 // - gate humano antes do PDF
+// - integração com preflight gate
+// - sem imagem real ainda
 // - sem dependências externas
 // - compatível com Safari/iOS
 
 import { Storage } from '../core/storage.js';
 import { rebuildGenerationQueues } from '../core/generation_queue.js';
+import { evaluateColoringPreflight } from '../core/preflight_gate.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -185,8 +187,10 @@ function renderSceneCard(scene){
       </div>
 
       <div class="crv-placeholder">
-        <div class="crv-placeholder-label">VISUAL REVIEW PLACEHOLDER</div>
-        <div class="crv-placeholder-note">Future generated image preview</div>
+        <div>
+          <div class="crv-placeholder-label">VISUAL REVIEW PLACEHOLDER</div>
+          <div class="crv-placeholder-note">Future generated image preview</div>
+        </div>
       </div>
 
       <div class="crv-tags">${tags}</div>
@@ -238,8 +242,10 @@ function renderPage(scene){
         </div>
 
         <div class="crv-page-placeholder">
-          <div class="crv-placeholder-label">VISUAL REVIEW PLACEHOLDER</div>
-          <div class="crv-placeholder-note">Future generated image preview</div>
+          <div>
+            <div class="crv-placeholder-label">VISUAL REVIEW PLACEHOLDER</div>
+            <div class="crv-placeholder-note">Future generated image preview</div>
+          </div>
         </div>
 
         <div class="crv-page-footer">
@@ -274,6 +280,57 @@ function renderPage(scene){
             <button class="btn" data-review-action="reject">Reject</button>
             <button class="btn secondary" data-review-action="redo">Needs Redo</button>
           </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPreflightReport(result){
+  if (!result) return '<p class="muted">No preflight yet.</p>';
+
+  var issues = Array.isArray(result.issues) ? result.issues : [];
+  var warnings = Array.isArray(result.warnings) ? result.warnings : [];
+  var stats = result.stats || {};
+
+  return `
+    <div class="crv-preflight-box ${result.canProceed ? 'is-pass' : 'is-block'}">
+      <div class="crv-preflight-head">
+        <div class="crv-preflight-title">Preflight Status</div>
+        <div class="crv-preflight-badge ${result.canProceed ? 'is-pass' : 'is-block'}">
+          ${result.canProceed ? 'READY TO PROCEED' : 'NOT READY'}
+        </div>
+      </div>
+
+      <div class="crv-preflight-summary">${esc(result.summary || '')}</div>
+
+      <div class="crv-preflight-stats">
+        <div><b>canProceed:</b> ${esc(String(!!result.canProceed))}</div>
+        <div><b>totalScenes:</b> ${esc(String(stats.totalScenes || 0))}</div>
+        <div><b>approvedForBook:</b> ${esc(String(stats.approvedForBook || 0))}</div>
+        <div><b>rejected:</b> ${esc(String(stats.rejected || 0))}</div>
+        <div><b>needsRedo:</b> ${esc(String(stats.needsRedo || 0))}</div>
+        <div><b>pendingReview:</b> ${esc(String(stats.pendingReview || 0))}</div>
+        <div><b>pageTarget:</b> ${esc(String(stats.pageTarget || 0))}</div>
+      </div>
+
+      <div class="crv-preflight-list-wrap">
+        <div class="crv-preflight-col">
+          <div class="crv-preflight-subtitle">Issues</div>
+          ${
+            issues.length
+              ? '<ul class="crv-preflight-list">' + issues.map(function(item){ return '<li>' + esc(item) + '</li>'; }).join('') + '</ul>'
+              : '<p class="muted">No issues.</p>'
+          }
+        </div>
+
+        <div class="crv-preflight-col">
+          <div class="crv-preflight-subtitle">Warnings</div>
+          ${
+            warnings.length
+              ? '<ul class="crv-preflight-list">' + warnings.map(function(item){ return '<li>' + esc(item) + '</li>'; }).join('') + '</ul>'
+              : '<p class="muted">No warnings.</p>'
+          }
         </div>
       </div>
     </div>
@@ -334,6 +391,7 @@ export class ColoringReviewModule {
 
     var plan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
     var hasPlan = !!(plan && plan.theme && Array.isArray(plan.scenes) && plan.scenes.length);
+    var preflight = hasPlan ? evaluateColoringPreflight(plan) : null;
 
     function saveSeed(next){
       Storage.set('coloring:review_seed', next || {
@@ -593,12 +651,92 @@ export class ColoringReviewModule {
           white-space:nowrap;
         }
 
+        .crv-preflight-box{
+          margin-top:14px;
+          border:1px solid rgba(255,255,255,.10);
+          border-radius:14px;
+          padding:14px;
+          background:rgba(255,255,255,.03);
+          display:grid;
+          gap:12px;
+        }
+        .crv-preflight-box.is-pass{
+          border-color: rgba(90,210,120,.35);
+          box-shadow: 0 0 0 1px rgba(90,210,120,.12) inset;
+        }
+        .crv-preflight-box.is-block{
+          border-color: rgba(255,110,110,.35);
+          box-shadow: 0 0 0 1px rgba(255,110,110,.12) inset;
+        }
+        .crv-preflight-head{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:10px;
+          flex-wrap:wrap;
+        }
+        .crv-preflight-title{
+          font-size:14px;
+          font-weight:900;
+          letter-spacing:.3px;
+        }
+        .crv-preflight-badge{
+          font-size:11px;
+          font-weight:900;
+          text-transform:uppercase;
+          letter-spacing:.5px;
+          padding:6px 10px;
+          border-radius:999px;
+          border:1px solid rgba(255,255,255,.12);
+        }
+        .crv-preflight-badge.is-pass{
+          background: rgba(90,210,120,.12);
+        }
+        .crv-preflight-badge.is-block{
+          background: rgba(255,110,110,.12);
+        }
+        .crv-preflight-summary{
+          font-size:13px;
+          line-height:1.4;
+          opacity:.92;
+        }
+        .crv-preflight-stats{
+          display:grid;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap:8px 12px;
+          font-size:12px;
+          opacity:.9;
+        }
+        .crv-preflight-list-wrap{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap:14px;
+        }
+        .crv-preflight-col{
+          min-width:0;
+        }
+        .crv-preflight-subtitle{
+          font-size:12px;
+          font-weight:900;
+          text-transform:uppercase;
+          letter-spacing:.4px;
+          opacity:.8;
+          margin-bottom:6px;
+        }
+        .crv-preflight-list{
+          margin:0;
+          padding-left:18px;
+          font-size:13px;
+          line-height:1.4;
+        }
+
         @media (max-width: 640px){
           .crv-paper-inner{ padding:14px; gap:12px; }
           .crv-page-title{ font-size:20px; }
           .crv-card-head{ grid-template-columns:auto 1fr; }
           .crv-badges{ grid-column:1 / -1; }
           .crv-actions{ flex-direction:column; }
+          .crv-preflight-list-wrap{ grid-template-columns: 1fr; }
         }
       </style>
 
@@ -616,9 +754,13 @@ export class ColoringReviewModule {
 
     var area = root.querySelector('#crv_area');
 
+    function refreshPreflight(){
+      preflight = plan && plan.scenes && plan.scenes.length ? evaluateColoringPreflight(plan) : null;
+    }
+
     function bindReviewActions(scope, repaint){
       var buttons = scope.querySelectorAll('[data-review-action]');
-      buttons.forEach(function(btn){
+      Array.prototype.forEach.call(buttons, function(btn){
         btn.onclick = function(){
           var action = btn.getAttribute('data-review-action') || '';
           var actionsBox = btn.closest('[data-scene-id]');
@@ -628,6 +770,7 @@ export class ColoringReviewModule {
 
           plan = applyReviewToPlan(plan, sceneId, action);
           persistPlan(plan);
+          refreshPreflight();
 
           if (this.app && this.app.toast) {
             if (action === 'approve') this.app.toast('Approved for book ✅');
@@ -667,6 +810,8 @@ export class ColoringReviewModule {
         return;
       }
 
+      refreshPreflight();
+
       var mode = seed.mode === 'LISTA' ? 'LISTA' : 'FOLHEAR';
       var pageIndex = Math.max(0, Math.min(seed.pageIndex || 0, plan.scenes.length - 1));
 
@@ -697,6 +842,7 @@ export class ColoringReviewModule {
             </div>
 
             ${renderReviewSummary(plan)}
+            ${renderPreflightReport(preflight)}
 
             <div class="crv-list">
               ${plan.scenes.map(renderSceneCard).join('')}
@@ -734,6 +880,7 @@ export class ColoringReviewModule {
           </div>
 
           ${renderReviewSummary(plan)}
+          ${renderPreflightReport(preflight)}
 
           <div class="crv-paper-wrap">
             ${renderPage(current)}
