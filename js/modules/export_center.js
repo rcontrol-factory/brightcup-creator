@@ -1,11 +1,12 @@
 /* FILE: /js/modules/export_center.js */
-// Bright Cup Creator — Export Center v0.5 SAFE
+// Bright Cup Creator — Export Center v0.6 SAFE
 // Consolida visualmente a etapa final do pipeline de exportação
 // - preflight
 // - manifest
 // - metadata
 // - package
 // - zip payload
+// - pdf export prep
 // - ainda sem PDF real
 // - ainda sem ZIP real
 // - sem dependências externas
@@ -18,6 +19,7 @@ import { buildColoringMetadata } from '../core/metadata_builder.js';
 import { buildColoringProjectBundle } from '../core/project_bundle.js';
 import { buildColoringExportPackage } from '../core/export_package.js';
 import { buildZipExportPayload } from '../core/zip_export.js';
+import { buildPdfExportPrep } from '../core/pdf_export_prep.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -242,6 +244,42 @@ function safeBuildZipPayload(pkg){
   }
 }
 
+function safeBuildPdfPrep(plan){
+  try {
+    return buildPdfExportPrep(plan || {});
+  } catch (e) {
+    var safePlan = normalizePlan(plan || {});
+    return {
+      prepVersion: '1.0',
+      type: 'brightcup_pdf_export_prep',
+      generatedAt: '',
+      canBuildPdf: false,
+      summary: 'PDF export prep failed.',
+      book: {
+        id: safePlan.id || '',
+        theme: safePlan.theme || '',
+        ageGroup: safePlan.ageGroup || '',
+        language: safePlan.language || 'en',
+        style: safePlan.style || '',
+        pageTarget: safePlan.pageTarget || 0,
+        status: safePlan.status || 'idle',
+        createdAt: safePlan.createdAt || '',
+        updatedAt: safePlan.updatedAt || '',
+        notes: safePlan.notes || ''
+      },
+      pages: [],
+      stats: {
+        totalScenes: Array.isArray(safePlan.scenes) ? safePlan.scenes.length : 0,
+        eligiblePages: 0,
+        pageTarget: safePlan.pageTarget || 0,
+        missingApprovedPages: safePlan.pageTarget || 0,
+        preflightCanProceed: false
+      },
+      preflight: safeEvaluatePreflight(safePlan)
+    };
+  }
+}
+
 function downloadJson(filename, obj){
   var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   var a = document.createElement('a');
@@ -439,6 +477,37 @@ function renderZipPayloadSummary(payload){
   `;
 }
 
+function renderPdfPrepSummary(pdfPrep){
+  if (!pdfPrep) {
+    return `
+      <div class="ec-grid">
+        <div class="ec-item"><span class="k">Type</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Prep Version</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Generated At</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">canBuildPdf</span><span class="v">false</span></div>
+        <div class="ec-item"><span class="k">Eligible Pages</span><span class="v">0</span></div>
+        <div class="ec-item"><span class="k">Page Target</span><span class="v">0</span></div>
+        <div class="ec-item"><span class="k">Missing Approved Pages</span><span class="v">0</span></div>
+      </div>
+    `;
+  }
+
+  var stats = pdfPrep.stats || {};
+
+  return `
+    <div class="ec-grid">
+      <div class="ec-item"><span class="k">Type</span><span class="v">${esc(pdfPrep.type || '-')}</span></div>
+      <div class="ec-item"><span class="k">Prep Version</span><span class="v">${esc(pdfPrep.prepVersion || '-')}</span></div>
+      <div class="ec-item"><span class="k">Generated At</span><span class="v">${esc(pdfPrep.generatedAt || '-')}</span></div>
+      <div class="ec-item"><span class="k">canBuildPdf</span><span class="v">${esc(String(!!pdfPrep.canBuildPdf))}</span></div>
+      <div class="ec-item"><span class="k">Eligible Pages</span><span class="v">${esc(String(stats.eligiblePages || 0))}</span></div>
+      <div class="ec-item"><span class="k">Page Target</span><span class="v">${esc(String(stats.pageTarget || 0))}</span></div>
+      <div class="ec-item"><span class="k">Missing Approved Pages</span><span class="v">${esc(String(stats.missingApprovedPages || 0))}</span></div>
+    </div>
+    <div class="ec-summary">${esc(pdfPrep.summary || '-')}</div>
+  `;
+}
+
 export class ExportCenterModule {
   constructor(app){
     this.app = app;
@@ -458,6 +527,7 @@ export class ExportCenterModule {
     var currentBundle = hasPlan ? safeBuildBundle(currentPlan) : null;
     var currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
     var currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
+    var currentPdfPrep = hasPlan ? safeBuildPdfPrep(currentPlan) : null;
 
     root.innerHTML = `
       <style>
@@ -605,6 +675,7 @@ export class ExportCenterModule {
       currentBundle = hasPlan ? safeBuildBundle(currentPlan) : null;
       currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
       currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
+      currentPdfPrep = hasPlan ? safeBuildPdfPrep(currentPlan) : null;
     }
 
     function paint(){
@@ -673,12 +744,19 @@ export class ExportCenterModule {
           ${currentZipPayload ? `<pre class="ec-code">${esc(JSON.stringify(currentZipPayload, null, 2))}</pre>` : ''}
         </div>
 
+        <div class="card">
+          <h3>PDF Export Prep</h3>
+          ${renderPdfPrepSummary(currentPdfPrep)}
+          ${currentPdfPrep ? `<pre class="ec-code">${esc(JSON.stringify(currentPdfPrep, null, 2))}</pre>` : ''}
+        </div>
+
         <div class="ec-actions">
           <button class="btn primary" id="ec_rebuild">Rebuild Export Data</button>
           <button class="btn" id="ec_download_manifest">Download Manifest JSON</button>
           <button class="btn" id="ec_download_metadata">Download Metadata JSON</button>
           <button class="btn" id="ec_download_package">Download Export Package JSON</button>
           <button class="btn" id="ec_download_zip_payload">Download ZIP Payload JSON</button>
+          <button class="btn" id="ec_download_pdf_prep">Download PDF Export Prep JSON</button>
           <button class="btn secondary" id="ec_reload">Reload Project</button>
         </div>
       `;
@@ -688,6 +766,7 @@ export class ExportCenterModule {
       var downloadMetadataBtn = area.querySelector('#ec_download_metadata');
       var downloadPackageBtn = area.querySelector('#ec_download_package');
       var downloadZipPayloadBtn = area.querySelector('#ec_download_zip_payload');
+      var downloadPdfPrepBtn = area.querySelector('#ec_download_pdf_prep');
       var reloadBtn = area.querySelector('#ec_reload');
 
       if (rebuildBtn) {
@@ -770,6 +849,24 @@ export class ExportCenterModule {
             if (self.app && self.app.toast) self.app.toast('ZIP payload downloaded ✅');
           } catch (e) {
             if (self.app && self.app.toast) self.app.toast('Failed to download ZIP payload', 'err');
+          }
+        };
+      }
+
+      if (downloadPdfPrepBtn) {
+        downloadPdfPrepBtn.onclick = function(){
+          try {
+            if (!currentPdfPrep) rebuildAll();
+            if (!currentPdfPrep) throw new Error('PDF export prep unavailable');
+
+            downloadJson(
+              'pdf-export-prep-' + (currentPlan.id || 'project') + '.json',
+              currentPdfPrep
+            );
+
+            if (self.app && self.app.toast) self.app.toast('PDF export prep downloaded ✅');
+          } catch (e) {
+            if (self.app && self.app.toast) self.app.toast('Failed to download PDF export prep', 'err');
           }
         };
       }
