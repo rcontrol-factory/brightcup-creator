@@ -1,8 +1,8 @@
 /* FILE: /js/modules/export_center.js */
-// Bright Cub Creator — Export Center v0.1 SAFE
+// Bright Cup Creator — Export Center v0.2 SAFE
 // Objetivo:
 // - centro visual de exportação do pipeline editorial
-// - usa preflight + export manifest
+// - usa preflight + export manifest + metadata builder
 // - sem PDF ainda
 // - sem ZIP ainda
 // - compatível com Safari/iOS
@@ -11,6 +11,7 @@
 import { Storage } from '../core/storage.js';
 import { evaluateColoringPreflight } from '../core/preflight_gate.js';
 import { buildColoringExportManifest } from '../core/export_manifest.js';
+import { buildColoringMetadata } from '../core/metadata_builder.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -82,6 +83,14 @@ function safeEvaluatePreflight(plan){
 function safeBuildManifest(plan, preflight){
   try {
     return buildColoringExportManifest(plan || {}, preflight || {});
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeBuildMetadata(plan){
+  try {
+    return buildColoringMetadata(plan || {});
   } catch (e) {
     return null;
   }
@@ -183,6 +192,35 @@ function renderManifestSummary(manifest){
   `;
 }
 
+function renderMetadataSummary(metadata){
+  if (!metadata) {
+    return `
+      <div class="ec-grid">
+        <div class="ec-item"><span class="k">Title</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Subtitle</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Language</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Keywords Count</span><span class="v">0</span></div>
+        <div class="ec-item"><span class="k">Categories Count</span><span class="v">0</span></div>
+      </div>
+      <div class="ec-summary">-</div>
+    `;
+  }
+
+  var keywordsCount = Array.isArray(metadata.keywords) ? metadata.keywords.length : 0;
+  var categoriesCount = Array.isArray(metadata.categories) ? metadata.categories.length : 0;
+
+  return `
+    <div class="ec-grid">
+      <div class="ec-item"><span class="k">Title</span><span class="v">${esc(metadata.title || '-')}</span></div>
+      <div class="ec-item"><span class="k">Subtitle</span><span class="v">${esc(metadata.subtitle || '-')}</span></div>
+      <div class="ec-item"><span class="k">Language</span><span class="v">${esc(metadata.language || '-')}</span></div>
+      <div class="ec-item"><span class="k">Keywords Count</span><span class="v">${esc(String(keywordsCount))}</span></div>
+      <div class="ec-item"><span class="k">Categories Count</span><span class="v">${esc(String(categoriesCount))}</span></div>
+    </div>
+    <div class="ec-summary">${esc(metadata.description || '-')}</div>
+  `;
+}
+
 export class ExportCenterModule {
   constructor(app){
     this.app = app;
@@ -197,6 +235,7 @@ export class ExportCenterModule {
     var hasPlan = !!(currentPlan && currentPlan.id && currentPlan.theme && Array.isArray(currentPlan.scenes) && currentPlan.scenes.length);
     var currentPreflight = hasPlan ? safeEvaluatePreflight(currentPlan) : null;
     var currentManifest = null;
+    var currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
 
     root.innerHTML = `
       <style>
@@ -324,7 +363,7 @@ export class ExportCenterModule {
           <h2>Export Center</h2>
           <p class="muted">
             Centro visual de exportação do projeto editorial.
-            Nesta fase você confere o pipeline, o preflight e o manifesto JSON antes das futuras etapas de PDF e ZIP.
+            Nesta fase você confere o pipeline, o preflight, o manifesto JSON e os metadados editoriais antes das futuras etapas de PDF e ZIP.
           </p>
           <div id="ec_area"></div>
         </div>
@@ -337,6 +376,7 @@ export class ExportCenterModule {
       currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
       hasPlan = !!(currentPlan && currentPlan.id && currentPlan.theme && Array.isArray(currentPlan.scenes) && currentPlan.scenes.length);
       currentPreflight = hasPlan ? safeEvaluatePreflight(currentPlan) : null;
+      currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
 
       if (!hasPlan) {
         area.innerHTML = `
@@ -353,6 +393,7 @@ export class ExportCenterModule {
         if (reloadOnlyBtn) {
           reloadOnlyBtn.onclick = function(){
             currentManifest = null;
+            currentMetadata = null;
             paint();
             if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
           }.bind(this);
@@ -378,15 +419,23 @@ export class ExportCenterModule {
           ${currentManifest ? `<pre class="ec-code">${esc(JSON.stringify(currentManifest, null, 2))}</pre>` : ''}
         </div>
 
+        <div class="card">
+          <h3>Metadata Summary</h3>
+          ${renderMetadataSummary(currentMetadata)}
+          ${currentMetadata ? `<pre class="ec-code">${esc(JSON.stringify(currentMetadata, null, 2))}</pre>` : ''}
+        </div>
+
         <div class="ec-actions">
           <button class="btn primary" id="ec_build_manifest">Build Manifest</button>
           <button class="btn" id="ec_download_manifest">Download Manifest JSON</button>
+          <button class="btn" id="ec_download_metadata">Download Metadata JSON</button>
           <button class="btn secondary" id="ec_reload">Reload Project</button>
         </div>
       `;
 
       var buildBtn = area.querySelector('#ec_build_manifest');
       var downloadBtn = area.querySelector('#ec_download_manifest');
+      var downloadMetadataBtn = area.querySelector('#ec_download_metadata');
       var reloadBtn = area.querySelector('#ec_reload');
 
       if (buildBtn) {
@@ -395,6 +444,7 @@ export class ExportCenterModule {
             currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
             currentPreflight = safeEvaluatePreflight(currentPlan);
             currentManifest = safeBuildManifest(currentPlan, currentPreflight);
+            currentMetadata = safeBuildMetadata(currentPlan);
 
             paint();
 
@@ -430,9 +480,34 @@ export class ExportCenterModule {
         }.bind(this);
       }
 
+      if (downloadMetadataBtn) {
+        downloadMetadataBtn.onclick = function(){
+          try {
+            if (!currentMetadata) {
+              currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
+              currentMetadata = safeBuildMetadata(currentPlan);
+            }
+
+            if (!currentMetadata) {
+              throw new Error('Metadata unavailable');
+            }
+
+            downloadJson(
+              'metadata-' + (currentPlan.id || 'project') + '.json',
+              currentMetadata
+            );
+
+            if (this.app && this.app.toast) this.app.toast('Metadata downloaded ✅');
+          } catch (e) {
+            if (this.app && this.app.toast) this.app.toast('Failed to download metadata', 'err');
+          }
+        }.bind(this);
+      }
+
       if (reloadBtn) {
         reloadBtn.onclick = function(){
           currentManifest = null;
+          currentMetadata = null;
           paint();
           if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
         }.bind(this);
