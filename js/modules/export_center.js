@@ -1,10 +1,10 @@
 /* FILE: /js/modules/export_center.js */
-// Bright Cup Creator — Export Center v0.3 SAFE
+// Bright Cup Creator — Export Center v0.4 SAFE
 // Objetivo:
 // - centro visual de exportação do pipeline editorial
-// - usa preflight + export manifest + metadata builder + export package
+// - usa preflight + export manifest + metadata builder + export package + zip payload
 // - sem PDF ainda
-// - sem ZIP ainda
+// - sem ZIP real ainda
 // - compatível com Safari/iOS
 // - sem dependências externas
 
@@ -13,6 +13,7 @@ import { evaluateColoringPreflight } from '../core/preflight_gate.js';
 import { buildColoringExportManifest } from '../core/export_manifest.js';
 import { buildColoringMetadata } from '../core/metadata_builder.js';
 import { buildColoringExportPackage } from '../core/export_package.js';
+import { buildZipExportPayload } from '../core/zip_export.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -100,6 +101,14 @@ function safeBuildMetadata(plan){
 function safeBuildPackage(plan){
   try {
     return buildColoringExportPackage(plan || {});
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeBuildZipPayload(pkg){
+  try {
+    return buildZipExportPayload(pkg || {});
   } catch (e) {
     return null;
   }
@@ -255,6 +264,29 @@ function renderPackageSummary(pkg){
   `;
 }
 
+function renderZipPayloadSummary(payload){
+  if (!payload) {
+    return `
+      <div class="ec-grid">
+        <div class="ec-item"><span class="k">Type</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">ZIP Version</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Generated At</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Files Count</span><span class="v">0</span></div>
+      </div>
+    `;
+  }
+
+  var files = Array.isArray(payload.files) ? payload.files : [];
+  return `
+    <div class="ec-grid">
+      <div class="ec-item"><span class="k">Type</span><span class="v">${esc(payload.type || '-')}</span></div>
+      <div class="ec-item"><span class="k">ZIP Version</span><span class="v">${esc(payload.zipVersion || '-')}</span></div>
+      <div class="ec-item"><span class="k">Generated At</span><span class="v">${esc(payload.generatedAt || '-')}</span></div>
+      <div class="ec-item"><span class="k">Files Count</span><span class="v">${esc(String(files.length))}</span></div>
+    </div>
+  `;
+}
+
 export class ExportCenterModule {
   constructor(app){
     this.app = app;
@@ -271,6 +303,7 @@ export class ExportCenterModule {
     var currentManifest = null;
     var currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
     var currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
+    var currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
 
     root.innerHTML = `
       <style>
@@ -398,7 +431,7 @@ export class ExportCenterModule {
           <h2>Export Center</h2>
           <p class="muted">
             Centro visual de exportação do projeto editorial.
-            Nesta fase você confere o pipeline, o preflight, o manifesto JSON, os metadados editoriais e o pacote final antes das futuras etapas de PDF e ZIP.
+            Nesta fase você confere o pipeline, o preflight, o manifesto JSON, os metadados editoriais, o package final e o ZIP payload antes das futuras etapas de PDF e ZIP real.
           </p>
           <div id="ec_area"></div>
         </div>
@@ -413,6 +446,7 @@ export class ExportCenterModule {
       currentPreflight = hasPlan ? safeEvaluatePreflight(currentPlan) : null;
       currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
       currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
+      currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
 
       if (!hasPlan) {
         area.innerHTML = `
@@ -431,6 +465,7 @@ export class ExportCenterModule {
             currentManifest = null;
             currentMetadata = null;
             currentPackage = null;
+            currentZipPayload = null;
             paint();
             if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
           }.bind(this);
@@ -468,11 +503,18 @@ export class ExportCenterModule {
           ${currentPackage ? `<pre class="ec-code">${esc(JSON.stringify(currentPackage, null, 2))}</pre>` : ''}
         </div>
 
+        <div class="card">
+          <h3>ZIP Payload Summary</h3>
+          ${renderZipPayloadSummary(currentZipPayload)}
+          ${currentZipPayload ? `<pre class="ec-code">${esc(JSON.stringify(currentZipPayload, null, 2))}</pre>` : ''}
+        </div>
+
         <div class="ec-actions">
           <button class="btn primary" id="ec_build_manifest">Build Manifest</button>
           <button class="btn" id="ec_download_manifest">Download Manifest JSON</button>
           <button class="btn" id="ec_download_metadata">Download Metadata JSON</button>
           <button class="btn" id="ec_download_package">Download Export Package JSON</button>
+          <button class="btn" id="ec_download_zip_payload">Download ZIP Payload JSON</button>
           <button class="btn secondary" id="ec_reload">Reload Project</button>
         </div>
       `;
@@ -481,6 +523,7 @@ export class ExportCenterModule {
       var downloadBtn = area.querySelector('#ec_download_manifest');
       var downloadMetadataBtn = area.querySelector('#ec_download_metadata');
       var downloadPackageBtn = area.querySelector('#ec_download_package');
+      var downloadZipPayloadBtn = area.querySelector('#ec_download_zip_payload');
       var reloadBtn = area.querySelector('#ec_reload');
 
       if (buildBtn) {
@@ -491,6 +534,7 @@ export class ExportCenterModule {
             currentManifest = safeBuildManifest(currentPlan, currentPreflight);
             currentMetadata = safeBuildMetadata(currentPlan);
             currentPackage = safeBuildPackage(currentPlan);
+            currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
 
             paint();
 
@@ -574,11 +618,39 @@ export class ExportCenterModule {
         }.bind(this);
       }
 
+      if (downloadZipPayloadBtn) {
+        downloadZipPayloadBtn.onclick = function(){
+          try {
+            if (!currentZipPayload) {
+              if (!currentPackage) {
+                currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
+                currentPackage = safeBuildPackage(currentPlan);
+              }
+              currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
+            }
+
+            if (!currentZipPayload) {
+              throw new Error('ZIP payload unavailable');
+            }
+
+            downloadJson(
+              'zip-payload-' + (currentPlan.id || 'project') + '.json',
+              currentZipPayload
+            );
+
+            if (this.app && this.app.toast) this.app.toast('ZIP payload downloaded ✅');
+          } catch (e) {
+            if (this.app && this.app.toast) this.app.toast('Failed to download ZIP payload', 'err');
+          }
+        }.bind(this);
+      }
+
       if (reloadBtn) {
         reloadBtn.onclick = function(){
           currentManifest = null;
           currentMetadata = null;
           currentPackage = null;
+          currentZipPayload = null;
           paint();
           if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
         }.bind(this);
