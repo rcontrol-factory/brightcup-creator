@@ -1,9 +1,10 @@
 /* FILE: /js/modules/coloring_agent.js */
-// Bright Cub Creator — Coloring Agent v0.3 SAFE
+// Bright Cub Creator — Coloring Agent v0.4 SAFE
 // Objetivo:
 // - planejamento e controle de coloring books
 // - integração com validador lógico de qualidade
 // - integração com fila lógica de geração
+// - integração com batch runner lógico
 // - sem geração de imagem ainda
 // - compatível com Safari/iOS
 
@@ -17,6 +18,12 @@ import {
   rejectScene,
   incrementSceneAttempts
 } from '../core/generation_queue.js';
+import {
+  runNextBatchStep,
+  finalizeSceneSuccess,
+  finalizeSceneFailure,
+  getBatchRunnerState
+} from '../core/batch_runner.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -443,6 +450,31 @@ function renderQueueReport(plan){
   ].join('\n');
 }
 
+function renderBatchRunnerReport(state){
+  if (!state) return 'No batch runner state yet.';
+
+  var counts = state.counts || {};
+  var processing = state.processingScene || null;
+  var nextPending = state.nextPendingScene || null;
+
+  return [
+    'status: ' + (state.status || 'idle'),
+    '',
+    'processingScene:',
+    processing ? ('- ' + processing.title + ' [' + processing.id + ']') : '- none',
+    '',
+    'nextPendingScene:',
+    nextPending ? ('- ' + nextPending.title + ' [' + nextPending.id + ']') : '- none',
+    '',
+    'counts:',
+    '- scenes: ' + String(counts.scenes || 0),
+    '- pending: ' + String(counts.pending || 0),
+    '- approved: ' + String(counts.approved || 0),
+    '- rejected: ' + String(counts.rejected || 0),
+    '- processing: ' + String(counts.processing || 0)
+  ].join('\n');
+}
+
 function findProcessingScene(plan){
   var scenes = plan && Array.isArray(plan.scenes) ? plan.scenes : [];
   var i;
@@ -483,7 +515,7 @@ export class ColoringAgentModule {
           <h2>Coloring Agent</h2>
           <p class="muted">
             Planejamento do livro de colorir. Esta etapa ainda não gera imagens.
-            Ela organiza o tema, a meta de páginas e a fila inicial de cenas.
+            Ela organiza o tema, a meta de páginas, a fila e o executor lógico de lote.
           </p>
 
           <div class="row">
@@ -532,6 +564,12 @@ export class ColoringAgentModule {
             <button id="ca_reject_current" class="btn">Reject Current Scene</button>
             <button id="ca_inc_attempts" class="btn secondary">+ Attempts on Current</button>
           </div>
+
+          <div class="row" style="margin-top:10px">
+            <button id="ca_run_batch_step" class="btn primary">Run Next Batch Step</button>
+            <button id="ca_finalize_success" class="btn">Finalize Current Success</button>
+            <button id="ca_finalize_failure" class="btn">Finalize Current Failure</button>
+          </div>
         </div>
 
         <div class="card">
@@ -550,6 +588,11 @@ export class ColoringAgentModule {
         </div>
 
         <div class="card">
+          <h2>Batch Runner State</h2>
+          <pre id="ca_batch" class="pre"></pre>
+        </div>
+
+        <div class="card">
           <h2>Scene List</h2>
           <pre id="ca_scenes" class="pre"></pre>
         </div>
@@ -560,10 +603,12 @@ export class ColoringAgentModule {
     var summaryEl = $('#ca_summary');
     var validationEl = $('#ca_validation');
     var queueEl = $('#ca_queue');
+    var batchEl = $('#ca_batch');
     var scenesEl = $('#ca_scenes');
 
     var currentPlan = hasExistingPlan ? rebuildGenerationQueues(existingPlan) : null;
     var currentValidation = currentPlan ? safeValidatePlan(currentPlan) : null;
+    var currentBatchState = currentPlan ? getBatchRunnerState(currentPlan) : null;
 
     function getFormData(){
       return {
@@ -589,10 +634,26 @@ export class ColoringAgentModule {
       currentValidation = currentPlan ? safeValidatePlan(currentPlan) : null;
     }
 
+    function refreshBatchState(){
+      currentBatchState = currentPlan ? getBatchRunnerState(currentPlan) : null;
+    }
+
+    function syncDerivedStates(){
+      rehydratePlan();
+      validateCurrentPlan();
+      refreshBatchState();
+    }
+
+    function persistCurrentPlan(){
+      if (!currentPlan) return;
+      Storage.set('coloring:book_plan', currentPlan);
+    }
+
     function paint(){
       summaryEl.textContent = currentPlan ? renderPlanSummary(currentPlan) : 'Nenhum plano gerado.';
       validationEl.textContent = currentValidation ? renderValidationReport(currentValidation) : 'No validation yet.';
       queueEl.textContent = currentPlan ? renderQueueReport(currentPlan) : 'No queue state yet.';
+      batchEl.textContent = currentBatchState ? renderBatchRunnerReport(currentBatchState) : 'No batch runner state yet.';
       scenesEl.textContent = currentPlan ? renderScenesText(currentPlan) : 'No scenes yet.';
     }
 
@@ -600,8 +661,7 @@ export class ColoringAgentModule {
       try {
         saveSeed();
         currentPlan = createPlanFromForm(getFormData());
-        currentPlan = rebuildGenerationQueues(currentPlan);
-        validateCurrentPlan();
+        syncDerivedStates();
         paint();
 
         if (this.app && this.app.toast) this.app.toast('Coloring plan generated ✅');
@@ -628,8 +688,7 @@ export class ColoringAgentModule {
 
         currentPlan.updatedAt = nowIso();
         currentPlan = normalizePlan(currentPlan);
-        currentPlan = rebuildGenerationQueues(currentPlan);
-        validateCurrentPlan();
+        syncDerivedStates();
 
         Storage.set('coloring:book_plan', currentPlan);
 
@@ -639,6 +698,7 @@ export class ColoringAgentModule {
             ts: Date.now(),
             plan: currentPlan,
             validation: currentValidation,
+            batchState: currentBatchState,
             seed: Storage.get('coloring:agent_seed', {})
           });
         }
@@ -654,8 +714,7 @@ export class ColoringAgentModule {
       try {
         var saved = Storage.get('coloring:book_plan', null);
         currentPlan = saved ? normalizePlan(saved) : null;
-        currentPlan = currentPlan ? rebuildGenerationQueues(currentPlan) : null;
-        validateCurrentPlan();
+        syncDerivedStates();
         paint();
         if (this.app && this.app.toast) this.app.toast('Saved plan reloaded ✅');
       } catch (e) {
@@ -682,7 +741,8 @@ export class ColoringAgentModule {
         if (!res.ok) throw new Error(res.error || 'Failed to mark processing');
 
         currentPlan = rebuildGenerationQueues(res.plan);
-        validateCurrentPlan();
+        syncDerivedStates();
+        persistCurrentPlan();
         paint();
 
         if (this.app && this.app.toast) this.app.toast('Scene in processing ✅');
@@ -713,7 +773,8 @@ export class ColoringAgentModule {
         if (!res.ok) throw new Error(res.error || 'Failed to approve');
 
         currentPlan = rebuildGenerationQueues(res.plan);
-        validateCurrentPlan();
+        syncDerivedStates();
+        persistCurrentPlan();
         paint();
 
         if (this.app && this.app.toast) this.app.toast('Scene approved ✅');
@@ -744,7 +805,8 @@ export class ColoringAgentModule {
         if (!res.ok) throw new Error(res.error || 'Failed to reject');
 
         currentPlan = rebuildGenerationQueues(res.plan);
-        validateCurrentPlan();
+        syncDerivedStates();
+        persistCurrentPlan();
         paint();
 
         if (this.app && this.app.toast) this.app.toast('Scene rejected ✅');
@@ -775,7 +837,8 @@ export class ColoringAgentModule {
         if (!res.ok) throw new Error(res.error || 'Failed to increment attempts');
 
         currentPlan = rebuildGenerationQueues(res.plan);
-        validateCurrentPlan();
+        syncDerivedStates();
+        persistCurrentPlan();
         paint();
 
         if (this.app && this.app.toast) this.app.toast('Attempts incremented ✅');
@@ -784,8 +847,86 @@ export class ColoringAgentModule {
       }
     };
 
-    rehydratePlan();
-    validateCurrentPlan();
+    $('#ca_run_batch_step').onclick = () => {
+      try {
+        if (!currentPlan) {
+          if (this.app && this.app.toast) this.app.toast('Generate a plan first');
+          return;
+        }
+
+        var res = runNextBatchStep(currentPlan);
+        if (!res.ok) throw new Error(res.message || 'Failed to run batch step');
+
+        currentPlan = rebuildGenerationQueues(res.plan);
+        syncDerivedStates();
+        persistCurrentPlan();
+        paint();
+
+        if (this.app && this.app.toast) this.app.toast(res.message || 'Batch step executed ✅');
+      } catch (e) {
+        if (this.app && this.app.toast) this.app.toast('Failed to run batch step', 'err');
+      }
+    };
+
+    $('#ca_finalize_success').onclick = () => {
+      try {
+        if (!currentPlan) {
+          if (this.app && this.app.toast) this.app.toast('Generate a plan first');
+          return;
+        }
+
+        var state = getBatchRunnerState(currentPlan);
+        var processing = state && state.processingScene ? state.processingScene : null;
+
+        if (!processing) {
+          if (this.app && this.app.toast) this.app.toast('No processing scene');
+          return;
+        }
+
+        var res = finalizeSceneSuccess(currentPlan, processing.id, { finalizedBy: 'manual-batch-success' });
+        if (!res.ok) throw new Error(res.message || 'Failed to finalize success');
+
+        currentPlan = rebuildGenerationQueues(res.plan);
+        syncDerivedStates();
+        persistCurrentPlan();
+        paint();
+
+        if (this.app && this.app.toast) this.app.toast(res.message || 'Scene finalized ✅');
+      } catch (e) {
+        if (this.app && this.app.toast) this.app.toast('Failed to finalize success', 'err');
+      }
+    };
+
+    $('#ca_finalize_failure').onclick = () => {
+      try {
+        if (!currentPlan) {
+          if (this.app && this.app.toast) this.app.toast('Generate a plan first');
+          return;
+        }
+
+        var state = getBatchRunnerState(currentPlan);
+        var processing = state && state.processingScene ? state.processingScene : null;
+
+        if (!processing) {
+          if (this.app && this.app.toast) this.app.toast('No processing scene');
+          return;
+        }
+
+        var res = finalizeSceneFailure(currentPlan, processing.id, 'manual-batch-failure');
+        if (!res.ok) throw new Error(res.message || 'Failed to finalize failure');
+
+        currentPlan = rebuildGenerationQueues(res.plan);
+        syncDerivedStates();
+        persistCurrentPlan();
+        paint();
+
+        if (this.app && this.app.toast) this.app.toast(res.message || 'Scene rejected ✅');
+      } catch (e) {
+        if (this.app && this.app.toast) this.app.toast('Failed to finalize failure', 'err');
+      }
+    };
+
+    syncDerivedStates();
     paint();
   }
 }
