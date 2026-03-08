@@ -1,17 +1,13 @@
-/* FILE: /js/core/project_bundle.js
-   Bright Cup Creator — Project Bundle v0.1 SAFE
-
-   Escopo atual:
-   - bundle editorial final do Bright Cup Creator
-   - sistema standalone neste momento
-   - sem integração com Factory por agora
-   - não gera ZIP real ainda
-   - consolida plan + preflight + manifest + metadata
-   - JS puro
-   - sem DOM
-   - sem dependências externas
-   - compatível com Safari/iOS
-*/
+/* FILE: /js/core/project_bundle.js */
+// Bright Cup Creator — Project Bundle v0.2 SAFE
+// Consolida o bundle editorial final do coloring pipeline
+// - plan + preflight + manifest + metadata
+// - ainda sem ZIP real
+// - ainda sem PDF real
+// - JS puro
+// - sem DOM
+// - sem dependências externas
+// - compatível com Safari/iOS
 
 import { evaluateColoringPreflight } from './preflight_gate.js';
 import { buildColoringExportManifest } from './export_manifest.js';
@@ -71,7 +67,7 @@ function normalizeScene(scene) {
     promptBase: toStringSafe(src.promptBase, ''),
     status: toStringSafe(src.status, 'pending') || 'pending',
     attempts: Math.max(0, toIntSafe(src.attempts, 0)),
-    tags: toArraySafe(src.tags).map(function(tag){
+    tags: toArraySafe(src.tags).map(function(tag) {
       return toStringSafe(tag, '');
     }).filter(Boolean),
     processingAt: toStringSafe(src.processingAt, ''),
@@ -102,16 +98,80 @@ function normalizeBundlePlan(plan) {
     style: toStringSafe(src.style, 'clean coloring page') || 'clean coloring page',
     status: toStringSafe(src.status, 'idle') || 'idle',
     notes: toStringSafe(src.notes, ''),
-    pending: toArraySafe(src.pending).map(function(id){
+    pending: toArraySafe(src.pending).map(function(id) {
       return toStringSafe(id, '');
     }).filter(Boolean),
-    approved: toArraySafe(src.approved).map(function(id){
+    approved: toArraySafe(src.approved).map(function(id) {
       return toStringSafe(id, '');
     }).filter(Boolean),
-    rejected: toArraySafe(src.rejected).map(function(id){
+    rejected: toArraySafe(src.rejected).map(function(id) {
       return toStringSafe(id, '');
     }).filter(Boolean),
     scenes: scenes
+  };
+}
+
+function buildFallbackPreflight(plan, reason) {
+  return {
+    canProceed: false,
+    issues: [toStringSafe(reason, 'preflight_builder_failed')],
+    warnings: [],
+    stats: {
+      totalScenes: Array.isArray(plan && plan.scenes) ? plan.scenes.length : 0,
+      approvedForBook: 0,
+      rejected: 0,
+      needsRedo: 0,
+      pendingReview: 0,
+      pageTarget: plan && plan.pageTarget ? plan.pageTarget : 0
+    },
+    summary: 'Preflight fallback generated.'
+  };
+}
+
+function buildFallbackManifest(plan, preflight, reason) {
+  return {
+    manifestVersion: '1.0',
+    exportType: 'coloring_book_project',
+    generatedAt: nowIso(),
+    book: {
+      id: plan && plan.id ? plan.id : '',
+      theme: plan && plan.theme ? plan.theme : '',
+      ageGroup: plan && plan.ageGroup ? plan.ageGroup : '',
+      language: plan && plan.language ? plan.language : 'en',
+      style: plan && plan.style ? plan.style : '',
+      pageTarget: plan && plan.pageTarget ? plan.pageTarget : 0,
+      status: plan && plan.status ? plan.status : 'idle',
+      createdAt: plan && plan.createdAt ? plan.createdAt : '',
+      updatedAt: plan && plan.updatedAt ? plan.updatedAt : '',
+      notes: plan && plan.notes ? plan.notes : ''
+    },
+    scenes: [],
+    review: {
+      totalScenes: Array.isArray(plan && plan.scenes) ? plan.scenes.length : 0,
+      approvedForBook: 0,
+      rejected: 0,
+      needsRedo: 0,
+      pendingReview: 0
+    },
+    preflight: clone(preflight || buildFallbackPreflight(plan, reason || 'manifest_builder_failed'))
+  };
+}
+
+function buildFallbackMetadata(plan, reason) {
+  return {
+    metadataVersion: '1.0',
+    type: 'coloring_book_metadata',
+    generatedAt: nowIso(),
+    title: '',
+    subtitle: '',
+    theme: plan && plan.theme ? plan.theme : '',
+    ageGroup: plan && plan.ageGroup ? plan.ageGroup : '',
+    language: plan && plan.language ? plan.language : 'en',
+    style: plan && plan.style ? plan.style : '',
+    description: '',
+    keywords: [],
+    categories: [],
+    _fallback: toStringSafe(reason, 'metadata_builder_failed')
   };
 }
 
@@ -119,20 +179,7 @@ function safeEvaluatePreflight(plan) {
   try {
     return evaluateColoringPreflight(plan || {});
   } catch (e) {
-    return {
-      canProceed: false,
-      issues: ['preflight evaluation failed: ' + String((e && e.message) || e || 'unknown error')],
-      warnings: [],
-      stats: {
-        totalScenes: 0,
-        approvedForBook: 0,
-        rejected: 0,
-        needsRedo: 0,
-        pendingReview: 0,
-        pageTarget: 0
-      },
-      summary: 'Preflight failed.'
-    };
+    return buildFallbackPreflight(plan || {}, 'preflight_builder_failed');
   }
 }
 
@@ -140,15 +187,7 @@ function safeBuildManifest(plan, preflight) {
   try {
     return buildColoringExportManifest(plan || {}, preflight || {});
   } catch (e) {
-    return {
-      manifestVersion: '1.0',
-      exportType: 'coloring_book_project',
-      generatedAt: nowIso(),
-      book: {},
-      scenes: [],
-      review: {},
-      preflight: clone(preflight || {})
-    };
+    return buildFallbackManifest(plan || {}, preflight || buildFallbackPreflight(plan || {}, 'preflight_builder_failed'), 'manifest_builder_failed');
   }
 }
 
@@ -156,20 +195,7 @@ function safeBuildMetadata(plan) {
   try {
     return buildColoringMetadata(plan || {});
   } catch (e) {
-    return {
-      metadataVersion: '1.0',
-      type: 'coloring_book_metadata',
-      generatedAt: nowIso(),
-      title: '',
-      subtitle: '',
-      theme: '',
-      ageGroup: '',
-      language: 'en',
-      style: '',
-      description: '',
-      keywords: [],
-      categories: []
-    };
+    return buildFallbackMetadata(plan || {}, 'metadata_builder_failed');
   }
 }
 
