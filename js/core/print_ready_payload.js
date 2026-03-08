@@ -1,5 +1,5 @@
 /* FILE: /js/core/print_ready_payload.js */
-// Bright Cup Creator — Print Ready Payload v0.1 SAFE
+// Bright Cup Creator — Print Ready Payload v0.2 SAFE
 // Payload lógico mestre da futura saída print-ready
 // - ainda SEM gerar PDF real
 // - ainda SEM gerar ZIP real
@@ -8,6 +8,7 @@
 // - sem dependências externas
 // - compatível com Safari/iOS
 
+import { buildPdfExportPrep } from './pdf_export_prep.js';
 import { buildInteriorPdfPayload } from './interior_pdf_payload.js';
 import { buildFullwrapPdfPayload } from './fullwrap_pdf_payload.js';
 
@@ -91,36 +92,51 @@ function buildFallbackPdfPrep(plan) {
   };
 }
 
+function safeBuildPdfPrep(plan) {
+  try {
+    return buildPdfExportPrep(plan || {});
+  } catch (e) {
+    return buildFallbackPdfPrep(plan || {});
+  }
+}
+
 function safeBuildInterior(plan) {
   try {
-    return buildInteriorPdfPayload(buildFallbackPdfPrep(plan || {}));
+    var pdfPrep = safeBuildPdfPrep(plan || {});
+    return buildInteriorPdfPayload(pdfPrep || {});
   } catch (e) {
     var safePlan = normalizePlan(plan || {});
-    return {
-      payloadVersion: '1.0',
-      type: 'brightcup_interior_pdf_payload',
-      generatedAt: nowIso(),
-      canRenderInterior: false,
-      summary: 'Interior payload fallback generated.',
-      book: {
-        id: safePlan.id || '',
-        theme: safePlan.theme || '',
-        ageGroup: safePlan.ageGroup || '',
-        language: safePlan.language || 'en',
-        style: safePlan.style || '',
-        pageTarget: safePlan.pageTarget || 0,
-        status: safePlan.status || 'idle',
-        createdAt: safePlan.createdAt || '',
-        updatedAt: safePlan.updatedAt || '',
-        notes: safePlan.notes || ''
-      },
-      pages: [],
-      stats: {
-        pagesCount: 0,
-        pageTarget: safePlan.pageTarget || 0,
-        missingPages: safePlan.pageTarget || 0
-      }
-    };
+    var fallbackPrep = buildFallbackPdfPrep(safePlan);
+
+    try {
+      return buildInteriorPdfPayload(fallbackPrep);
+    } catch (e2) {
+      return {
+        payloadVersion: '1.0',
+        type: 'brightcup_interior_pdf_payload',
+        generatedAt: nowIso(),
+        canRenderInterior: false,
+        summary: 'Interior payload fallback generated.',
+        book: {
+          id: safePlan.id || '',
+          theme: safePlan.theme || '',
+          ageGroup: safePlan.ageGroup || '',
+          language: safePlan.language || 'en',
+          style: safePlan.style || '',
+          pageTarget: safePlan.pageTarget || 0,
+          status: safePlan.status || 'idle',
+          createdAt: safePlan.createdAt || '',
+          updatedAt: safePlan.updatedAt || '',
+          notes: safePlan.notes || ''
+        },
+        pages: [],
+        stats: {
+          pagesCount: 0,
+          pageTarget: safePlan.pageTarget || 0,
+          missingPages: safePlan.pageTarget || 0
+        }
+      };
+    }
   }
 }
 
