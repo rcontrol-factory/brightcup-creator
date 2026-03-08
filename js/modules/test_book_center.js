@@ -1,6 +1,8 @@
 /* FILE: /js/modules/test_book_center.js */
-// Bright Cup Creator — Test Book Center v0.1 SAFE
+// Bright Cup Creator — Test Book Center v0.2 SAFE
 // Hub visual do pipeline de test book
+// - entrada mais leve no Safari/iPhone
+// - JSON pesado sob demanda
 // - sem backend
 // - sem canvas
 // - sem dependências externas
@@ -291,6 +293,8 @@ export class TestBookCenterModule {
     var hasPlan = hasUsablePlan(currentPlan);
     var currentDashboard = hasPlan ? safeBuildTestBookDashboard(currentPlan) : null;
     var currentExportPackage = hasPlan ? safeBuildTestBookExportPackage(currentPlan) : null;
+    var showDashboardJson = false;
+    var showExportPackageJson = false;
     var self = this;
 
     root.innerHTML = `
@@ -523,9 +527,120 @@ export class TestBookCenterModule {
       currentExportPackage = hasPlan ? safeBuildTestBookExportPackage(currentPlan) : null;
     }
 
-    function paint(){
-      rebuildAll();
+    function bindActions(){
+      var rebuildBtn = area.querySelector('#tbc_rebuild');
+      var downloadDashboardBtn = area.querySelector('#tbc_download_dashboard');
+      var downloadExportBtn = area.querySelector('#tbc_download_export');
+      var reloadBtn = area.querySelector('#tbc_reload');
+      var toggleDashboardBtn = area.querySelector('#tbc_toggle_dashboard_json');
+      var toggleExportBtn = area.querySelector('#tbc_toggle_export_json');
 
+      if (rebuildBtn) {
+        rebuildBtn.onclick = function(){
+          try {
+            rebuildAll();
+            renderContent();
+            if (self.app && self.app.toast) self.app.toast('Test book data rebuilt ✅');
+          } catch (e) {
+            if (self.app && self.app.toast) self.app.toast('Failed to rebuild test book data', 'err');
+          }
+        };
+      }
+
+      if (downloadDashboardBtn) {
+        downloadDashboardBtn.onclick = function(){
+          try {
+            if (!currentDashboard) {
+              rebuildAll();
+            }
+            if (!currentDashboard) {
+              throw new Error('Test book dashboard unavailable');
+            }
+
+            downloadJson(
+              'test-book-dashboard-' + (currentPlan.id || 'project') + '.json',
+              currentDashboard
+            );
+
+            if (self.app && self.app.toast) self.app.toast('Test book dashboard downloaded ✅');
+          } catch (e) {
+            if (self.app && self.app.toast) self.app.toast('Failed to download test book dashboard', 'err');
+          }
+        };
+      }
+
+      if (downloadExportBtn) {
+        downloadExportBtn.onclick = function(){
+          try {
+            if (!currentExportPackage) {
+              rebuildAll();
+            }
+            if (!currentExportPackage) {
+              throw new Error('Test book export package unavailable');
+            }
+
+            downloadJson(
+              'test-book-export-package-' + (currentPlan.id || 'project') + '.json',
+              currentExportPackage
+            );
+
+            if (self.app && self.app.toast) self.app.toast('Test book export package downloaded ✅');
+          } catch (e) {
+            if (self.app && self.app.toast) self.app.toast('Failed to download test book export package', 'err');
+          }
+        };
+      }
+
+      if (reloadBtn) {
+        reloadBtn.onclick = function(){
+          paint();
+          if (self.app && self.app.toast) self.app.toast('Project reloaded ✅');
+        };
+      }
+
+      if (toggleDashboardBtn) {
+        toggleDashboardBtn.onclick = function(){
+          showDashboardJson = !showDashboardJson;
+          renderJsonBlocks();
+        };
+      }
+
+      if (toggleExportBtn) {
+        toggleExportBtn.onclick = function(){
+          showExportPackageJson = !showExportPackageJson;
+          renderJsonBlocks();
+        };
+      }
+    }
+
+    function renderJsonBlocks(){
+      var dashboardWrap = area.querySelector('#tbc_dashboard_json_wrap');
+      var exportWrap = area.querySelector('#tbc_export_json_wrap');
+      var toggleDashboardBtn = area.querySelector('#tbc_toggle_dashboard_json');
+      var toggleExportBtn = area.querySelector('#tbc_toggle_export_json');
+
+      if (toggleDashboardBtn) {
+        toggleDashboardBtn.textContent = showDashboardJson ? 'Hide Test Book Dashboard JSON' : 'Show Test Book Dashboard JSON';
+      }
+
+      if (toggleExportBtn) {
+        toggleExportBtn.textContent = showExportPackageJson ? 'Hide Test Book Export Package JSON' : 'Show Test Book Export Package JSON';
+      }
+
+      if (dashboardWrap) {
+        dashboardWrap.innerHTML = showDashboardJson
+          ? '<pre class="tbc-code">' + esc(JSON.stringify(currentDashboard, null, 2)) + '</pre>'
+          : '';
+      }
+
+      if (exportWrap) {
+        exportWrap.innerHTML = showExportPackageJson
+          ? '<pre class="tbc-code">' + esc(JSON.stringify(currentExportPackage, null, 2)) + '</pre>'
+          : '';
+      }
+    }
+
+    function renderContent(){
       if (!hasPlan) {
         area.innerHTML = `
           <div class="tbc-empty">
@@ -594,12 +709,14 @@ export class TestBookCenterModule {
 
         <div class="card">
           <h3>Test Book Dashboard JSON</h3>
-          <pre class="tbc-code">${esc(JSON.stringify(currentDashboard, null, 2))}</pre>
+          <button class="btn" id="tbc_toggle_dashboard_json">Show Test Book Dashboard JSON</button>
+          <div id="tbc_dashboard_json_wrap"></div>
         </div>
 
         <div class="card">
           <h3>Test Book Export Package JSON</h3>
-          <pre class="tbc-code">${esc(JSON.stringify(currentExportPackage, null, 2))}</pre>
+          <button class="btn" id="tbc_toggle_export_json">Show Test Book Export Package JSON</button>
+          <div id="tbc_export_json_wrap"></div>
         </div>
 
         <div class="tbc-actions">
@@ -610,73 +727,13 @@ export class TestBookCenterModule {
         </div>
       `;
 
-      var rebuildBtn = area.querySelector('#tbc_rebuild');
-      var downloadDashboardBtn = area.querySelector('#tbc_download_dashboard');
-      var downloadExportBtn = area.querySelector('#tbc_download_export');
-      var reloadBtn = area.querySelector('#tbc_reload');
+      bindActions();
+      renderJsonBlocks();
+    }
 
-      if (rebuildBtn) {
-        rebuildBtn.onclick = function(){
-          try {
-            rebuildAll();
-            paint();
-            if (self.app && self.app.toast) self.app.toast('Test book data rebuilt ✅');
-          } catch (e) {
-            if (self.app && self.app.toast) self.app.toast('Failed to rebuild test book data', 'err');
-          }
-        };
-      }
-
-      if (downloadDashboardBtn) {
-        downloadDashboardBtn.onclick = function(){
-          try {
-            if (!currentDashboard) {
-              rebuildAll();
-            }
-            if (!currentDashboard) {
-              throw new Error('Test book dashboard unavailable');
-            }
-
-            downloadJson(
-              'test-book-dashboard-' + (currentPlan.id || 'project') + '.json',
-              currentDashboard
-            );
-
-            if (self.app && self.app.toast) self.app.toast('Test book dashboard downloaded ✅');
-          } catch (e) {
-            if (self.app && self.app.toast) self.app.toast('Failed to download test book dashboard', 'err');
-          }
-        };
-      }
-
-      if (downloadExportBtn) {
-        downloadExportBtn.onclick = function(){
-          try {
-            if (!currentExportPackage) {
-              rebuildAll();
-            }
-            if (!currentExportPackage) {
-              throw new Error('Test book export package unavailable');
-            }
-
-            downloadJson(
-              'test-book-export-package-' + (currentPlan.id || 'project') + '.json',
-              currentExportPackage
-            );
-
-            if (self.app && self.app.toast) self.app.toast('Test book export package downloaded ✅');
-          } catch (e) {
-            if (self.app && self.app.toast) self.app.toast('Failed to download test book export package', 'err');
-          }
-        };
-      }
-
-      if (reloadBtn) {
-        reloadBtn.onclick = function(){
-          paint();
-          if (self.app && self.app.toast) self.app.toast('Project reloaded ✅');
-        };
-      }
+    function paint(){
+      rebuildAll();
+      renderContent();
     }
 
     paint();
