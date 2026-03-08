@@ -1,15 +1,12 @@
-/* FILE: /js/core/export_package.js
-   Bright Cup Creator — Export Package v0.1 SAFE
-
-   Escopo atual:
-   - construtor do pacote de exportação do Bright Cup Creator
-   - não gera ZIP real ainda
-   - monta estrutura final com arquivos editoriais
-   - JS puro
-   - sem DOM
-   - sem dependências externas
-   - compatível com Safari/iOS
-*/
+/* FILE: /js/core/export_package.js */
+// Bright Cup Creator — Export Package v0.2 SAFE
+// Consolida o pacote final de exportação do projeto
+// - ainda sem ZIP real
+// - ainda sem PDF real
+// - JS puro
+// - sem DOM
+// - sem dependências externas
+// - compatível com Safari/iOS
 
 import { buildColoringExportManifest } from './export_manifest.js';
 import { buildColoringMetadata } from './metadata_builder.js';
@@ -34,19 +31,19 @@ function toArraySafe(value) {
   return Array.isArray(value) ? value.slice() : [];
 }
 
-function nowIso() {
-  try {
-    return new Date().toISOString();
-  } catch (e) {
-    return '';
-  }
-}
-
 function clone(value) {
   try {
     return JSON.parse(JSON.stringify(value));
   } catch (e) {
     return value;
+  }
+}
+
+function nowIso() {
+  try {
+    return new Date().toISOString();
+  } catch (e) {
+    return '';
   }
 }
 
@@ -69,7 +66,7 @@ function normalizeScene(scene) {
     promptBase: toStringSafe(src.promptBase, ''),
     status: toStringSafe(src.status, 'pending') || 'pending',
     attempts: Math.max(0, toIntSafe(src.attempts, 0)),
-    tags: toArraySafe(src.tags).map(function(tag){
+    tags: toArraySafe(src.tags).map(function(tag) {
       return toStringSafe(tag, '');
     }).filter(Boolean),
     processingAt: toStringSafe(src.processingAt, ''),
@@ -100,33 +97,108 @@ function normalizeExportPlan(plan) {
     style: toStringSafe(src.style, 'clean coloring page') || 'clean coloring page',
     status: toStringSafe(src.status, 'idle') || 'idle',
     notes: toStringSafe(src.notes, ''),
-    pending: toArraySafe(src.pending).map(function(id){
+    pending: toArraySafe(src.pending).map(function(id) {
       return toStringSafe(id, '');
     }).filter(Boolean),
-    approved: toArraySafe(src.approved).map(function(id){
+    approved: toArraySafe(src.approved).map(function(id) {
       return toStringSafe(id, '');
     }).filter(Boolean),
-    rejected: toArraySafe(src.rejected).map(function(id){
+    rejected: toArraySafe(src.rejected).map(function(id) {
       return toStringSafe(id, '');
     }).filter(Boolean),
     scenes: scenes
   };
 }
 
+function buildFallbackManifest(plan) {
+  return {
+    manifestVersion: '1.0',
+    exportType: 'coloring_book_project',
+    generatedAt: nowIso(),
+    book: {
+      id: plan.id || '',
+      theme: plan.theme || '',
+      ageGroup: plan.ageGroup || '',
+      language: plan.language || 'en',
+      style: plan.style || '',
+      pageTarget: plan.pageTarget || 0,
+      status: plan.status || 'idle',
+      createdAt: plan.createdAt || '',
+      updatedAt: plan.updatedAt || '',
+      notes: plan.notes || ''
+    },
+    scenes: [],
+    review: {
+      totalScenes: Array.isArray(plan.scenes) ? plan.scenes.length : 0,
+      approvedForBook: 0,
+      rejected: 0,
+      needsRedo: 0,
+      pendingReview: 0
+    },
+    preflight: {
+      canProceed: false,
+      issues: ['manifest_builder_failed'],
+      warnings: [],
+      stats: {
+        totalScenes: Array.isArray(plan.scenes) ? plan.scenes.length : 0,
+        approvedForBook: 0,
+        rejected: 0,
+        needsRedo: 0,
+        pendingReview: 0,
+        pageTarget: plan.pageTarget || 0
+      },
+      summary: 'Manifest fallback generated.'
+    }
+  };
+}
+
+function buildFallbackMetadata(plan) {
+  return {
+    metadataVersion: '1.0',
+    type: 'coloring_book_metadata',
+    generatedAt: nowIso(),
+    title: '',
+    subtitle: '',
+    theme: plan.theme || '',
+    ageGroup: plan.ageGroup || '',
+    language: plan.language || 'en',
+    style: plan.style || '',
+    description: '',
+    keywords: [],
+    categories: []
+  };
+}
+
+function buildFallbackBundle(plan, manifest, metadata) {
+  return {
+    bundleVersion: '1.0',
+    type: 'brightcup_coloring_project_bundle',
+    generatedAt: nowIso(),
+    plan: clone(plan),
+    preflight: {
+      canProceed: false,
+      issues: ['project_bundle_builder_failed'],
+      warnings: [],
+      stats: {
+        totalScenes: Array.isArray(plan.scenes) ? plan.scenes.length : 0,
+        approvedForBook: 0,
+        rejected: 0,
+        needsRedo: 0,
+        pendingReview: 0,
+        pageTarget: plan.pageTarget || 0
+      },
+      summary: 'Bundle fallback generated.'
+    },
+    manifest: clone(manifest),
+    metadata: clone(metadata)
+  };
+}
+
 function safeBuildManifest(plan) {
   try {
-    var bundle = buildColoringProjectBundle(plan || {});
-    return buildColoringExportManifest(bundle.plan || {}, bundle.preflight || {});
+    return buildColoringExportManifest(plan || {}, null);
   } catch (e) {
-    return {
-      manifestVersion: '1.0',
-      exportType: 'coloring_book_project',
-      generatedAt: nowIso(),
-      book: {},
-      scenes: [],
-      review: {},
-      preflight: {}
-    };
+    return buildFallbackManifest(plan || {});
   }
 }
 
@@ -134,44 +206,23 @@ function safeBuildMetadata(plan) {
   try {
     return buildColoringMetadata(plan || {});
   } catch (e) {
-    return {
-      metadataVersion: '1.0',
-      type: 'coloring_book_metadata',
-      generatedAt: nowIso(),
-      title: '',
-      subtitle: '',
-      theme: '',
-      ageGroup: '',
-      language: 'en',
-      style: '',
-      description: '',
-      keywords: [],
-      categories: []
-    };
+    return buildFallbackMetadata(plan || {});
   }
 }
 
-function safeBuildBundle(plan) {
+function safeBuildBundle(plan, manifest, metadata) {
   try {
     return buildColoringProjectBundle(plan || {});
   } catch (e) {
-    return {
-      bundleVersion: '1.0',
-      type: 'brightcup_coloring_project_bundle',
-      generatedAt: nowIso(),
-      plan: normalizeExportPlan(plan),
-      preflight: {},
-      manifest: {},
-      metadata: {}
-    };
+    return buildFallbackBundle(plan || {}, manifest || {}, metadata || {});
   }
 }
 
 function buildColoringExportPackage(plan) {
   var normalizedPlan = normalizeExportPlan(plan);
-  var bundle = safeBuildBundle(normalizedPlan);
   var metadata = safeBuildMetadata(normalizedPlan);
   var manifest = safeBuildManifest(normalizedPlan);
+  var bundle = safeBuildBundle(normalizedPlan, manifest, metadata);
 
   return {
     packageVersion: '1.0',
