@@ -1,12 +1,12 @@
 /* FILE: /js/modules/coloring_review.js */
-// Bright Cub Creator — Coloring Review v0.2 SAFE
-// Objetivo:
+// Bright Cup Creator — Coloring Review v0.3 SAFE
+// Gate humano obrigatório antes do Export Center
 // - revisão visual/humana do coloring pipeline
-// - gate humano antes do PDF
-// - integração com preflight gate
 // - sem imagem real ainda
-// - sem dependências externas
+// - placeholder visual
+// - integra preflight gate
 // - compatível com Safari/iOS
+// - sem dependências externas
 
 import { Storage } from '../core/storage.js';
 import { rebuildGenerationQueues } from '../core/generation_queue.js';
@@ -58,6 +58,14 @@ function normalizeReviewStatus(status){
   return 'pending_review';
 }
 
+function normalizeQueueStatus(status){
+  var s = normalizeText(status).toLowerCase();
+  if (s === 'approved') return 'approved';
+  if (s === 'rejected') return 'rejected';
+  if (s === 'processing') return 'processing';
+  return 'pending';
+}
+
 function normalizeScene(input, idx){
   var src = input && typeof input === 'object' ? input : {};
   var review = src.review && typeof src.review === 'object' ? src.review : {};
@@ -67,7 +75,7 @@ function normalizeScene(input, idx){
     id: normalizeText(src.id),
     title: normalizeText(src.title) || ('Scene ' + (idx + 1)),
     promptBase: normalizeText(src.promptBase),
-    status: normalizeText(src.status || 'pending') || 'pending',
+    status: normalizeQueueStatus(src.status || 'pending'),
     tags: Array.isArray(src.tags) ? src.tags.filter(Boolean).map(function(x){ return String(x).trim(); }) : [],
     attempts: Math.max(0, toInt(src.attempts, 0)),
     processingAt: normalizeText(src.processingAt || ''),
@@ -115,51 +123,46 @@ function shorten(text, max){
   return s.slice(0, Math.max(0, limit - 1)).trimEnd() + '…';
 }
 
-function sceneStatusLabel(status){
-  var s = normalizeText(status).toLowerCase();
-  if (s === 'approved') return 'approved';
-  if (s === 'rejected') return 'rejected';
-  if (s === 'processing') return 'processing';
-  return 'pending';
+function reviewLabel(status){
+  return normalizeReviewStatus(status);
 }
 
-function reviewLabel(status){
-  var s = normalizeReviewStatus(status);
-  if (s === 'approved_for_book') return 'approved_for_book';
-  if (s === 'rejected') return 'rejected';
-  if (s === 'needs_redo') return 'needs_redo';
-  return 'pending_review';
+function queueLabel(status){
+  return normalizeQueueStatus(status);
+}
+
+function getReviewCounts(plan){
+  var scenes = Array.isArray(plan && plan.scenes) ? plan.scenes : [];
+  var counts = {
+    pending_review: 0,
+    approved_for_book: 0,
+    rejected: 0,
+    needs_redo: 0
+  };
+  var i;
+  var state;
+
+  for (i = 0; i < scenes.length; i += 1){
+    state = reviewLabel(scenes[i] && scenes[i].review && scenes[i].review.status);
+    counts[state] = (counts[state] || 0) + 1;
+  }
+
+  return counts;
 }
 
 function renderReviewSummary(plan){
   var scenes = Array.isArray(plan && plan.scenes) ? plan.scenes : [];
-  var reviewPending = 0;
-  var reviewApproved = 0;
-  var reviewRejected = 0;
-  var reviewRedo = 0;
-  var i;
-  var s;
-  var rs;
-
-  for (i = 0; i < scenes.length; i += 1){
-    s = scenes[i];
-    rs = reviewLabel(s && s.review && s.review.status);
-
-    if (rs === 'approved_for_book') reviewApproved += 1;
-    else if (rs === 'rejected') reviewRejected += 1;
-    else if (rs === 'needs_redo') reviewRedo += 1;
-    else reviewPending += 1;
-  }
+  var counts = getReviewCounts(plan);
 
   return `
     <div class="crv-meta-grid">
       <div class="crv-meta-item"><span class="k">Theme</span><span class="v">${esc(plan.theme || '-')}</span></div>
       <div class="crv-meta-item"><span class="k">Age Group</span><span class="v">${esc(plan.ageGroup || '-')}</span></div>
       <div class="crv-meta-item"><span class="k">Scenes</span><span class="v">${esc(String(scenes.length))}</span></div>
-      <div class="crv-meta-item"><span class="k">Pending Review</span><span class="v">${esc(String(reviewPending))}</span></div>
-      <div class="crv-meta-item"><span class="k">Approved for Book</span><span class="v">${esc(String(reviewApproved))}</span></div>
-      <div class="crv-meta-item"><span class="k">Rejected</span><span class="v">${esc(String(reviewRejected))}</span></div>
-      <div class="crv-meta-item"><span class="k">Needs Redo</span><span class="v">${esc(String(reviewRedo))}</span></div>
+      <div class="crv-meta-item"><span class="k">Pending Review</span><span class="v">${esc(String(counts.pending_review || 0))}</span></div>
+      <div class="crv-meta-item"><span class="k">Approved for Book</span><span class="v">${esc(String(counts.approved_for_book || 0))}</span></div>
+      <div class="crv-meta-item"><span class="k">Rejected</span><span class="v">${esc(String(counts.rejected || 0))}</span></div>
+      <div class="crv-meta-item"><span class="k">Needs Redo</span><span class="v">${esc(String(counts.needs_redo || 0))}</span></div>
       <div class="crv-meta-item"><span class="k">Queue Status</span><span class="v">${esc(plan.status || '-')}</span></div>
     </div>
   `;
@@ -172,21 +175,24 @@ function renderSceneCard(scene){
       }).join('')
     : '<span class="crv-tag muted">no tags</span>';
 
-  var queueState = sceneStatusLabel(scene.status);
+  var queueState = queueLabel(scene.status);
   var reviewState = reviewLabel(scene.review && scene.review.status);
 
   return `
     <div class="crv-card is-${esc(reviewState)}">
       <div class="crv-card-head">
         <div class="crv-card-no">#${esc(String(scene.index))}</div>
-        <div class="crv-card-title">${esc(scene.title)}</div>
+        <div class="crv-card-title-wrap">
+          <div class="crv-card-title">${esc(scene.title)}</div>
+          <div class="crv-card-sub muted">Human review gate before export</div>
+        </div>
         <div class="crv-badges">
-          <span class="crv-badge queue-${esc(queueState)}">${esc(scene.status)}</span>
+          <span class="crv-badge queue-${esc(queueState)}">${esc(queueState)}</span>
           <span class="crv-badge review-${esc(reviewState)}">${esc(reviewState)}</span>
         </div>
       </div>
 
-      <div class="crv-placeholder">
+      <div class="crv-placeholder is-${esc(reviewState)}">
         <div>
           <div class="crv-placeholder-label">VISUAL REVIEW PLACEHOLDER</div>
           <div class="crv-placeholder-note">Future generated image preview</div>
@@ -197,20 +203,19 @@ function renderSceneCard(scene){
 
       <div class="crv-meta-line">
         <span><b>Attempts:</b> ${esc(String(scene.attempts || 0))}</span>
+        <span><b>Queue:</b> ${esc(queueState)}</span>
         ${scene.review && scene.review.reviewedAt ? '<span><b>Reviewed:</b> ' + esc(scene.review.reviewedAt) + '</span>' : ''}
       </div>
 
       <div class="crv-prompt">
-        <span class="k">Prompt:</span>
-        <span class="v">${esc(shorten(scene.promptBase, 150) || '-')}</span>
+        <span class="k">Prompt Summary</span>
+        <span class="v">${esc(shorten(scene.promptBase, 180) || '-')}</span>
       </div>
 
-      ${scene.review && scene.review.note ? `
-        <div class="crv-prompt">
-          <span class="k">Review Note:</span>
-          <span class="v">${esc(scene.review.note)}</span>
-        </div>
-      ` : ''}
+      <div class="crv-prompt">
+        <span class="k">Review Note</span>
+        <span class="v">${esc(scene.review && scene.review.note ? scene.review.note : 'No review note yet.')}</span>
+      </div>
 
       <div class="crv-actions" data-scene-id="${esc(scene.id)}">
         <button class="btn" data-review-action="approve">Approve for Book</button>
@@ -222,7 +227,7 @@ function renderSceneCard(scene){
 }
 
 function renderPage(scene){
-  var queueState = sceneStatusLabel(scene.status);
+  var queueState = queueLabel(scene.status);
   var reviewState = reviewLabel(scene.review && scene.review.status);
 
   return `
@@ -230,18 +235,19 @@ function renderPage(scene){
       <div class="crv-paper-inner">
         <div class="crv-page-head">
           <div>
-            <div class="crv-page-label">COLORING REVIEW</div>
+            <div class="crv-page-label">COLORING REVIEW GATE</div>
             <div class="crv-page-title">${esc(scene.title)}</div>
+            <div class="crv-page-sub muted">Approve only when this scene is editorially ready for export.</div>
           </div>
           <div class="crv-page-no">p.${esc(String(scene.index))}</div>
         </div>
 
         <div class="crv-page-badges">
-          <span class="crv-badge queue-${esc(queueState)}">${esc(scene.status)}</span>
+          <span class="crv-badge queue-${esc(queueState)}">${esc(queueState)}</span>
           <span class="crv-badge review-${esc(reviewState)}">${esc(reviewState)}</span>
         </div>
 
-        <div class="crv-page-placeholder">
+        <div class="crv-page-placeholder is-${esc(reviewState)}">
           <div>
             <div class="crv-placeholder-label">VISUAL REVIEW PLACEHOLDER</div>
             <div class="crv-placeholder-note">Future generated image preview</div>
@@ -251,6 +257,7 @@ function renderPage(scene){
         <div class="crv-page-footer">
           <div class="crv-meta-line">
             <span><b>Attempts:</b> ${esc(String(scene.attempts || 0))}</span>
+            <span><b>Queue:</b> ${esc(queueState)}</span>
             ${scene.review && scene.review.reviewedAt ? '<span><b>Reviewed:</b> ' + esc(scene.review.reviewedAt) + '</span>' : ''}
           </div>
 
@@ -264,16 +271,14 @@ function renderPage(scene){
           </div>
 
           <div class="crv-prompt">
-            <span class="k">Prompt:</span>
-            <span class="v">${esc(shorten(scene.promptBase, 120) || '-')}</span>
+            <span class="k">Prompt Summary</span>
+            <span class="v">${esc(shorten(scene.promptBase, 140) || '-')}</span>
           </div>
 
-          ${scene.review && scene.review.note ? `
-            <div class="crv-prompt">
-              <span class="k">Review Note:</span>
-              <span class="v">${esc(scene.review.note)}</span>
-            </div>
-          ` : ''}
+          <div class="crv-prompt">
+            <span class="k">Review Note</span>
+            <span class="v">${esc(scene.review && scene.review.note ? scene.review.note : 'No review note yet.')}</span>
+          </div>
 
           <div class="crv-actions" data-scene-id="${esc(scene.id)}">
             <button class="btn" data-review-action="approve">Approve for Book</button>
@@ -303,6 +308,10 @@ function renderPreflightReport(result){
       </div>
 
       <div class="crv-preflight-summary">${esc(result.summary || '')}</div>
+
+      <div class="crv-preflight-note">
+        Human review is the required gate before export. Resolve pending review and redo items before moving forward.
+      </div>
 
       <div class="crv-preflight-stats">
         <div><b>canProceed:</b> ${esc(String(!!result.canProceed))}</div>
@@ -344,10 +353,18 @@ function applyReviewToPlan(plan, sceneId, action){
   var i;
   var scene;
   var status = 'pending_review';
+  var note = '';
 
-  if (action === 'approve') status = 'approved_for_book';
-  else if (action === 'reject') status = 'rejected';
-  else if (action === 'redo') status = 'needs_redo';
+  if (action === 'approve') {
+    status = 'approved_for_book';
+    note = 'Approved for book';
+  } else if (action === 'reject') {
+    status = 'rejected';
+    note = 'Rejected in human review';
+  } else if (action === 'redo') {
+    status = 'needs_redo';
+    note = 'Needs redo before export';
+  }
 
   for (i = 0; i < scenes.length; i += 1){
     scene = scenes[i];
@@ -356,17 +373,7 @@ function applyReviewToPlan(plan, sceneId, action){
     scene.review = scene.review || {};
     scene.review.status = status;
     scene.review.reviewedAt = nowIso();
-
-    if (status === 'approved_for_book') {
-      scene.review.note = 'Approved for book';
-    } else if (status === 'rejected') {
-      scene.review.note = 'Rejected in human review';
-    } else if (status === 'needs_redo') {
-      scene.review.note = 'Needs redo before book';
-    } else {
-      scene.review.note = '';
-    }
-
+    scene.review.note = note;
     break;
   }
 
@@ -392,6 +399,7 @@ export class ColoringReviewModule {
     var plan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
     var hasPlan = !!(plan && plan.theme && Array.isArray(plan.scenes) && plan.scenes.length);
     var preflight = hasPlan ? evaluateColoringPreflight(plan) : null;
+    var self = this;
 
     function saveSeed(next){
       Storage.set('coloring:review_seed', next || {
@@ -402,6 +410,10 @@ export class ColoringReviewModule {
 
     function persistPlan(nextPlan){
       Storage.set('coloring:book_plan', nextPlan);
+    }
+
+    function refreshPreflight(){
+      preflight = plan && plan.scenes && plan.scenes.length ? evaluateColoringPreflight(plan) : null;
     }
 
     root.innerHTML = `
@@ -469,6 +481,10 @@ export class ColoringReviewModule {
           display:grid;
           gap:10px;
         }
+        .crv-card.is-pending_review{
+          border-color: rgba(90, 170, 255, .35);
+          box-shadow: 0 0 0 1px rgba(90, 170, 255, .10) inset;
+        }
         .crv-card.is-approved_for_book{
           border-color: rgba(90, 210, 120, .42);
           box-shadow: 0 0 0 1px rgba(90, 210, 120, .14) inset;
@@ -493,9 +509,18 @@ export class ColoringReviewModule {
           font-weight:900;
           opacity:.8;
         }
+        .crv-card-title-wrap{
+          min-width:0;
+          display:grid;
+          gap:4px;
+        }
         .crv-card-title{
           font-size:15px;
           font-weight:800;
+          line-height:1.2;
+        }
+        .crv-card-sub{
+          font-size:12px;
           line-height:1.2;
         }
 
@@ -515,15 +540,15 @@ export class ColoringReviewModule {
           border-radius:999px;
           border:1px solid rgba(255,255,255,.12);
         }
-        .crv-badge.queue-pending{ opacity:.85; }
-        .crv-badge.queue-processing{ opacity:1; }
-        .crv-badge.queue-approved{ opacity:1; }
-        .crv-badge.queue-rejected{ opacity:.8; }
+        .crv-badge.queue-pending{ background: rgba(90,170,255,.10); }
+        .crv-badge.queue-processing{ background: rgba(255,210,90,.12); }
+        .crv-badge.queue-approved{ background: rgba(90,210,120,.12); }
+        .crv-badge.queue-rejected{ background: rgba(255,110,110,.12); }
 
-        .crv-badge.review-pending_review{ opacity:.8; }
-        .crv-badge.review-approved_for_book{ background:rgba(90,210,120,.12); }
-        .crv-badge.review-rejected{ background:rgba(255,110,110,.12); }
-        .crv-badge.review-needs_redo{ background:rgba(255,210,90,.12); }
+        .crv-badge.review-pending_review{ background: rgba(90,170,255,.10); }
+        .crv-badge.review-approved_for_book{ background: rgba(90,210,120,.12); }
+        .crv-badge.review-rejected{ background: rgba(255,110,110,.12); }
+        .crv-badge.review-needs_redo{ background: rgba(255,210,90,.12); }
 
         .crv-placeholder,
         .crv-page-placeholder{
@@ -537,6 +562,23 @@ export class ColoringReviewModule {
           padding:18px;
           background:rgba(255,255,255,.02);
         }
+        .crv-placeholder.is-pending_review,
+        .crv-page-placeholder.is-pending_review{
+          border-color: rgba(90,170,255,.32);
+        }
+        .crv-placeholder.is-approved_for_book,
+        .crv-page-placeholder.is-approved_for_book{
+          border-color: rgba(90,210,120,.34);
+        }
+        .crv-placeholder.is-rejected,
+        .crv-page-placeholder.is-rejected{
+          border-color: rgba(255,110,110,.34);
+        }
+        .crv-placeholder.is-needs_redo,
+        .crv-page-placeholder.is-needs_redo{
+          border-color: rgba(255,210,90,.34);
+        }
+
         .crv-placeholder-label{
           font-size:16px;
           font-weight:900;
@@ -606,6 +648,9 @@ export class ColoringReviewModule {
           border:1px solid rgba(0,0,0,.8);
           box-shadow:0 10px 28px rgba(0,0,0,.22);
         }
+        .crv-paper.is-pending_review{
+          box-shadow:0 10px 28px rgba(0,0,0,.22), 0 0 0 2px rgba(90,170,255,.24);
+        }
         .crv-paper.is-approved_for_book{
           box-shadow:0 10px 28px rgba(0,0,0,.22), 0 0 0 2px rgba(90,210,120,.24);
         }
@@ -642,6 +687,11 @@ export class ColoringReviewModule {
           font-size:24px;
           line-height:1.08;
           font-weight:900;
+        }
+        .crv-page-sub{
+          margin-top:6px;
+          font-size:12px;
+          line-height:1.3;
         }
         .crv-page-no{
           font-size:14px;
@@ -700,6 +750,11 @@ export class ColoringReviewModule {
           line-height:1.4;
           opacity:.92;
         }
+        .crv-preflight-note{
+          font-size:12px;
+          line-height:1.35;
+          opacity:.82;
+        }
         .crv-preflight-stats{
           display:grid;
           grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -744,8 +799,7 @@ export class ColoringReviewModule {
         <div class="card">
           <h2>Coloring Review</h2>
           <p class="muted">
-            Revisão visual/humana antes do PDF. Nesta fase ainda usamos placeholder,
-            mas a etapa já funciona como gate editorial de aprovação.
+            Revisão visual/humana obrigatória antes da exportação. Mesmo sem imagem real ainda, esta tela já funciona como gate editorial antes do Export Center.
           </p>
           <div id="crv_area"></div>
         </div>
@@ -753,10 +807,6 @@ export class ColoringReviewModule {
     `;
 
     var area = root.querySelector('#crv_area');
-
-    function refreshPreflight(){
-      preflight = plan && plan.scenes && plan.scenes.length ? evaluateColoringPreflight(plan) : null;
-    }
 
     function bindReviewActions(scope, repaint){
       var buttons = scope.querySelectorAll('[data-review-action]');
@@ -772,18 +822,18 @@ export class ColoringReviewModule {
           persistPlan(plan);
           refreshPreflight();
 
-          if (this.app && this.app.toast) {
-            if (action === 'approve') this.app.toast('Approved for book ✅');
-            else if (action === 'reject') this.app.toast('Scene rejected ✅');
-            else if (action === 'redo') this.app.toast('Marked as needs redo ✅');
+          if (self.app && self.app.toast) {
+            if (action === 'approve') self.app.toast('Approved for book ✅');
+            else if (action === 'reject') self.app.toast('Scene rejected ✅');
+            else if (action === 'redo') self.app.toast('Marked as needs redo ✅');
           }
 
           repaint();
-        }.bind(this);
-      }, this);
+        };
+      });
     }
 
-    var renderEmpty = () => {
+    var renderEmpty = function(){
       area.innerHTML = `
         <div class="crv-empty">
           <p class="muted"><b>Nenhum plano de coloring book encontrado.</b></p>
@@ -803,7 +853,7 @@ export class ColoringReviewModule {
       }
     };
 
-    var renderMain = () => {
+    var renderMain = function(){
       plan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
       if (!(plan && plan.theme && plan.scenes && plan.scenes.length)) {
         renderEmpty();
@@ -833,6 +883,7 @@ export class ColoringReviewModule {
                 <span class="crv-mini"><b>${esc(plan.theme || 'COLORING REVIEW')}</b></span>
                 <span class="crv-mini">• age <b>${esc(plan.ageGroup || '-')}</b></span>
                 <span class="crv-mini">• scenes <b>${esc(String(plan.scenes.length))}</b></span>
+                <span class="crv-mini">• gate <b>human review</b></span>
               </div>
 
               <div class="crv-right">
@@ -920,6 +971,14 @@ export class ColoringReviewModule {
 
       paint();
     };
+
+    function refreshPreflight(){
+      preflight = plan && plan.scenes && plan.scenes.length ? evaluateColoringPreflight(plan) : null;
+    }
+
+    function persistPlan(nextPlan){
+      Storage.set('coloring:book_plan', nextPlan);
+    }
 
     if (!hasPlan) {
       renderEmpty();
