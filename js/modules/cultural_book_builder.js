@@ -440,12 +440,12 @@ export class CulturalBookBuilderModule {
         .page[data-size="6x9"]{ aspect-ratio: 6 / 9; }
 
         .page-inner{
-          padding: 18px;
+          padding: 14px;
           height: 100%;
           overflow: hidden;
           display:grid;
           grid-template-rows: auto 1fr;
-          gap:10px;
+          gap:8px;
         }
 
         .page-head{
@@ -515,37 +515,37 @@ export class CulturalBookBuilderModule {
         .ws-frame{
           height: 100%;
           border: 2px solid rgba(0,0,0,.78);
-          padding: 14px 14px 12px;
+          padding: 10px 10px 9px;
           display:flex;
           flex-direction:column;
-          gap: 8px;
+          gap: 5px;
           overflow:hidden; /* papel fixo */
         }
         .ws-headline{
           text-align:center;
           font-weight: 900;
-          letter-spacing: .6px;
+          letter-spacing: .4px;
           text-transform: uppercase;
-          font-size: clamp(20px, 4.8vw, 30px);
-          line-height: 1.02;
+          font-size: clamp(18px, 4.3vw, 27px);
+          line-height: 1.0;
           margin-top: 0;
         }
         .ws-subline{
           text-align:center;
           font-weight: 800;
-          letter-spacing: .2px;
-          font-size: 11px;
+          letter-spacing: .15px;
+          font-size: 10px;
           opacity: .82;
-          margin-top: -2px;
+          margin-top: -3px;
           white-space: normal;
           overflow: visible;
           text-overflow: clip;
-          line-height: 1.08;
+          line-height: 1.02;
         }
         .ws-hr{
           height: 1px;
           background: rgba(0,0,0,.55);
-          margin: 2px 0 0;
+          margin: 1px 0 0;
           flex: 0 0 auto;
         }
         .ws-gridwrap{
@@ -554,8 +554,8 @@ export class CulturalBookBuilderModule {
           align-items:flex-start;
           flex: 0 0 auto;
           overflow:hidden;
-          padding-top: 2px;
-          margin-bottom: 10px;
+          padding-top: 1px;
+          margin-bottom: 8px;
         }
         .ws-wordswrap{
           margin-top: 0;
@@ -570,18 +570,18 @@ export class CulturalBookBuilderModule {
         }
         .ws-table td{
           border: 1px solid rgba(0,0,0,.28);
-          width: 18px;
-          height: 18px;
+          width: 17px;
+          height: 17px;
           text-align:center;
           vertical-align:middle;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 13px;
+          font-size: 12px;
           line-height: 1;
           padding: 0;
         }
         @media (max-width: 420px){
-          .ws-table td{ width: 16px; height: 16px; font-size: 11px; }
+          .ws-table td{ width: 15px; height: 15px; font-size: 10px; }
         }
 
         .words-box{
@@ -592,26 +592,26 @@ export class CulturalBookBuilderModule {
         }
         .words-title{
           font-weight: 900;
-          font-size: 11px;
-          letter-spacing: .6px;
+          font-size: 10px;
+          letter-spacing: .5px;
           text-transform: uppercase;
-          margin: 2px 0 6px;
+          margin: 1px 0 4px;
         }
         .words-grid{
           display:block;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 11px;
+          font-size: 10px;
         }
         .ws-words-list{
           display:flex;
           flex-direction:column;
-          gap: 6px;
+          gap: 4px;
         }
         .ws-word-row{
           display:grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 6px 18px;
+          gap: 4px 14px;
         }
         .ws-word-item{
           display:block;
@@ -619,8 +619,8 @@ export class CulturalBookBuilderModule {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: clip;
-          font-size: 11px;
-          line-height: 1.2;
+          font-size: 10px;
+          line-height: 1.08;
           min-width: 0;
         }
 
