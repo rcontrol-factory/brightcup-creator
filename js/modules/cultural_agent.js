@@ -1,12 +1,13 @@
 /* FILE: /js/modules/cultural_agent.js */
-// Bright Cup Creator — Cultural Agent (Book Planner) v0.4a PADRÃO (1 ano)
-// V0.4a:
-// - Agent gera: plan.meta.layout (style + pageSize + margins + typography)
-// - Palavras: DISPLAY preserva acento/ç quando existir; GRADE normaliza (sem acento)
-// - Exporta plano em Storage: cultural:book_plan
-// - Builder vira só folhear/aprovar (layout vem do Agent)
-// - Imagem/ilustração: prevista para páginas de TEXTO (não no puzzle)
-// - Presets BR: Pocket (13x13/16) e Plus (15x15/20)
+// Bright Cup Creator — Cultural Agent (Book Planner) v0.5 SAFE
+// V0.5:
+// - adiciona classificação editorial por seção:
+//   pageType: cultural_text | recipe | curiosity
+//   imageSuggested: boolean
+// - mantém compatibilidade com Builder atual
+// - receita simplificada real
+// - curiosidades mais curtas e úteis
+// - plano continua salvo em cultural:book_plan
 
 import { Storage } from '../core/storage.js';
 
@@ -40,13 +41,11 @@ function buildDisplayMap(words){
     const norm = normalizeWord(raw);
     if (!norm) continue;
 
-    // preferir a versão com acento/ç se existir (heurística simples)
     const hasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(disp);
     const prev = map[norm];
     if (!prev) { map[norm] = disp; continue; }
     const prevHasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(prev);
     if (!prevHasAccent && hasAccent) map[norm] = disp;
-    // se ambos têm (ou não têm), mantém o primeiro
   }
   return map;
 }
@@ -71,15 +70,24 @@ function pickWordsForGrid(words, gridSize, maxCount){
   return filtered.slice(0, Math.max(6, Number(maxCount || 0) || 0));
 }
 
-function wrapLines(text, max=72){
-  const words = String(text||'').split(/\s+/g);
+function wrapLines(text, max){
+  max = Number(max || 72);
+  const words = String(text || '').split(/\s+/g);
   const lines = [];
   let line = '';
+
   for (const w of words){
-    if (!line) { line = w; continue; }
+    if (!line) {
+      line = w;
+      continue;
+    }
     if ((line + ' ' + w).length <= max) line += ' ' + w;
-    else { lines.push(line); line = w; }
+    else {
+      lines.push(line);
+      line = w;
+    }
   }
+
   if (line) lines.push(line);
   return lines.join('\n');
 }
@@ -100,24 +108,72 @@ const PAGE_SIZES = {
 };
 
 function presetFromGrid(grid){
-  const g = Number(grid||0);
+  const g = Number(grid || 0);
   if (g <= 13) return 'BR_POCKET';
   return 'BR_PLUS';
 }
 
-function enrichSectionText(id, base){
+function getSectionPageType(id){
+  if (id === 'pao_de_queijo') return 'recipe';
+  if (id === 'ferrovia') return 'curiosity';
+  return 'cultural_text';
+}
+
+function getSectionImageSuggested(pageType){
+  if (pageType === 'recipe') return false;
+  return true;
+}
+
+function enrichSection(section){
+  const safe = section || {};
+  const id = String(safe.id || '');
+  const pageType = safe.pageType || getSectionPageType(id);
+  const imageSuggested = typeof safe.imageSuggested === 'boolean'
+    ? safe.imageSuggested
+    : getSectionImageSuggested(pageType);
+
+  return {
+    ...safe,
+    pageType,
+    imageSuggested,
+    text: enrichSectionText(id, safe.text, pageType)
+  };
+}
+
+function enrichSectionText(id, base, pageType){
   const t = String(base || '').trim();
 
-  if (id === 'ferrovia') {
+  if (pageType === 'recipe' && id === 'pao_de_queijo') {
     return [
-      'Em Minas, “trem” não é só vagão: é quase um idioma.',
-      'Você fala “pega aquele trem ali” e pronto — serve pra chave, sacola, panela, controle, documento… tudo vira “trem”.',
+      'Receita simplificada',
       '',
-      'Tem gente que diz que é economia de palavras. Outros juram que é só pra sobrar tempo de passar um café e puxar uma prosa.',
+      'Ingredientes:',
+      '- 2 xícaras de polvilho azedo',
+      '- 1 xícara de queijo ralado',
+      '- 1/2 xícara de leite',
+      '- 1/4 xícara de óleo',
+      '- 1 ovo',
+      '- 1 pitada de sal',
       '',
-      'E existe o trem de verdade: trilho, estação, viagem e história. A ferrovia Vitória–Minas marcou caminhos e memórias.',
+      'Modo de preparo:',
+      'Aqueça leite e óleo. Misture ao polvilho, espere amornar e junte ovo, queijo e sal.',
+      'Mexa até formar uma massa macia, faça bolinhas e asse até dourar.',
       '',
-      'Agora me diz: o “trem” é o objeto… ou é a desculpa perfeita pra prosear?'
+      'É uma receita curta, caseira e muito ligada à cozinha mineira.'
+    ].join('\n');
+  }
+
+  if (pageType === 'curiosity' && id === 'ferrovia') {
+    return [
+      'Curiosidade mineira',
+      '',
+      'Em Minas, “trem” não é só vagão.',
+      'A palavra pode servir para quase qualquer objeto do dia a dia.',
+      '',
+      'Ao mesmo tempo, o trem de verdade também marcou a história do estado.',
+      'A ferrovia Vitória–Minas ligou caminhos, pessoas e memórias por muitos anos.',
+      '',
+      'É uma curiosidade que mistura linguagem, costume e história regional.'
     ].join('\n');
   }
 
@@ -125,8 +181,8 @@ function enrichSectionText(id, base){
     return [
       t,
       '',
-      'E tem um detalhe: mineiro fala pouco, mas entende muito.',
-      'Se alguém te oferecer café e pão de queijo, você aceitou a amizade sem perceber.'
+      'Mineiro costuma transformar costume em acolhimento.',
+      'Um café passado na hora e uma boa conversa dizem muito sobre essa cultura.'
     ].join('\n');
   }
 
@@ -135,16 +191,16 @@ function enrichSectionText(id, base){
       t,
       '',
       'Minas cresceu entre serras, caminhos e trabalho duro.',
-      'E por aqui história não fica só em livro: fica na conversa — e na memória do povo.'
+      'Por isso a história aparece nas cidades, nas igrejas e na memória do povo.'
     ].join('\n');
   }
 
-  if (id === 'pao_de_queijo') {
+  if (id === 'queijo_minas') {
     return [
       t,
       '',
-      'Causo real: cada família diz que a dela é “a receita certa”.',
-      'O mais mineiro disso tudo é que… todo mundo está “certo” ao mesmo tempo.'
+      'O queijo mineiro também representa técnica, tempo e tradição familiar.',
+      'Em muitas regiões, ele faz parte da identidade local.'
     ].join('\n');
   }
 
@@ -152,8 +208,15 @@ function enrichSectionText(id, base){
     return [
       t,
       '',
-      'E o café em Minas não é só bebida: é convite.',
-      'Se ouvir “passa aqui rapidinho”, pode saber… vai ter café e conversa.'
+      'Mais do que bebida, o café virou gesto de recepção e parte do ritmo do interior.'
+    ].join('\n');
+  }
+
+  if (id === 'pedras_preciosas') {
+    return [
+      t,
+      '',
+      'Esse universo envolve trabalho, comércio e histórias que atravessam gerações.'
     ].join('\n');
   }
 
@@ -161,17 +224,7 @@ function enrichSectionText(id, base){
     return [
       t,
       '',
-      'Festa, procissão, igreja antiga… é fé misturada com cultura e comunidade.',
-      'Em cidade pequena, isso vira calendário do ano — e memória da vida inteira.'
-    ].join('\n');
-  }
-
-  if (id === 'voo_livre_valadares') {
-    return [
-      t,
-      '',
-      'Lá do alto, Minas parece mapa vivo: serra, rio, cidade e horizonte.',
-      'É aventura com cheiro de liberdade — e com aquele “uai” quando o vento muda.'
+      'Em muitas cidades, a fé também organiza festas, encontros e tradições anuais.'
     ].join('\n');
   }
 
@@ -179,9 +232,15 @@ function enrichSectionText(id, base){
     return [
       t,
       '',
-      'E tem o “uai”… que dá discussão boa.',
-      'Tem gente que fala “uai é de Minas”, tem gente que fala “uai é de Goiás”.',
-      'A verdade? O uai é do Brasil — mas o mineiro usa com uma calma que é só dele.'
+      'As paisagens mineiras ajudam a explicar o jeito mais calmo e contemplativo de muitas regiões.'
+    ].join('\n');
+  }
+
+  if (id === 'voo_livre_valadares') {
+    return [
+      t,
+      '',
+      'O Pico do Ibituruna virou referência de aventura e turismo esportivo.'
     ].join('\n');
   }
 
@@ -196,7 +255,7 @@ function layoutDefaults(style, pageSize){
   const base = {
     style: (st === 'CLEAN') ? 'CLEAN' : 'RETRO',
     pageSize: (ps === '8.5x11') ? '8.5x11' : '6x9',
-    margins: { top: 0.55, right: 0.55, bottom: 0.60, left: 0.55 }, // polegadas (referência editorial)
+    margins: { top: 0.55, right: 0.55, bottom: 0.60, left: 0.55 },
     typography: {
       titleScale: 1.0,
       bodyScale: 1.0,
@@ -224,13 +283,18 @@ function layoutDefaults(style, pageSize){
   return base;
 }
 
-function bookDefaultPlanMG(grid=13, wpp=16, style='RETRO', pageSize='6x9'){
+function bookDefaultPlanMG(grid, wpp, style, pageSize){
+  grid = Number(grid || 13);
+  wpp = Number(wpp || 16);
+  style = style || 'RETRO';
+  pageSize = pageSize || '6x9';
+
   const plan = {
     meta: {
       id: 'MG_CULTURAL_BOOK_01',
       title: 'MINAS GERAIS CULTURAL',
       subtitle: 'História • Sabores • Tradições • Curiosidades • Caça-Palavras',
-      format: pageSize, // compat
+      format: pageSize,
       pages_target: 60,
       language: 'pt-BR',
       grid_default: grid,
@@ -280,6 +344,8 @@ function bookDefaultPlanMG(grid=13, wpp=16, style='RETRO', pageSize='6x9'){
         text:
           'Receita base: polvilho, leite, óleo, ovos, queijo e sal. Mistura, sovar, bolear e assar. ' +
           'O segredo é o queijo e o ponto da massa — cada casa tem seu jeito.',
+        pageType:'recipe',
+        imageSuggested:false,
         wordHints:[
           'Pão de queijo','Polvilho','Forno','Massa','Queijo','Leite','Ovo','Sal','Receita','Cozinha','História','Minas','Uai'
         ]
@@ -302,6 +368,8 @@ function bookDefaultPlanMG(grid=13, wpp=16, style='RETRO', pageSize='6x9'){
         text:
           'O “trem” em Minas é mais que vagão: é expressão, é memória e é caminho. ' +
           'A ferrovia Vitória–Minas, por exemplo, marca a ligação entre regiões e histórias.',
+        pageType:'curiosity',
+        imageSuggested:true,
         wordHints:[
           'Ferrovia','Trem','Trilho','Estação','Viagem','Vitória-Minas','Rota','Plataforma','Vagão','Prosa','Memória'
         ]
@@ -353,10 +421,7 @@ function bookDefaultPlanMG(grid=13, wpp=16, style='RETRO', pageSize='6x9'){
     ]
   };
 
-  plan.sections = (plan.sections || []).map(s => ({
-    ...s,
-    text: enrichSectionText(s.id, s.text)
-  }));
+  plan.sections = (plan.sections || []).map(enrichSection);
 
   return plan;
 }
@@ -365,28 +430,39 @@ function renderPlanText(plan){
   const m = plan.meta || {};
   const l = m.layout || {};
   const lines = [];
+
   lines.push((m.title || 'LIVRO').toUpperCase());
   if (m.subtitle) lines.push(m.subtitle);
   lines.push('-'.repeat(46));
   lines.push(`Formato: ${l.pageSize || m.format} | Estilo: ${l.style || 'RETRO'} | Idioma: ${m.language}`);
-  lines.push(`Seções: ${(plan.sections||[]).length} | Grade: ${m.grid_default}x${m.grid_default} | Palavras/puzzle: ${m.words_per_puzzle}`);
-  lines.push(`Ilustração: texto=SIM | puzzle=NÃO`);
+  lines.push(`Seções: ${(plan.sections || []).length} | Grade: ${m.grid_default}x${m.grid_default} | Palavras/puzzle: ${m.words_per_puzzle}`);
+  lines.push('Ilustração: texto=SIM | puzzle=NÃO');
   lines.push('');
   lines.push('SEÇÕES');
   lines.push('-----');
+
   (plan.sections || []).forEach((s, i) => {
-    lines.push(`${String(i+1).padStart(2,'0')}. ${s.title}  [id:${s.id}] [icon:${s.icon}]`);
+    lines.push(
+      `${String(i + 1).padStart(2,'0')}. ${s.title}  [id:${s.id}] [icon:${s.icon}] [type:${s.pageType || 'cultural_text'}] [img:${s.imageSuggested ? 'yes' : 'no'}]`
+    );
   });
+
   return lines.join('\n');
 }
 
 function renderSectionText(s){
   const lines = [];
-  lines.push(String(s.title || '').toUpperCase());
-  lines.push('-'.repeat(Math.max(18, String(s.title||'').length)));
+  const type = String((s && s.pageType) || 'cultural_text');
+  const img = s && s.imageSuggested ? 'sim' : 'não';
+
+  lines.push(String((s && s.title) || '').toUpperCase());
+  lines.push('-'.repeat(Math.max(18, String((s && s.title) || '').length)));
   lines.push('');
-  lines.push(wrapLines(s.text, 72));
+  lines.push(`Tipo: ${type} | Sugere imagem: ${img}`);
   lines.push('');
+  lines.push(wrapLines((s && s.text) || '', 72));
+  lines.push('');
+
   return lines.join('\n').trimEnd();
 }
 
@@ -421,7 +497,7 @@ export class CulturalAgentModule {
           <h2>Cultural Agent</h2>
           <p class="muted">
             Linha Cultural Brasil (PT-BR). <b>O Agent cria o livro</b>. O Builder só folheia/aprova.
-            <br/>Fluxo: <b>Gerar Plano → Abrir Builder → Enviar p/ Caça-Palavras → Gerar+Salvar</b>.
+            <br/>Agora o plano já classifica páginas como <b>cultural_text</b>, <b>recipe</b> ou <b>curiosity</b>.
           </p>
 
           <div class="row">
@@ -487,7 +563,7 @@ export class CulturalAgentModule {
         <div class="card">
           <h2>Plano do livro</h2>
           <pre id="ca_plan" class="pre"></pre>
-          <p class="muted">Isso vira o “roteiro + layout” do livro. O Builder só folheia.</p>
+          <p class="muted">O plano agora já carrega o tipo editorial de cada seção.</p>
         </div>
 
         <div class="card">
@@ -532,8 +608,8 @@ export class CulturalAgentModule {
       const updated = {
         mode: $('#ca_mode').value,
         preset: $('#ca_preset').value,
-        grid: parseInt($('#ca_grid').value,10),
-        wordsPerPuzzle: parseInt($('#ca_wpp').value,10),
+        grid: parseInt($('#ca_grid').value, 10),
+        wordsPerPuzzle: parseInt($('#ca_wpp').value, 10),
         pageSize: $('#ca_pagesize').value,
         style: $('#ca_style').value,
         docText: docEl.textContent || '',
@@ -547,18 +623,21 @@ export class CulturalAgentModule {
 
     const fillSections = () => {
       sectionSel.innerHTML = '';
-      const secs = plan?.sections || [];
+      const secs = plan && plan.sections ? plan.sections : [];
+
       secs.forEach((s, idx) => {
         const opt = document.createElement('option');
         opt.value = String(idx);
-        opt.textContent = `${idx+1}. ${s.title} (id:${s.id})`;
+        opt.textContent = `${idx + 1}. ${s.title} (${s.pageType || 'cultural_text'})`;
         sectionSel.appendChild(opt);
       });
-      sectionSel.value = String(Math.min(seed.selectedSection || 0, Math.max(0, secs.length-1)));
+
+      sectionSel.value = String(Math.min(seed.selectedSection || 0, Math.max(0, secs.length - 1)));
     };
 
     const renderSelected = () => {
-      if (!plan?.sections?.length) return;
+      if (!(plan && plan.sections && plan.sections.length)) return;
+
       const idx = parseInt(sectionSel.value || '0', 10);
       const s = plan.sections[idx];
 
@@ -573,7 +652,6 @@ export class CulturalAgentModule {
 
       const pickedNorm = pickWordsForGrid(rawPool, grid, wpp);
 
-      // DISPLAY: tenta manter acento/ç se existir
       const dispMap = buildDisplayMap(rawPool);
       const pickedDisplay = pickedNorm.map(n => dispMap[n] || n);
 
@@ -607,8 +685,8 @@ export class CulturalAgentModule {
     $('#ca_wpp').addEventListener('change', () => renderSelected());
 
     $('#ca_build').onclick = () => {
-      const grid = parseInt($('#ca_grid').value,10);
-      const wpp  = parseInt($('#ca_wpp').value,10);
+      const grid = parseInt($('#ca_grid').value, 10);
+      const wpp  = parseInt($('#ca_wpp').value, 10);
       const pageSize = $('#ca_pagesize').value;
       const style = $('#ca_style').value;
 
@@ -619,60 +697,75 @@ export class CulturalAgentModule {
       fillSections();
       renderSelected();
 
-      this.app.toast?.('Plano do livro gerado ✅');
-      try { this.app.log?.(`[CULT] book_plan created grid=${grid} wpp=${wpp} pageSize=${pageSize} style=${style} sections=${plan.sections.length}`); } catch {}
+      this.app.toast && this.app.toast('Plano do livro gerado ✅');
+      try {
+        this.app.log && this.app.log(
+          '[CULT] book_plan created grid=' + grid +
+          ' wpp=' + wpp +
+          ' pageSize=' + pageSize +
+          ' style=' + style +
+          ' sections=' + plan.sections.length
+        );
+      } catch (e) {}
+
       saveSeed();
     };
 
     $('#ca_export_plan').onclick = () => {
-      if (!plan) { this.app.toast?.('Gere o plano primeiro'); return; }
-      try{
+      if (!plan) {
+        this.app.toast && this.app.toast('Gere o plano primeiro');
+        return;
+      }
+
+      try {
         const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `book-plan-${(plan?.meta?.id||'cultural')}-${Date.now()}.json`;
+        a.download = 'book-plan-' + ((plan && plan.meta && plan.meta.id) || 'cultural') + '-' + Date.now() + '.json';
         a.click();
-        setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-        this.app.toast?.('Plano exportado ✅');
-      } catch(e){
-        this.app.toast?.('Falha ao exportar');
-        try { this.app.log?.('[CULT] export failed: ' + (e?.message || e)); } catch {}
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        this.app.toast && this.app.toast('Plano exportado ✅');
+      } catch (e) {
+        this.app.toast && this.app.toast('Falha ao exportar');
+        try { this.app.log && this.app.log('[CULT] export failed: ' + ((e && e.message) || e)); } catch (err) {}
       }
     };
 
     $('#ca_open_builder').onclick = () => {
       const btn = document.querySelector('.navitem[data-view="book"]');
-      btn?.click?.();
+      if (btn && btn.click) btn.click();
     };
 
     $('#ca_open_ws').onclick = () => {
       const btn = document.querySelector('.navitem[data-view="wordsearch"]');
-      btn?.click?.();
+      if (btn && btn.click) btn.click();
     };
 
     $('#ca_apply_ws').onclick = () => {
-      if (!plan?.sections?.length) { this.app.toast?.('Gere o plano primeiro'); return; }
+      if (!(plan && plan.sections && plan.sections.length)) {
+        this.app.toast && this.app.toast('Gere o plano primeiro');
+        return;
+      }
 
       const idx = parseInt(sectionSel.value || '0', 10);
       const s = plan.sections[idx];
 
-      const grid = parseInt($('#ca_grid').value,10);
-      const wpp  = parseInt($('#ca_wpp').value,10);
+      const grid = parseInt($('#ca_grid').value, 10);
+      const wpp  = parseInt($('#ca_wpp').value, 10);
 
       const wordsRaw = (wordsEl.value || '')
-        .split(/\r?\n+/).map(x=>x.trim()).filter(Boolean);
+        .split(/\r?\n+/).map(x => x.trim()).filter(Boolean);
 
-      // aplica normalização aqui (grade não aceita acento)
       const pickedNorm = pickWordsForGrid(wordsRaw, grid, wpp);
       const preset = presetFromGrid(grid);
 
       const ws = {
-        title: `Caça-Palavras — ${s.title}`,
+        title: 'Caça-Palavras — ' + s.title,
         preset,
         size: grid,
         maxWords: wpp,
         includeKey: true,
-        words: pickedNorm.join('\n'), // NORMALIZADO
+        words: pickedNorm.join('\n'),
         puzzleId: s.id,
         sectionId: s.id,
         sectionTitle: s.title,
@@ -682,19 +775,27 @@ export class CulturalAgentModule {
 
       Storage.set('wordsearch:seed', ws);
 
-      this.app.toast?.('Aplicado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
-      try { this.app.log?.(`[CULT] applied section=${idx+1} id=${s.id} grid=${grid} wpp=${wpp} words=${pickedNorm.length}`); } catch {}
+      this.app.toast && this.app.toast('Aplicado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
+      try {
+        this.app.log && this.app.log(
+          '[CULT] applied section=' + (idx + 1) +
+          ' id=' + s.id +
+          ' grid=' + grid +
+          ' wpp=' + wpp +
+          ' words=' + pickedNorm.length
+        );
+      } catch (e) {}
+
       saveSeed();
     };
 
     $('#ca_copy').onclick = async () => {
       const idx = parseInt(sectionSel.value || '0', 10);
-      const s = plan?.sections?.[idx];
+      const s = plan && plan.sections ? plan.sections[idx] : null;
 
-      // copia DISPLAY (bonito) + também envia NORMALIZADO no final (p/ engine)
       const wordsDisp = (wordsEl.value || '').trim();
       const wordsNorm = wordsDisp
-        .split(/\r?\n+/).map(x=>x.trim()).filter(Boolean)
+        .split(/\r?\n+/).map(x => x.trim()).filter(Boolean)
         .map(normalizeWord).filter(Boolean)
         .join('\n');
 
@@ -704,13 +805,14 @@ export class CulturalAgentModule {
         wordsDisp + '\n\n' +
         'PALAVRAS (NORMALIZADO p/ GRADE)\n-------------------------------\n' +
         wordsNorm + '\n' +
-        (s?.id ? `\nID: ${s.id}\n` : '');
+        (s && s.id ? '\nID: ' + s.id + '\n' : '') +
+        (s && s.pageType ? 'TIPO: ' + s.pageType + '\n' : '');
 
       try {
         await navigator.clipboard.writeText(txt);
-        this.app.toast?.('Copiado ✅');
-      } catch {
-        this.app.toast?.('Falha ao copiar');
+        this.app.toast && this.app.toast('Copiado ✅');
+      } catch (e) {
+        this.app.toast && this.app.toast('Falha ao copiar');
       }
     };
 
@@ -722,10 +824,10 @@ export class CulturalAgentModule {
         plan: plan || null,
         seed: Storage.get('cultural:seed', {})
       };
-      this.app.saveProject?.(proj);
-      this.app.toast?.('Salvo ✅');
+      this.app.saveProject && this.app.saveProject(proj);
+      this.app.toast && this.app.toast('Salvo ✅');
     };
 
-    if (plan?.sections?.length) renderSelected();
+    if (plan && plan.sections && plan.sections.length) renderSelected();
   }
 }
