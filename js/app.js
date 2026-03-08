@@ -1,13 +1,13 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// PATCH SAFE — boot defensivo + start seguro
-// Integra:
+// Boot defensivo + integração segura do pipeline coloring
 // - Coloring Agent
 // - Coloring Book Builder
 // - Coloring Review
 // - Export Center
-// - módulos estáveis
+// - compatibilidade com linha cultural
 // - Comfy permanece como legado/compat, não como fluxo principal
+// - Safari/iOS/PWA safe
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
@@ -47,9 +47,19 @@ function normalizeConfig(cfg){
   });
 }
 
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function uiStatus(text, kind){
   var el = $('#uiStatus');
   if (!el) return;
+
   el.textContent = text;
   el.classList.remove('ok', 'warn', 'bad');
   el.classList.add(kind || 'ok');
@@ -108,7 +118,8 @@ function setConfig(patch){
 function buildExportDump(){
   var keys = Storage.listKeys();
   var data = {};
-  var i, k;
+  var i;
+  var k;
 
   for (i = 0; i < keys.length; i += 1){
     k = keys[i];
@@ -124,12 +135,13 @@ function buildExportDump(){
 function downloadJson(filename, obj){
   var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   var a = document.createElement('a');
+
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
 
   setTimeout(function(){
-    URL.revokeObjectURL(a.href);
+    try { URL.revokeObjectURL(a.href); } catch (e) {}
   }, 5000);
 }
 
@@ -154,15 +166,15 @@ function importAll(payload){
 
   var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
   var keys = Object.keys(data);
-  var i, k;
+  var i;
+  var k;
 
   for (i = 0; i < keys.length; i += 1){
     k = keys[i];
     Storage.set(k, data[k]);
   }
 
-  var importedCfg = Storage.get('config', {});
-  State.cfg = normalizeConfig(importedCfg);
+  State.cfg = normalizeConfig(Storage.get('config', {}));
   Storage.set('config', State.cfg);
 
   try {
@@ -197,11 +209,11 @@ function helpRender(root){
       <div class="card">
         <h2>Ajuda rápida</h2>
         <p class="muted">
-          Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b>.
+          Linha Cultural: <b>Cultural Agent</b> → <b>Livro (Builder)</b>.
           <br/><br/>
-          Linha Coloring: <b>Coloring Agent</b> → validar plano → <b>Coloring Book Builder</b> → <b>Coloring Review</b> → <b>Export Center</b>.
+          Linha Coloring: <b>Coloring Agent</b> → <b>Coloring Builder</b> → <b>Coloring Review</b> → <b>Export Center</b>.
           <br/><br/>
-          O fluxo legado de imagem externa continua apenas como compatibilidade temporária.
+          O Comfy continua apenas como compatibilidade temporária.
         </p>
       </div>
     </div>
@@ -319,7 +331,7 @@ function mountNav(){
     btnCopyLog.__bccBound = true;
     btnCopyLog.addEventListener('click', async function(){
       try {
-        await safeClipboardCopy((($('#log') && $('#log').textContent) || ''));
+        await safeClipboardCopy(($('#log') && $('#log').textContent) || '');
         toast('Logs copiados ✅', 'ok');
       } catch (e) {
         toast('Falha ao copiar logs', 'err');
@@ -361,7 +373,7 @@ function renderViewError(root, err, title){
 
 function routeTo(viewId){
   var root = $('#view');
-  var chosen = viewId || 'help';
+  var chosen = viewId || 'coloring_agent';
 
   State.activeView = chosen;
   mergeConfig({ lastView: chosen });
@@ -370,11 +382,7 @@ function routeTo(viewId){
   if (!root) return;
 
   if (chosen === 'help') {
-    try {
-      helpRender(root);
-    } catch (e) {
-      renderViewError(root, e, 'Erro ao abrir ajuda');
-    }
+    helpRender(root);
     return;
   }
 
@@ -404,19 +412,18 @@ function routeTo(viewId){
 }
 
 function getSafeStartView(){
-  var last = getConfig().lastView || '';
+  var last = getConfig().lastView || 'coloring_agent';
 
   if (last === 'help') return 'help';
+  if (State.modules.has(last)) return last;
 
-  if (
-    last === 'cultural' ||
-    last === 'book' ||
-    last === 'coloring' ||
-    last === 'settings' ||
-    last === 'export_center'
-  ) {
-    if (State.modules.has(last)) return last;
-  }
+  if (State.modules.has('coloring_agent')) return 'coloring_agent';
+  if (State.modules.has('coloring_book')) return 'coloring_book';
+  if (State.modules.has('coloring_review')) return 'coloring_review';
+  if (State.modules.has('export_center')) return 'export_center';
+  if (State.modules.has('cultural')) return 'cultural';
+  if (State.modules.has('book')) return 'book';
+  if (State.modules.has('coloring')) return 'coloring';
 
   return 'help';
 }
@@ -477,25 +484,22 @@ async function boot(){
     await initModule('coloring_book', new ColoringBookBuilderModule(app));
     await initModule('coloring_review', new ColoringReviewModule(app));
     await initModule('export_center', new ExportCenterModule(app));
+
     await initModule('coloring', new ColoringModule(app));
     await initModule('covers', new CoversModule(app));
     await initModule('wordsearch', new WordSearchModule(app));
     await initModule('crossword', new CrosswordModule(app));
     await initModule('mandala', new MandalaModule(app));
+
     await initModule('cultural', new CulturalAgentModule(app));
     await initModule('book', new CulturalBookBuilderModule(app));
+
     await initModule('settings', new SettingsModule(app));
 
     mountNav();
     uiStatus('READY', 'ok');
 
-    try {
-      routeTo(getSafeStartView());
-    } catch (e) {
-      log('[START VIEW ERROR] ' + String((e && e.stack) || e));
-      routeTo('help');
-    }
-
+    routeTo(getSafeStartView());
     toast('Pronto ✅', 'ok');
   } catch (e) {
     console.error(e);
@@ -508,15 +512,6 @@ async function boot(){
       renderViewError(root, e, 'Erro no boot');
     }
   }
-}
-
-function escapeHtml(s){
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 boot();
