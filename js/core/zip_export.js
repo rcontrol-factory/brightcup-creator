@@ -1,15 +1,12 @@
-/* FILE: /js/core/zip_export.js
-   Bright Cup Creator — ZIP Export Payload v0.1 SAFE
-
-   Escopo atual:
-   - base do exportador ZIP do Bright Cup Creator
-   - ainda sem compactação real
-   - transforma export package em payload final exportável
-   - JS puro
-   - sem DOM
-   - sem dependências externas
-   - compatível com Safari/iOS
-*/
+/* FILE: /js/core/zip_export.js */
+// Bright Cup Creator — ZIP Export Payload v0.2 SAFE
+// Base do exportador ZIP lógico
+// - ainda sem compactação ZIP real
+// - transforma export package em payload final exportável
+// - JS puro
+// - sem DOM
+// - sem dependências externas
+// - compatível com Safari/iOS
 
 function isObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -36,15 +33,26 @@ function clone(value) {
   }
 }
 
-function stringifyExportFileContent(value) {
+function safeJsonStringify(value) {
   try {
-    if (typeof value === 'string') return value;
     return JSON.stringify(value == null ? null : value, null, 2);
   } catch (e) {
     return JSON.stringify({
       error: 'stringify_failed',
       message: String((e && e.message) || e || 'unknown error')
     }, null, 2);
+  }
+}
+
+function stringifyExportFileContent(value) {
+  try {
+    if (typeof value === 'string') return value;
+    return safeJsonStringify(value);
+  } catch (e) {
+    return safeJsonStringify({
+      error: 'content_serialization_failed',
+      message: String((e && e.message) || e || 'unknown error')
+    });
   }
 }
 
@@ -60,18 +68,46 @@ function normalizeExportPackage(exportPackage) {
   };
 }
 
+function normalizeFilePath(path) {
+  var raw = toStringSafe(path || '', '').trim();
+
+  if (!raw) return 'unnamed.json';
+
+  return raw
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/{2,}/g, '/');
+}
+
+function buildPreferredOrderMap() {
+  return {
+    'bundle.json': 1,
+    'metadata.json': 2,
+    'manifest.json': 3,
+    'plan.json': 4
+  };
+}
+
 function sortFileKeys(keys) {
-  var preferred = ['bundle.json', 'metadata.json', 'manifest.json', 'plan.json'];
+  var preferred = buildPreferredOrderMap();
 
-  return keys.slice().sort(function(a, b) {
-    var ia = preferred.indexOf(a);
-    var ib = preferred.indexOf(b);
+  return (Array.isArray(keys) ? keys.slice() : []).sort(function(a, b) {
+    var pa = preferred.hasOwnProperty(a) ? preferred[a] : 9999;
+    var pb = preferred.hasOwnProperty(b) ? preferred[b] : 9999;
 
-    if (ia >= 0 && ib >= 0) return ia - ib;
-    if (ia >= 0) return -1;
-    if (ib >= 0) return 1;
+    if (pa !== pb) return pa - pb;
     return String(a).localeCompare(String(b));
   });
+}
+
+function buildExportFileEntry(path, value) {
+  var safePath = normalizeFilePath(path);
+  var content = stringifyExportFileContent(value);
+
+  return {
+    path: safePath,
+    content: content
+  };
 }
 
 function buildZipExportPayload(exportPackage) {
@@ -84,10 +120,7 @@ function buildZipExportPayload(exportPackage) {
 
   for (i = 0; i < fileKeys.length; i += 1) {
     key = fileKeys[i];
-    files.push({
-      path: String(key),
-      content: stringifyExportFileContent(filesMap[key])
-    });
+    files.push(buildExportFileEntry(key, filesMap[key]));
   }
 
   return {
