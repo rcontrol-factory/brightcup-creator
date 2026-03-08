@@ -1,28 +1,32 @@
 /* FILE: /js/modules/export_center.js */
-// Bright Cup Creator — Export Center v0.4 SAFE
-// Objetivo:
-// - centro visual de exportação do pipeline editorial
-// - usa preflight + export manifest + metadata builder + export package + zip payload
-// - sem PDF ainda
-// - sem ZIP real ainda
-// - compatível com Safari/iOS
+// Bright Cup Creator — Export Center v0.5 SAFE
+// Consolida visualmente a etapa final do pipeline de exportação
+// - preflight
+// - manifest
+// - metadata
+// - package
+// - zip payload
+// - ainda sem PDF real
+// - ainda sem ZIP real
 // - sem dependências externas
+// - compatível com Safari/iOS
 
 import { Storage } from '../core/storage.js';
 import { evaluateColoringPreflight } from '../core/preflight_gate.js';
 import { buildColoringExportManifest } from '../core/export_manifest.js';
 import { buildColoringMetadata } from '../core/metadata_builder.js';
+import { buildColoringProjectBundle } from '../core/project_bundle.js';
 import { buildColoringExportPackage } from '../core/export_package.js';
 import { buildZipExportPayload } from '../core/zip_export.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
     return ({
-      '&':'&amp;',
-      '<':'&lt;',
-      '>':'&gt;',
-      '"':'&quot;',
-      "'":'&#39;'
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
     })[c];
   });
 }
@@ -45,6 +49,40 @@ function clone(value){
   }
 }
 
+function normalizeReviewStatus(status){
+  var s = normalizeText(status).toLowerCase();
+  if (s === 'approved_for_book') return 'approved_for_book';
+  if (s === 'rejected') return 'rejected';
+  if (s === 'needs_redo') return 'needs_redo';
+  return 'pending_review';
+}
+
+function normalizeScene(scene){
+  var src = scene && typeof scene === 'object' ? clone(scene) : {};
+  var review = src.review && typeof src.review === 'object' ? src.review : {};
+
+  return {
+    id: normalizeText(src.id),
+    title: normalizeText(src.title),
+    promptBase: normalizeText(src.promptBase),
+    status: normalizeText(src.status || 'pending') || 'pending',
+    attempts: Math.max(0, toInt(src.attempts, 0)),
+    tags: Array.isArray(src.tags) ? src.tags.map(function(tag){
+      return normalizeText(tag);
+    }).filter(Boolean) : [],
+    processingAt: normalizeText(src.processingAt),
+    approvedAt: normalizeText(src.approvedAt),
+    rejectedAt: normalizeText(src.rejectedAt),
+    rejectionReason: normalizeText(src.rejectionReason),
+    output: src.output != null ? clone(src.output) : null,
+    review: {
+      status: normalizeReviewStatus(review.status),
+      reviewedAt: normalizeText(review.reviewedAt),
+      note: normalizeText(review.note)
+    }
+  };
+}
+
 function normalizePlan(input){
   var src = input && typeof input === 'object' ? clone(input) : {};
   return {
@@ -55,10 +93,30 @@ function normalizePlan(input){
     language: normalizeText(src.language || 'en') || 'en',
     style: normalizeText(src.style || 'clean coloring page') || 'clean coloring page',
     status: normalizeText(src.status || 'idle') || 'idle',
-    scenes: Array.isArray(src.scenes) ? src.scenes.slice() : [],
     createdAt: normalizeText(src.createdAt),
-    updatedAt: normalizeText(src.updatedAt)
+    updatedAt: normalizeText(src.updatedAt),
+    notes: normalizeText(src.notes),
+    pending: Array.isArray(src.pending) ? src.pending.map(function(id){
+      return normalizeText(id);
+    }).filter(Boolean) : [],
+    approved: Array.isArray(src.approved) ? src.approved.map(function(id){
+      return normalizeText(id);
+    }).filter(Boolean) : [],
+    rejected: Array.isArray(src.rejected) ? src.rejected.map(function(id){
+      return normalizeText(id);
+    }).filter(Boolean) : [],
+    scenes: Array.isArray(src.scenes) ? src.scenes.map(normalizeScene) : []
   };
+}
+
+function hasUsablePlan(plan){
+  return !!(
+    plan &&
+    plan.id &&
+    plan.theme &&
+    Array.isArray(plan.scenes) &&
+    plan.scenes.length
+  );
 }
 
 function safeEvaluatePreflight(plan){
@@ -70,12 +128,12 @@ function safeEvaluatePreflight(plan){
       issues: ['preflight evaluation failed: ' + String((e && e.message) || e || 'unknown error')],
       warnings: [],
       stats: {
-        totalScenes: 0,
+        totalScenes: Array.isArray(plan && plan.scenes) ? plan.scenes.length : 0,
         approvedForBook: 0,
         rejected: 0,
         needsRedo: 0,
         pendingReview: 0,
-        pageTarget: 0
+        pageTarget: plan && plan.pageTarget ? plan.pageTarget : 0
       },
       summary: 'Preflight failed.'
     };
@@ -86,7 +144,32 @@ function safeBuildManifest(plan, preflight){
   try {
     return buildColoringExportManifest(plan || {}, preflight || {});
   } catch (e) {
-    return null;
+    return {
+      manifestVersion: '1.0',
+      exportType: 'coloring_book_project',
+      generatedAt: '',
+      book: {
+        id: normalizeText(plan && plan.id),
+        theme: normalizeText(plan && plan.theme),
+        ageGroup: normalizeText(plan && plan.ageGroup),
+        language: normalizeText(plan && plan.language || 'en') || 'en',
+        style: normalizeText(plan && plan.style),
+        pageTarget: Math.max(0, toInt(plan && plan.pageTarget, 0)),
+        status: normalizeText(plan && plan.status || 'idle') || 'idle',
+        createdAt: normalizeText(plan && plan.createdAt),
+        updatedAt: normalizeText(plan && plan.updatedAt),
+        notes: normalizeText(plan && plan.notes)
+      },
+      scenes: [],
+      review: {
+        totalScenes: Array.isArray(plan && plan.scenes) ? plan.scenes.length : 0,
+        approvedForBook: 0,
+        rejected: 0,
+        needsRedo: 0,
+        pendingReview: 0
+      },
+      preflight: clone(preflight || {})
+    };
   }
 }
 
@@ -94,7 +177,36 @@ function safeBuildMetadata(plan){
   try {
     return buildColoringMetadata(plan || {});
   } catch (e) {
-    return null;
+    return {
+      metadataVersion: '1.0',
+      type: 'coloring_book_metadata',
+      generatedAt: '',
+      title: '',
+      subtitle: '',
+      theme: normalizeText(plan && plan.theme),
+      ageGroup: normalizeText(plan && plan.ageGroup),
+      language: normalizeText(plan && plan.language || 'en') || 'en',
+      style: normalizeText(plan && plan.style),
+      description: '',
+      keywords: [],
+      categories: []
+    };
+  }
+}
+
+function safeBuildBundle(plan){
+  try {
+    return buildColoringProjectBundle(plan || {});
+  } catch (e) {
+    return {
+      bundleVersion: '1.0',
+      type: 'brightcup_coloring_project_bundle',
+      generatedAt: '',
+      plan: clone(plan || {}),
+      preflight: safeEvaluatePreflight(plan || {}),
+      manifest: safeBuildManifest(plan || {}, safeEvaluatePreflight(plan || {})),
+      metadata: safeBuildMetadata(plan || {})
+    };
   }
 }
 
@@ -102,7 +214,18 @@ function safeBuildPackage(plan){
   try {
     return buildColoringExportPackage(plan || {});
   } catch (e) {
-    return null;
+    var normalized = normalizePlan(plan || {});
+    return {
+      packageVersion: '1.0',
+      type: 'brightcup_export_package',
+      generatedAt: '',
+      files: {
+        'bundle.json': safeBuildBundle(normalized),
+        'metadata.json': safeBuildMetadata(normalized),
+        'manifest.json': safeBuildManifest(normalized, safeEvaluatePreflight(normalized)),
+        'plan.json': normalized
+      }
+    };
   }
 }
 
@@ -110,18 +233,25 @@ function safeBuildZipPayload(pkg){
   try {
     return buildZipExportPayload(pkg || {});
   } catch (e) {
-    return null;
+    return {
+      zipVersion: '1.0',
+      type: 'brightcup_zip_export',
+      generatedAt: '',
+      files: []
+    };
   }
 }
 
 function downloadJson(filename, obj){
-  var blob = new Blob([JSON.stringify(obj, null, 2)], { type:'application/json' });
+  var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   var a = document.createElement('a');
+
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
+
   setTimeout(function(){
-    URL.revokeObjectURL(a.href);
+    try { URL.revokeObjectURL(a.href); } catch (e) {}
   }, 4000);
 }
 
@@ -239,6 +369,28 @@ function renderMetadataSummary(metadata){
   `;
 }
 
+function renderBundleSummary(bundle){
+  if (!bundle) {
+    return `
+      <div class="ec-grid">
+        <div class="ec-item"><span class="k">Type</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Bundle Version</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Generated At</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Has Plan</span><span class="v">false</span></div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="ec-grid">
+      <div class="ec-item"><span class="k">Type</span><span class="v">${esc(bundle.type || '-')}</span></div>
+      <div class="ec-item"><span class="k">Bundle Version</span><span class="v">${esc(bundle.bundleVersion || '-')}</span></div>
+      <div class="ec-item"><span class="k">Generated At</span><span class="v">${esc(bundle.generatedAt || '-')}</span></div>
+      <div class="ec-item"><span class="k">Has Plan</span><span class="v">${esc(String(!!bundle.plan))}</span></div>
+    </div>
+  `;
+}
+
 function renderPackageSummary(pkg){
   if (!pkg) {
     return `
@@ -298,10 +450,12 @@ export class ExportCenterModule {
 
   render(root){
     var currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
-    var hasPlan = !!(currentPlan && currentPlan.id && currentPlan.theme && Array.isArray(currentPlan.scenes) && currentPlan.scenes.length);
+    var hasPlan = hasUsablePlan(currentPlan);
+
     var currentPreflight = hasPlan ? safeEvaluatePreflight(currentPlan) : null;
-    var currentManifest = null;
+    var currentManifest = hasPlan ? safeBuildManifest(currentPlan, currentPreflight) : null;
     var currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
+    var currentBundle = hasPlan ? safeBuildBundle(currentPlan) : null;
     var currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
     var currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
 
@@ -431,7 +585,7 @@ export class ExportCenterModule {
           <h2>Export Center</h2>
           <p class="muted">
             Centro visual de exportação do projeto editorial.
-            Nesta fase você confere o pipeline, o preflight, o manifesto JSON, os metadados editoriais, o package final e o ZIP payload antes das futuras etapas de PDF e ZIP real.
+            Nesta fase você confere o pipeline completo e pode baixar os JSONs editoriais finais com segurança.
           </p>
           <div id="ec_area"></div>
         </div>
@@ -439,14 +593,22 @@ export class ExportCenterModule {
     `;
 
     var area = root.querySelector('#ec_area');
+    var self = this;
 
-    function paint(){
+    function rebuildAll(){
       currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
-      hasPlan = !!(currentPlan && currentPlan.id && currentPlan.theme && Array.isArray(currentPlan.scenes) && currentPlan.scenes.length);
+      hasPlan = hasUsablePlan(currentPlan);
+
       currentPreflight = hasPlan ? safeEvaluatePreflight(currentPlan) : null;
+      currentManifest = hasPlan ? safeBuildManifest(currentPlan, currentPreflight) : null;
       currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
+      currentBundle = hasPlan ? safeBuildBundle(currentPlan) : null;
       currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
       currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
+    }
+
+    function paint(){
+      rebuildAll();
 
       if (!hasPlan) {
         area.innerHTML = `
@@ -462,13 +624,9 @@ export class ExportCenterModule {
         var reloadOnlyBtn = area.querySelector('#ec_reload');
         if (reloadOnlyBtn) {
           reloadOnlyBtn.onclick = function(){
-            currentManifest = null;
-            currentMetadata = null;
-            currentPackage = null;
-            currentZipPayload = null;
             paint();
-            if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
-          }.bind(this);
+            if (self.app && self.app.toast) self.app.toast('Project reloaded ✅');
+          };
         }
 
         return;
@@ -498,6 +656,12 @@ export class ExportCenterModule {
         </div>
 
         <div class="card">
+          <h3>Bundle Summary</h3>
+          ${renderBundleSummary(currentBundle)}
+          ${currentBundle ? `<pre class="ec-code">${esc(JSON.stringify(currentBundle, null, 2))}</pre>` : ''}
+        </div>
+
+        <div class="card">
           <h3>Package Summary</h3>
           ${renderPackageSummary(currentPackage)}
           ${currentPackage ? `<pre class="ec-code">${esc(JSON.stringify(currentPackage, null, 2))}</pre>` : ''}
@@ -510,7 +674,7 @@ export class ExportCenterModule {
         </div>
 
         <div class="ec-actions">
-          <button class="btn primary" id="ec_build_manifest">Build Manifest</button>
+          <button class="btn primary" id="ec_rebuild">Rebuild Export Data</button>
           <button class="btn" id="ec_download_manifest">Download Manifest JSON</button>
           <button class="btn" id="ec_download_metadata">Download Metadata JSON</button>
           <button class="btn" id="ec_download_package">Download Export Package JSON</button>
@@ -519,141 +683,102 @@ export class ExportCenterModule {
         </div>
       `;
 
-      var buildBtn = area.querySelector('#ec_build_manifest');
-      var downloadBtn = area.querySelector('#ec_download_manifest');
+      var rebuildBtn = area.querySelector('#ec_rebuild');
+      var downloadManifestBtn = area.querySelector('#ec_download_manifest');
       var downloadMetadataBtn = area.querySelector('#ec_download_metadata');
       var downloadPackageBtn = area.querySelector('#ec_download_package');
       var downloadZipPayloadBtn = area.querySelector('#ec_download_zip_payload');
       var reloadBtn = area.querySelector('#ec_reload');
 
-      if (buildBtn) {
-        buildBtn.onclick = function(){
+      if (rebuildBtn) {
+        rebuildBtn.onclick = function(){
           try {
-            currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
-            currentPreflight = safeEvaluatePreflight(currentPlan);
-            currentManifest = safeBuildManifest(currentPlan, currentPreflight);
-            currentMetadata = safeBuildMetadata(currentPlan);
-            currentPackage = safeBuildPackage(currentPlan);
-            currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
-
+            rebuildAll();
             paint();
-
-            if (this.app && this.app.toast) this.app.toast('Manifest built ✅');
+            if (self.app && self.app.toast) self.app.toast('Export data rebuilt ✅');
           } catch (e) {
-            if (this.app && this.app.toast) this.app.toast('Failed to build manifest', 'err');
+            if (self.app && self.app.toast) self.app.toast('Failed to rebuild export data', 'err');
           }
-        }.bind(this);
+        };
       }
 
-      if (downloadBtn) {
-        downloadBtn.onclick = function(){
+      if (downloadManifestBtn) {
+        downloadManifestBtn.onclick = function(){
           try {
-            if (!currentManifest) {
-              currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
-              currentPreflight = safeEvaluatePreflight(currentPlan);
-              currentManifest = safeBuildManifest(currentPlan, currentPreflight);
-            }
-
-            if (!currentManifest) {
-              throw new Error('Manifest unavailable');
-            }
+            if (!currentManifest) rebuildAll();
+            if (!currentManifest) throw new Error('Manifest unavailable');
 
             downloadJson(
               'coloring-export-manifest-' + (currentPlan.id || 'project') + '.json',
               currentManifest
             );
 
-            if (this.app && this.app.toast) this.app.toast('Manifest downloaded ✅');
+            if (self.app && self.app.toast) self.app.toast('Manifest downloaded ✅');
           } catch (e) {
-            if (this.app && this.app.toast) this.app.toast('Failed to download manifest', 'err');
+            if (self.app && self.app.toast) self.app.toast('Failed to download manifest', 'err');
           }
-        }.bind(this);
+        };
       }
 
       if (downloadMetadataBtn) {
         downloadMetadataBtn.onclick = function(){
           try {
-            if (!currentMetadata) {
-              currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
-              currentMetadata = safeBuildMetadata(currentPlan);
-            }
-
-            if (!currentMetadata) {
-              throw new Error('Metadata unavailable');
-            }
+            if (!currentMetadata) rebuildAll();
+            if (!currentMetadata) throw new Error('Metadata unavailable');
 
             downloadJson(
               'metadata-' + (currentPlan.id || 'project') + '.json',
               currentMetadata
             );
 
-            if (this.app && this.app.toast) this.app.toast('Metadata downloaded ✅');
+            if (self.app && self.app.toast) self.app.toast('Metadata downloaded ✅');
           } catch (e) {
-            if (this.app && this.app.toast) this.app.toast('Failed to download metadata', 'err');
+            if (self.app && self.app.toast) self.app.toast('Failed to download metadata', 'err');
           }
-        }.bind(this);
+        };
       }
 
       if (downloadPackageBtn) {
         downloadPackageBtn.onclick = function(){
           try {
-            if (!currentPackage) {
-              currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
-              currentPackage = safeBuildPackage(currentPlan);
-            }
-
-            if (!currentPackage) {
-              throw new Error('Package unavailable');
-            }
+            if (!currentPackage) rebuildAll();
+            if (!currentPackage) throw new Error('Package unavailable');
 
             downloadJson(
               'export-package-' + (currentPlan.id || 'project') + '.json',
               currentPackage
             );
 
-            if (this.app && this.app.toast) this.app.toast('Export package downloaded ✅');
+            if (self.app && self.app.toast) self.app.toast('Export package downloaded ✅');
           } catch (e) {
-            if (this.app && this.app.toast) this.app.toast('Failed to download package', 'err');
+            if (self.app && self.app.toast) self.app.toast('Failed to download package', 'err');
           }
-        }.bind(this);
+        };
       }
 
       if (downloadZipPayloadBtn) {
         downloadZipPayloadBtn.onclick = function(){
           try {
-            if (!currentZipPayload) {
-              if (!currentPackage) {
-                currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
-                currentPackage = safeBuildPackage(currentPlan);
-              }
-              currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
-            }
-
-            if (!currentZipPayload) {
-              throw new Error('ZIP payload unavailable');
-            }
+            if (!currentZipPayload) rebuildAll();
+            if (!currentZipPayload) throw new Error('ZIP payload unavailable');
 
             downloadJson(
               'zip-payload-' + (currentPlan.id || 'project') + '.json',
               currentZipPayload
             );
 
-            if (this.app && this.app.toast) this.app.toast('ZIP payload downloaded ✅');
+            if (self.app && self.app.toast) self.app.toast('ZIP payload downloaded ✅');
           } catch (e) {
-            if (this.app && this.app.toast) this.app.toast('Failed to download ZIP payload', 'err');
+            if (self.app && self.app.toast) self.app.toast('Failed to download ZIP payload', 'err');
           }
-        }.bind(this);
+        };
       }
 
       if (reloadBtn) {
         reloadBtn.onclick = function(){
-          currentManifest = null;
-          currentMetadata = null;
-          currentPackage = null;
-          currentZipPayload = null;
           paint();
-          if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
-        }.bind(this);
+          if (self.app && self.app.toast) self.app.toast('Project reloaded ✅');
+        };
       }
     }
 
