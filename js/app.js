@@ -1,10 +1,11 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Patch de integração do Coloring Agent + Coloring Book Builder
-// - integra /js/modules/coloring_agent.js
-// - integra /js/modules/coloring_book_builder.js
-// - mantém boot defensivo
-// - mantém compatibilidade com módulos estáveis
+// Patch de integração:
+// - Coloring Agent
+// - Coloring Book Builder
+// - Coloring Review
+// - boot defensivo
+// - compatibilidade com módulos estáveis
 // - Comfy permanece como legado/compat, não como fluxo principal
 
 import { Storage } from './core/storage.js';
@@ -14,6 +15,7 @@ import { ComfyClient } from './core/comfy_client.js';
 import { ColoringModule } from './modules/coloring.js';
 import { ColoringAgentModule } from './modules/coloring_agent.js';
 import { ColoringBookBuilderModule } from './modules/coloring_book_builder.js';
+import { ColoringReviewModule } from './modules/coloring_review.js';
 import { CoversModule } from './modules/covers.js';
 import { WordSearchModule } from './modules/wordsearch.js';
 import { CrosswordModule } from './modules/crossword.js';
@@ -195,7 +197,7 @@ function helpRender(root){
         <p class="muted">
           Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b>.
           <br/><br/>
-          Linha Coloring: <b>Coloring Agent</b> → validar plano → <b>Coloring Book Builder</b>.
+          Linha Coloring: <b>Coloring Agent</b> → validar plano → <b>Coloring Book Builder</b> → <b>Coloring Review</b>.
           <br/><br/>
           O fluxo legado de imagem externa continua apenas como compatibilidade temporária.
         </p>
@@ -276,6 +278,7 @@ function ensureNavItem(viewId, label, afterView){
 function ensureDynamicNavItems(){
   ensureNavItem('coloring_agent', 'Coloring Agent', 'coloring');
   ensureNavItem('coloring_book', 'Coloring Builder', 'coloring_agent');
+  ensureNavItem('coloring_review', 'Coloring Review', 'coloring_book');
 }
 
 function mountNav(){
@@ -400,6 +403,7 @@ function getSafeStartView(){
 
   if (State.modules.has('coloring_agent')) return 'coloring_agent';
   if (State.modules.has('coloring_book')) return 'coloring_book';
+  if (State.modules.has('coloring_review')) return 'coloring_review';
   if (State.modules.has('cultural')) return 'cultural';
   if (State.modules.has('coloring')) return 'coloring';
 
@@ -460,6 +464,7 @@ async function boot(){
 
     await initModule('coloring_agent', new ColoringAgentModule(app));
     await initModule('coloring_book', new ColoringBookBuilderModule(app));
+    await initModule('coloring_review', new ColoringReviewModule(app));
     await initModule('coloring', new ColoringModule(app));
     await initModule('covers', new CoversModule(app));
     await initModule('wordsearch', new WordSearchModule(app));
