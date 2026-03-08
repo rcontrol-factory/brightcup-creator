@@ -1,5 +1,5 @@
 /* FILE: /js/core/kdp_ready_bundle.js */
-// Bright Cup Creator — KDP Ready Bundle v0.1 SAFE
+// Bright Cup Creator — KDP Ready Bundle v0.2 SAFE
 // Bundle lógico mestre para futura saída KDP-ready
 // - ainda SEM gerar PDF real
 // - ainda SEM gerar ZIP real
@@ -31,6 +31,10 @@ function toIntSafe(value, fallback) {
   return n;
 }
 
+function toArraySafe(value) {
+  return Array.isArray(value) ? value.slice() : [];
+}
+
 function nowIso() {
   try {
     return new Date().toISOString();
@@ -47,6 +51,41 @@ function clone(value) {
   }
 }
 
+function normalizeReviewStatus(status) {
+  var s = toStringSafe(status, 'pending_review').toLowerCase();
+
+  if (s === 'approved_for_book') return 'approved_for_book';
+  if (s === 'rejected') return 'rejected';
+  if (s === 'needs_redo') return 'needs_redo';
+  return 'pending_review';
+}
+
+function normalizeScene(scene) {
+  var src = isObject(scene) ? clone(scene) : {};
+  var review = isObject(src.review) ? src.review : {};
+
+  return {
+    id: toStringSafe(src.id, ''),
+    title: toStringSafe(src.title, ''),
+    promptBase: toStringSafe(src.promptBase, ''),
+    status: toStringSafe(src.status, 'pending') || 'pending',
+    attempts: Math.max(0, toIntSafe(src.attempts, 0)),
+    tags: toArraySafe(src.tags).map(function(tag) {
+      return toStringSafe(tag, '');
+    }).filter(Boolean),
+    processingAt: toStringSafe(src.processingAt, ''),
+    approvedAt: toStringSafe(src.approvedAt, ''),
+    rejectedAt: toStringSafe(src.rejectedAt, ''),
+    rejectionReason: toStringSafe(src.rejectionReason, ''),
+    output: src.output != null ? clone(src.output) : null,
+    review: {
+      status: normalizeReviewStatus(review.status),
+      reviewedAt: toStringSafe(review.reviewedAt, ''),
+      note: toStringSafe(review.note, '')
+    }
+  };
+}
+
 function normalizePlan(plan) {
   var src = isObject(plan) ? clone(plan) : {};
 
@@ -60,7 +99,17 @@ function normalizePlan(plan) {
     language: toStringSafe(src.language, 'en') || 'en',
     style: toStringSafe(src.style, 'clean coloring page') || 'clean coloring page',
     status: toStringSafe(src.status, 'idle') || 'idle',
-    notes: toStringSafe(src.notes, '')
+    notes: toStringSafe(src.notes, ''),
+    pending: toArraySafe(src.pending).map(function(id) {
+      return toStringSafe(id, '');
+    }).filter(Boolean),
+    approved: toArraySafe(src.approved).map(function(id) {
+      return toStringSafe(id, '');
+    }).filter(Boolean),
+    rejected: toArraySafe(src.rejected).map(function(id) {
+      return toStringSafe(id, '');
+    }).filter(Boolean),
+    scenes: toArraySafe(src.scenes).map(normalizeScene)
   };
 }
 
@@ -119,7 +168,7 @@ function buildFallbackPdfPrep(plan) {
     book: buildBookSection(safePlan),
     pages: [],
     stats: {
-      totalScenes: 0,
+      totalScenes: Array.isArray(safePlan.scenes) ? safePlan.scenes.length : 0,
       eligiblePages: 0,
       pageTarget: safePlan.pageTarget || 0,
       missingApprovedPages: safePlan.pageTarget || 0,
@@ -332,10 +381,10 @@ function buildSummary(isReady, checks) {
 
   return (
     'KDP-ready bundle blocked. ' +
-      (reasons.length ? 'Missing requirements: ' + reasons.join(', ') + '.' : 'Some requirements are still incomplete.') +
-      ' pageTarget=' + Math.max(0, toIntSafe(checks && checks.pageTarget, 0)) +
-      ', interiorPages=' + Math.max(0, toIntSafe(checks && checks.interiorPages, 0)) +
-      ', missingInteriorPages=' + Math.max(0, toIntSafe(checks && checks.missingInteriorPages, 0)) + '.'
+    (reasons.length ? 'Missing requirements: ' + reasons.join(', ') + '.' : 'Some requirements are still incomplete.') +
+    ' pageTarget=' + Math.max(0, toIntSafe(checks && checks.pageTarget, 0)) +
+    ', interiorPages=' + Math.max(0, toIntSafe(checks && checks.interiorPages, 0)) +
+    ', missingInteriorPages=' + Math.max(0, toIntSafe(checks && checks.missingInteriorPages, 0)) + '.'
   );
 }
 
