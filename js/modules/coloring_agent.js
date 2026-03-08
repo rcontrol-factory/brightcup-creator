@@ -1,13 +1,22 @@
 /* FILE: /js/modules/coloring_agent.js */
-// Bright Cub Creator — Coloring Agent v0.2 SAFE
+// Bright Cub Creator — Coloring Agent v0.3 SAFE
 // Objetivo:
 // - planejamento e controle de coloring books
 // - integração com validador lógico de qualidade
+// - integração com fila lógica de geração
 // - sem geração de imagem ainda
 // - compatível com Safari/iOS
 
 import { Storage } from '../core/storage.js';
 import { validateColoringPlan } from '../core/image_quality_validator.js';
+import {
+  rebuildGenerationQueues,
+  getNextPendingScene,
+  markSceneProcessing,
+  approveScene,
+  rejectScene,
+  incrementSceneAttempts
+} from '../core/generation_queue.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -76,7 +85,12 @@ function createEmptyScene(input){
     promptBase: normalizeText(src.promptBase || ''),
     status: normalizeText(src.status || 'pending') || 'pending',
     tags: Array.isArray(src.tags) ? uniqueStrings(src.tags) : [],
-    attempts: Math.max(0, toInt(src.attempts, 0))
+    attempts: Math.max(0, toInt(src.attempts, 0)),
+    processingAt: normalizeText(src.processingAt || ''),
+    approvedAt: normalizeText(src.approvedAt || ''),
+    rejectedAt: normalizeText(src.rejectedAt || ''),
+    rejectionReason: normalizeText(src.rejectionReason || ''),
+    output: src.output != null ? src.output : null
   };
 }
 
@@ -286,28 +300,6 @@ function inferTags(theme, ageGroup, title){
   return uniqueStrings(tags);
 }
 
-function rebuildQueues(plan){
-  var p = plan && typeof plan === 'object' ? plan : createEmptyColoringPlan();
-  var scenes = Array.isArray(p.scenes) ? p.scenes : [];
-  var pending = [];
-  var approved = [];
-  var rejected = [];
-  var i, scene;
-
-  for (i = 0; i < scenes.length; i += 1){
-    scene = createEmptyScene(scenes[i]);
-
-    if (scene.status === 'approved') approved.push(scene.id);
-    else if (scene.status === 'rejected') rejected.push(scene.id);
-    else pending.push(scene.id);
-  }
-
-  p.pending = pending;
-  p.approved = approved;
-  p.rejected = rejected;
-  return p;
-}
-
 function normalizePlan(input){
   var base = createEmptyColoringPlan();
   var src = input && typeof input === 'object' ? input : {};
@@ -323,9 +315,12 @@ function normalizePlan(input){
   base.style = normalizeText(src.style || 'clean coloring page') || 'clean coloring page';
   base.status = normalizeText(src.status || 'idle') || 'idle';
   base.scenes = scenes;
+  base.pending = Array.isArray(src.pending) ? src.pending.slice() : [];
+  base.approved = Array.isArray(src.approved) ? src.approved.slice() : [];
+  base.rejected = Array.isArray(src.rejected) ? src.rejected.slice() : [];
   base.notes = normalizeText(src.notes);
 
-  return rebuildQueues(base);
+  return rebuildGenerationQueues(base);
 }
 
 function createPlanFromForm(form){
@@ -350,7 +345,7 @@ function createPlanFromForm(form){
     notes: notes
   });
 
-  return plan;
+  return rebuildGenerationQueues(plan);
 }
 
 function renderPlanSummary(plan){
@@ -431,6 +426,34 @@ function renderValidationReport(report){
   ].join('\n');
 }
 
+function renderQueueReport(plan){
+  if (!plan) return 'No queue state yet.';
+
+  var nextInfo = getNextPendingScene(plan || {});
+  var nextScene = nextInfo && nextInfo.scene ? nextInfo.scene : null;
+
+  return [
+    'planStatus: ' + (plan.status || 'idle'),
+    '- pending: ' + String((plan.pending || []).length),
+    '- approved: ' + String((plan.approved || []).length),
+    '- rejected: ' + String((plan.rejected || []).length),
+    '',
+    'nextPendingScene:',
+    nextScene ? ('- ' + nextScene.title + ' [' + nextScene.id + ']') : '- none'
+  ].join('\n');
+}
+
+function findProcessingScene(plan){
+  var scenes = plan && Array.isArray(plan.scenes) ? plan.scenes : [];
+  var i;
+  for (i = 0; i < scenes.length; i += 1){
+    if (String(scenes[i].status || '').toLowerCase() === 'processing') {
+      return scenes[i];
+    }
+  }
+  return null;
+}
+
 export class ColoringAgentModule {
   constructor(app){
     this.app = app;
@@ -502,6 +525,13 @@ export class ColoringAgentModule {
             <button id="ca_save" class="btn">Save Plan</button>
             <button id="ca_reload" class="btn secondary">Reload Saved</button>
           </div>
+
+          <div class="row" style="margin-top:10px">
+            <button id="ca_mark_processing" class="btn">Mark Next Pending → Processing</button>
+            <button id="ca_approve_current" class="btn">Approve Current Scene</button>
+            <button id="ca_reject_current" class="btn">Reject Current Scene</button>
+            <button id="ca_inc_attempts" class="btn secondary">+ Attempts on Current</button>
+          </div>
         </div>
 
         <div class="card">
@@ -515,6 +545,11 @@ export class ColoringAgentModule {
         </div>
 
         <div class="card">
+          <h2>Queue State</h2>
+          <pre id="ca_queue" class="pre"></pre>
+        </div>
+
+        <div class="card">
           <h2>Scene List</h2>
           <pre id="ca_scenes" class="pre"></pre>
         </div>
@@ -524,8 +559,10 @@ export class ColoringAgentModule {
     var $ = function(sel){ return root.querySelector(sel); };
     var summaryEl = $('#ca_summary');
     var validationEl = $('#ca_validation');
+    var queueEl = $('#ca_queue');
     var scenesEl = $('#ca_scenes');
-    var currentPlan = hasExistingPlan ? existingPlan : null;
+
+    var currentPlan = hasExistingPlan ? rebuildGenerationQueues(existingPlan) : null;
     var currentValidation = currentPlan ? safeValidatePlan(currentPlan) : null;
 
     function getFormData(){
@@ -543,6 +580,11 @@ export class ColoringAgentModule {
       Storage.set('coloring:agent_seed', getFormData());
     }
 
+    function rehydratePlan(){
+      if (!currentPlan) return;
+      currentPlan = rebuildGenerationQueues(currentPlan);
+    }
+
     function validateCurrentPlan(){
       currentValidation = currentPlan ? safeValidatePlan(currentPlan) : null;
     }
@@ -550,6 +592,7 @@ export class ColoringAgentModule {
     function paint(){
       summaryEl.textContent = currentPlan ? renderPlanSummary(currentPlan) : 'Nenhum plano gerado.';
       validationEl.textContent = currentValidation ? renderValidationReport(currentValidation) : 'No validation yet.';
+      queueEl.textContent = currentPlan ? renderQueueReport(currentPlan) : 'No queue state yet.';
       scenesEl.textContent = currentPlan ? renderScenesText(currentPlan) : 'No scenes yet.';
     }
 
@@ -557,6 +600,7 @@ export class ColoringAgentModule {
       try {
         saveSeed();
         currentPlan = createPlanFromForm(getFormData());
+        currentPlan = rebuildGenerationQueues(currentPlan);
         validateCurrentPlan();
         paint();
 
@@ -584,6 +628,7 @@ export class ColoringAgentModule {
 
         currentPlan.updatedAt = nowIso();
         currentPlan = normalizePlan(currentPlan);
+        currentPlan = rebuildGenerationQueues(currentPlan);
         validateCurrentPlan();
 
         Storage.set('coloring:book_plan', currentPlan);
@@ -609,6 +654,7 @@ export class ColoringAgentModule {
       try {
         var saved = Storage.get('coloring:book_plan', null);
         currentPlan = saved ? normalizePlan(saved) : null;
+        currentPlan = currentPlan ? rebuildGenerationQueues(currentPlan) : null;
         validateCurrentPlan();
         paint();
         if (this.app && this.app.toast) this.app.toast('Saved plan reloaded ✅');
@@ -617,6 +663,129 @@ export class ColoringAgentModule {
       }
     };
 
+    $('#ca_mark_processing').onclick = () => {
+      try {
+        if (!currentPlan) {
+          if (this.app && this.app.toast) this.app.toast('Generate a plan first');
+          return;
+        }
+
+        var nextInfo = getNextPendingScene(currentPlan);
+        var nextScene = nextInfo && nextInfo.scene ? nextInfo.scene : null;
+
+        if (!nextScene) {
+          if (this.app && this.app.toast) this.app.toast('No pending scene');
+          return;
+        }
+
+        var res = markSceneProcessing(currentPlan, nextScene.id);
+        if (!res.ok) throw new Error(res.error || 'Failed to mark processing');
+
+        currentPlan = rebuildGenerationQueues(res.plan);
+        validateCurrentPlan();
+        paint();
+
+        if (this.app && this.app.toast) this.app.toast('Scene in processing ✅');
+      } catch (e) {
+        if (this.app && this.app.toast) this.app.toast('Failed to move scene', 'err');
+      }
+    };
+
+    $('#ca_approve_current').onclick = () => {
+      try {
+        if (!currentPlan) {
+          if (this.app && this.app.toast) this.app.toast('Generate a plan first');
+          return;
+        }
+
+        var currentScene = findProcessingScene(currentPlan);
+        if (!currentScene) {
+          var nextInfo = getNextPendingScene(currentPlan);
+          currentScene = nextInfo && nextInfo.scene ? nextInfo.scene : null;
+        }
+
+        if (!currentScene) {
+          if (this.app && this.app.toast) this.app.toast('No scene available');
+          return;
+        }
+
+        var res = approveScene(currentPlan, currentScene.id, { approvedBy: 'manual-test' });
+        if (!res.ok) throw new Error(res.error || 'Failed to approve');
+
+        currentPlan = rebuildGenerationQueues(res.plan);
+        validateCurrentPlan();
+        paint();
+
+        if (this.app && this.app.toast) this.app.toast('Scene approved ✅');
+      } catch (e) {
+        if (this.app && this.app.toast) this.app.toast('Failed to approve', 'err');
+      }
+    };
+
+    $('#ca_reject_current').onclick = () => {
+      try {
+        if (!currentPlan) {
+          if (this.app && this.app.toast) this.app.toast('Generate a plan first');
+          return;
+        }
+
+        var currentScene = findProcessingScene(currentPlan);
+        if (!currentScene) {
+          var nextInfo = getNextPendingScene(currentPlan);
+          currentScene = nextInfo && nextInfo.scene ? nextInfo.scene : null;
+        }
+
+        if (!currentScene) {
+          if (this.app && this.app.toast) this.app.toast('No scene available');
+          return;
+        }
+
+        var res = rejectScene(currentPlan, currentScene.id, 'manual-test');
+        if (!res.ok) throw new Error(res.error || 'Failed to reject');
+
+        currentPlan = rebuildGenerationQueues(res.plan);
+        validateCurrentPlan();
+        paint();
+
+        if (this.app && this.app.toast) this.app.toast('Scene rejected ✅');
+      } catch (e) {
+        if (this.app && this.app.toast) this.app.toast('Failed to reject', 'err');
+      }
+    };
+
+    $('#ca_inc_attempts').onclick = () => {
+      try {
+        if (!currentPlan) {
+          if (this.app && this.app.toast) this.app.toast('Generate a plan first');
+          return;
+        }
+
+        var currentScene = findProcessingScene(currentPlan);
+        if (!currentScene) {
+          var nextInfo = getNextPendingScene(currentPlan);
+          currentScene = nextInfo && nextInfo.scene ? nextInfo.scene : null;
+        }
+
+        if (!currentScene) {
+          if (this.app && this.app.toast) this.app.toast('No scene available');
+          return;
+        }
+
+        var res = incrementSceneAttempts(currentPlan, currentScene.id);
+        if (!res.ok) throw new Error(res.error || 'Failed to increment attempts');
+
+        currentPlan = rebuildGenerationQueues(res.plan);
+        validateCurrentPlan();
+        paint();
+
+        if (this.app && this.app.toast) this.app.toast('Attempts incremented ✅');
+      } catch (e) {
+        if (this.app && this.app.toast) this.app.toast('Failed to increment attempts', 'err');
+      }
+    };
+
+    rehydratePlan();
+    validateCurrentPlan();
     paint();
   }
 }
