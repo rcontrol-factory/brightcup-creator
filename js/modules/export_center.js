@@ -1,8 +1,8 @@
 /* FILE: /js/modules/export_center.js */
-// Bright Cup Creator — Export Center v0.2 SAFE
+// Bright Cup Creator — Export Center v0.3 SAFE
 // Objetivo:
 // - centro visual de exportação do pipeline editorial
-// - usa preflight + export manifest + metadata builder
+// - usa preflight + export manifest + metadata builder + export package
 // - sem PDF ainda
 // - sem ZIP ainda
 // - compatível com Safari/iOS
@@ -12,6 +12,7 @@ import { Storage } from '../core/storage.js';
 import { evaluateColoringPreflight } from '../core/preflight_gate.js';
 import { buildColoringExportManifest } from '../core/export_manifest.js';
 import { buildColoringMetadata } from '../core/metadata_builder.js';
+import { buildColoringExportPackage } from '../core/export_package.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -91,6 +92,14 @@ function safeBuildManifest(plan, preflight){
 function safeBuildMetadata(plan){
   try {
     return buildColoringMetadata(plan || {});
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeBuildPackage(plan){
+  try {
+    return buildColoringExportPackage(plan || {});
   } catch (e) {
     return null;
   }
@@ -221,6 +230,31 @@ function renderMetadataSummary(metadata){
   `;
 }
 
+function renderPackageSummary(pkg){
+  if (!pkg) {
+    return `
+      <div class="ec-grid">
+        <div class="ec-item"><span class="k">Type</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Package Version</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Generated At</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Files Count</span><span class="v">0</span></div>
+      </div>
+    `;
+  }
+
+  var files = pkg.files && typeof pkg.files === 'object' ? pkg.files : {};
+  var filesCount = Object.keys(files).length;
+
+  return `
+    <div class="ec-grid">
+      <div class="ec-item"><span class="k">Type</span><span class="v">${esc(pkg.type || '-')}</span></div>
+      <div class="ec-item"><span class="k">Package Version</span><span class="v">${esc(pkg.packageVersion || '-')}</span></div>
+      <div class="ec-item"><span class="k">Generated At</span><span class="v">${esc(pkg.generatedAt || '-')}</span></div>
+      <div class="ec-item"><span class="k">Files Count</span><span class="v">${esc(String(filesCount))}</span></div>
+    </div>
+  `;
+}
+
 export class ExportCenterModule {
   constructor(app){
     this.app = app;
@@ -236,6 +270,7 @@ export class ExportCenterModule {
     var currentPreflight = hasPlan ? safeEvaluatePreflight(currentPlan) : null;
     var currentManifest = null;
     var currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
+    var currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
 
     root.innerHTML = `
       <style>
@@ -363,7 +398,7 @@ export class ExportCenterModule {
           <h2>Export Center</h2>
           <p class="muted">
             Centro visual de exportação do projeto editorial.
-            Nesta fase você confere o pipeline, o preflight, o manifesto JSON e os metadados editoriais antes das futuras etapas de PDF e ZIP.
+            Nesta fase você confere o pipeline, o preflight, o manifesto JSON, os metadados editoriais e o pacote final antes das futuras etapas de PDF e ZIP.
           </p>
           <div id="ec_area"></div>
         </div>
@@ -377,6 +412,7 @@ export class ExportCenterModule {
       hasPlan = !!(currentPlan && currentPlan.id && currentPlan.theme && Array.isArray(currentPlan.scenes) && currentPlan.scenes.length);
       currentPreflight = hasPlan ? safeEvaluatePreflight(currentPlan) : null;
       currentMetadata = hasPlan ? safeBuildMetadata(currentPlan) : null;
+      currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
 
       if (!hasPlan) {
         area.innerHTML = `
@@ -394,6 +430,7 @@ export class ExportCenterModule {
           reloadOnlyBtn.onclick = function(){
             currentManifest = null;
             currentMetadata = null;
+            currentPackage = null;
             paint();
             if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
           }.bind(this);
@@ -425,10 +462,17 @@ export class ExportCenterModule {
           ${currentMetadata ? `<pre class="ec-code">${esc(JSON.stringify(currentMetadata, null, 2))}</pre>` : ''}
         </div>
 
+        <div class="card">
+          <h3>Package Summary</h3>
+          ${renderPackageSummary(currentPackage)}
+          ${currentPackage ? `<pre class="ec-code">${esc(JSON.stringify(currentPackage, null, 2))}</pre>` : ''}
+        </div>
+
         <div class="ec-actions">
           <button class="btn primary" id="ec_build_manifest">Build Manifest</button>
           <button class="btn" id="ec_download_manifest">Download Manifest JSON</button>
           <button class="btn" id="ec_download_metadata">Download Metadata JSON</button>
+          <button class="btn" id="ec_download_package">Download Export Package JSON</button>
           <button class="btn secondary" id="ec_reload">Reload Project</button>
         </div>
       `;
@@ -436,6 +480,7 @@ export class ExportCenterModule {
       var buildBtn = area.querySelector('#ec_build_manifest');
       var downloadBtn = area.querySelector('#ec_download_manifest');
       var downloadMetadataBtn = area.querySelector('#ec_download_metadata');
+      var downloadPackageBtn = area.querySelector('#ec_download_package');
       var reloadBtn = area.querySelector('#ec_reload');
 
       if (buildBtn) {
@@ -445,6 +490,7 @@ export class ExportCenterModule {
             currentPreflight = safeEvaluatePreflight(currentPlan);
             currentManifest = safeBuildManifest(currentPlan, currentPreflight);
             currentMetadata = safeBuildMetadata(currentPlan);
+            currentPackage = safeBuildPackage(currentPlan);
 
             paint();
 
@@ -504,10 +550,35 @@ export class ExportCenterModule {
         }.bind(this);
       }
 
+      if (downloadPackageBtn) {
+        downloadPackageBtn.onclick = function(){
+          try {
+            if (!currentPackage) {
+              currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
+              currentPackage = safeBuildPackage(currentPlan);
+            }
+
+            if (!currentPackage) {
+              throw new Error('Package unavailable');
+            }
+
+            downloadJson(
+              'export-package-' + (currentPlan.id || 'project') + '.json',
+              currentPackage
+            );
+
+            if (this.app && this.app.toast) this.app.toast('Export package downloaded ✅');
+          } catch (e) {
+            if (this.app && this.app.toast) this.app.toast('Failed to download package', 'err');
+          }
+        }.bind(this);
+      }
+
       if (reloadBtn) {
         reloadBtn.onclick = function(){
           currentManifest = null;
           currentMetadata = null;
+          currentPackage = null;
           paint();
           if (this.app && this.app.toast) this.app.toast('Project reloaded ✅');
         }.bind(this);
