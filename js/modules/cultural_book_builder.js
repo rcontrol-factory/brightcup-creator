@@ -879,7 +879,6 @@ export class CulturalBookBuilderModule {
           ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); },
           ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); }
         );
-        });
       };
 
       area.querySelector('#bb_prev').onclick = goPrev;
