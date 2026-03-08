@@ -1,12 +1,13 @@
 /* FILE: /js/modules/coloring_agent.js */
-// Bright Cub Creator — Coloring Agent v0.1 SAFE
+// Bright Cub Creator — Coloring Agent v0.2 SAFE
 // Objetivo:
 // - planejamento e controle de coloring books
+// - integração com validador lógico de qualidade
 // - sem geração de imagem ainda
-// - foco em data layer + UI simples
 // - compatível com Safari/iOS
 
 import { Storage } from '../core/storage.js';
+import { validateColoringPlan } from '../core/image_quality_validator.js';
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -250,7 +251,6 @@ function buildScenes(theme, ageGroup, pageTarget, style){
   for (i = 0; i < count; i += 1){
     var title = pool[i % pool.length];
 
-    // evita repetição literal quando pageTarget > pool
     if (i >= pool.length) {
       title = title + ' variation ' + (i - pool.length + 2);
     }
@@ -385,6 +385,52 @@ function renderScenesText(plan){
   }).join('\n\n');
 }
 
+function safeValidatePlan(plan){
+  try {
+    return validateColoringPlan(plan || {});
+  } catch (e) {
+    return {
+      isValid: false,
+      issues: ['validator failed: ' + String((e && e.message) || e || 'unknown error')],
+      warnings: [],
+      stats: {
+        scenes: 0,
+        invalidScenes: 0,
+        duplicateTitles: 0,
+        duplicatePrompts: 0,
+        similarScenes: 0,
+        weakPrompts: 0
+      }
+    };
+  }
+}
+
+function renderValidationReport(report){
+  if (!report) return 'No validation yet.';
+
+  var stats = report.stats || {};
+  var issues = Array.isArray(report.issues) ? report.issues : [];
+  var warnings = Array.isArray(report.warnings) ? report.warnings : [];
+
+  return [
+    'isValid: ' + (report.isValid ? 'true' : 'false'),
+    '',
+    'issues:',
+    issues.length ? issues.map(function(x){ return '- ' + x; }).join('\n') : '- none',
+    '',
+    'warnings:',
+    warnings.length ? warnings.map(function(x){ return '- ' + x; }).join('\n') : '- none',
+    '',
+    'stats:',
+    '- scenes: ' + String(stats.scenes || 0),
+    '- invalidScenes: ' + String(stats.invalidScenes || 0),
+    '- duplicateTitles: ' + String(stats.duplicateTitles || 0),
+    '- duplicatePrompts: ' + String(stats.duplicatePrompts || 0),
+    '- similarScenes: ' + String(stats.similarScenes || 0),
+    '- weakPrompts: ' + String(stats.weakPrompts || 0)
+  ].join('\n');
+}
+
 export class ColoringAgentModule {
   constructor(app){
     this.app = app;
@@ -404,7 +450,8 @@ export class ColoringAgentModule {
       notes: ''
     });
 
-    var existingPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
+    var rawPlan = Storage.get('coloring:book_plan', null);
+    var existingPlan = rawPlan ? normalizePlan(rawPlan) : null;
     var hasExistingPlan = !!(existingPlan && existingPlan.id && existingPlan.theme);
 
     root.innerHTML = `
@@ -463,6 +510,11 @@ export class ColoringAgentModule {
         </div>
 
         <div class="card">
+          <h2>Validation</h2>
+          <pre id="ca_validation" class="pre"></pre>
+        </div>
+
+        <div class="card">
           <h2>Scene List</h2>
           <pre id="ca_scenes" class="pre"></pre>
         </div>
@@ -471,8 +523,10 @@ export class ColoringAgentModule {
 
     var $ = function(sel){ return root.querySelector(sel); };
     var summaryEl = $('#ca_summary');
+    var validationEl = $('#ca_validation');
     var scenesEl = $('#ca_scenes');
     var currentPlan = hasExistingPlan ? existingPlan : null;
+    var currentValidation = currentPlan ? safeValidatePlan(currentPlan) : null;
 
     function getFormData(){
       return {
@@ -489,8 +543,13 @@ export class ColoringAgentModule {
       Storage.set('coloring:agent_seed', getFormData());
     }
 
+    function validateCurrentPlan(){
+      currentValidation = currentPlan ? safeValidatePlan(currentPlan) : null;
+    }
+
     function paint(){
       summaryEl.textContent = currentPlan ? renderPlanSummary(currentPlan) : 'Nenhum plano gerado.';
+      validationEl.textContent = currentValidation ? renderValidationReport(currentValidation) : 'No validation yet.';
       scenesEl.textContent = currentPlan ? renderScenesText(currentPlan) : 'No scenes yet.';
     }
 
@@ -498,6 +557,7 @@ export class ColoringAgentModule {
       try {
         saveSeed();
         currentPlan = createPlanFromForm(getFormData());
+        validateCurrentPlan();
         paint();
 
         if (this.app && this.app.toast) this.app.toast('Coloring plan generated ✅');
@@ -505,7 +565,8 @@ export class ColoringAgentModule {
           this.app.log(
             '[COLORING_AGENT] plan generated theme=' + currentPlan.theme +
             ' pages=' + currentPlan.pageTarget +
-            ' scenes=' + currentPlan.scenes.length
+            ' scenes=' + currentPlan.scenes.length +
+            ' valid=' + (currentValidation && currentValidation.isValid ? 'true' : 'false')
           );
         }
       } catch (e) {
@@ -523,6 +584,7 @@ export class ColoringAgentModule {
 
         currentPlan.updatedAt = nowIso();
         currentPlan = normalizePlan(currentPlan);
+        validateCurrentPlan();
 
         Storage.set('coloring:book_plan', currentPlan);
 
@@ -531,6 +593,7 @@ export class ColoringAgentModule {
             type: 'coloring_book_planner',
             ts: Date.now(),
             plan: currentPlan,
+            validation: currentValidation,
             seed: Storage.get('coloring:agent_seed', {})
           });
         }
@@ -546,6 +609,7 @@ export class ColoringAgentModule {
       try {
         var saved = Storage.get('coloring:book_plan', null);
         currentPlan = saved ? normalizePlan(saved) : null;
+        validateCurrentPlan();
         paint();
         if (this.app && this.app.toast) this.app.toast('Saved plan reloaded ✅');
       } catch (e) {
