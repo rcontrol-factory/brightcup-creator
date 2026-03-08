@@ -1,10 +1,11 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Boot defensivo + integração segura do pipeline coloring
+// Boot defensivo + integração segura do pipeline coloring/export/release
 // - Coloring Agent
 // - Coloring Book Builder
 // - Coloring Review
 // - Export Center
+// - Release Center
 // - compatibilidade com linha cultural
 // - Comfy permanece como legado/compat, não como fluxo principal
 // - Safari/iOS/PWA safe
@@ -18,6 +19,7 @@ import { ColoringAgentModule } from './modules/coloring_agent.js';
 import { ColoringBookBuilderModule } from './modules/coloring_book_builder.js';
 import { ColoringReviewModule } from './modules/coloring_review.js';
 import { ExportCenterModule } from './modules/export_center.js';
+import { ReleaseCenterModule } from './modules/release_center.js';
 import { CoversModule } from './modules/covers.js';
 import { WordSearchModule } from './modules/wordsearch.js';
 import { CrosswordModule } from './modules/crossword.js';
@@ -211,7 +213,7 @@ function helpRender(root){
         <p class="muted">
           Linha Cultural: <b>Cultural Agent</b> → <b>Livro (Builder)</b>.
           <br/><br/>
-          Linha Coloring: <b>Coloring Agent</b> → <b>Coloring Builder</b> → <b>Coloring Review</b> → <b>Export Center</b>.
+          Linha Coloring: <b>Coloring Agent</b> → <b>Coloring Builder</b> → <b>Coloring Review</b> → <b>Export Center</b> → <b>Release Center</b>.
           <br/><br/>
           O Comfy continua apenas como compatibilidade temporária.
         </p>
@@ -294,6 +296,7 @@ function ensureDynamicNavItems(){
   ensureNavItem('coloring_book', 'Coloring Builder', 'coloring_agent');
   ensureNavItem('coloring_review', 'Coloring Review', 'coloring_book');
   ensureNavItem('export_center', 'Export Center', 'coloring_review');
+  ensureNavItem('release_center', 'Release Center', 'export_center');
 }
 
 function mountNav(){
@@ -417,6 +420,7 @@ function getSafeStartView(){
   if (last === 'help') return 'help';
   if (State.modules.has(last)) return last;
 
+  if (State.modules.has('release_center')) return 'release_center';
   if (State.modules.has('coloring_agent')) return 'coloring_agent';
   if (State.modules.has('coloring_book')) return 'coloring_book';
   if (State.modules.has('coloring_review')) return 'coloring_review';
@@ -484,6 +488,7 @@ async function boot(){
     await initModule('coloring_book', new ColoringBookBuilderModule(app));
     await initModule('coloring_review', new ColoringReviewModule(app));
     await initModule('export_center', new ExportCenterModule(app));
+    await initModule('release_center', new ReleaseCenterModule(app));
 
     await initModule('coloring', new ColoringModule(app));
     await initModule('covers', new CoversModule(app));
