@@ -1,12 +1,14 @@
 /* FILE: /js/modules/export_center.js */
-// Bright Cup Creator — Export Center v0.6 SAFE
+// Bright Cup Creator — Export Center v0.7 SAFE
 // Consolida visualmente a etapa final do pipeline de exportação
 // - preflight
 // - manifest
 // - metadata
+// - bundle
 // - package
 // - zip payload
 // - pdf export prep
+// - interior pdf payload
 // - ainda sem PDF real
 // - ainda sem ZIP real
 // - sem dependências externas
@@ -20,6 +22,25 @@ import { buildColoringProjectBundle } from '../core/project_bundle.js';
 import { buildColoringExportPackage } from '../core/export_package.js';
 import { buildZipExportPayload } from '../core/zip_export.js';
 import { buildPdfExportPrep } from '../core/pdf_export_prep.js';
+
+var __interiorPdfPayloadLoader = null;
+
+function loadInteriorPdfPayloadBuilder(){
+  if (__interiorPdfPayloadLoader) return __interiorPdfPayloadLoader;
+
+  __interiorPdfPayloadLoader = import('../core/interior_pdf_payload.js')
+    .then(function(mod){
+      if (mod && typeof mod.buildInteriorPdfPayload === 'function') {
+        return mod.buildInteriorPdfPayload;
+      }
+      return null;
+    })
+    .catch(function(){
+      return null;
+    });
+
+  return __interiorPdfPayloadLoader;
+}
 
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
@@ -280,6 +301,42 @@ function safeBuildPdfPrep(plan){
   }
 }
 
+function buildInteriorPdfPayloadFallback(pdfPrep){
+  var safePrep = pdfPrep && typeof pdfPrep === 'object' ? clone(pdfPrep) : {};
+  var stats = safePrep.stats || {};
+  var pages = Array.isArray(safePrep.pages) ? safePrep.pages.slice() : [];
+
+  return {
+    payloadVersion: '1.0',
+    type: 'brightcup_interior_pdf_payload',
+    generatedAt: '',
+    canRenderInterior: !!safePrep.canBuildPdf,
+    summary: safePrep.canBuildPdf
+      ? 'Interior PDF payload fallback generated.'
+      : 'Interior PDF payload fallback generated, but interior is not ready.',
+    book: safePrep.book || {},
+    pages: pages,
+    stats: {
+      pagesCount: pages.length,
+      pageTarget: toInt(stats.pageTarget, 0),
+      missingPages: Math.max(0, toInt(stats.missingApprovedPages, 0))
+    },
+    prep: safePrep
+  };
+}
+
+async function safeBuildInteriorPdfPayload(pdfPrep){
+  try {
+    var builder = await loadInteriorPdfPayloadBuilder();
+    if (typeof builder === 'function') {
+      return builder(pdfPrep || {});
+    }
+    return buildInteriorPdfPayloadFallback(pdfPrep || {});
+  } catch (e) {
+    return buildInteriorPdfPayloadFallback(pdfPrep || {});
+  }
+}
+
 function downloadJson(filename, obj){
   var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   var a = document.createElement('a');
@@ -508,6 +565,37 @@ function renderPdfPrepSummary(pdfPrep){
   `;
 }
 
+function renderInteriorPdfPayloadSummary(payload){
+  if (!payload) {
+    return `
+      <div class="ec-grid">
+        <div class="ec-item"><span class="k">Type</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Payload Version</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">Generated At</span><span class="v">-</span></div>
+        <div class="ec-item"><span class="k">canRenderInterior</span><span class="v">false</span></div>
+        <div class="ec-item"><span class="k">Pages Count</span><span class="v">0</span></div>
+        <div class="ec-item"><span class="k">Page Target</span><span class="v">0</span></div>
+        <div class="ec-item"><span class="k">Missing Pages</span><span class="v">0</span></div>
+      </div>
+    `;
+  }
+
+  var stats = payload.stats || {};
+
+  return `
+    <div class="ec-grid">
+      <div class="ec-item"><span class="k">Type</span><span class="v">${esc(payload.type || '-')}</span></div>
+      <div class="ec-item"><span class="k">Payload Version</span><span class="v">${esc(payload.payloadVersion || '-')}</span></div>
+      <div class="ec-item"><span class="k">Generated At</span><span class="v">${esc(payload.generatedAt || '-')}</span></div>
+      <div class="ec-item"><span class="k">canRenderInterior</span><span class="v">${esc(String(!!payload.canRenderInterior))}</span></div>
+      <div class="ec-item"><span class="k">Pages Count</span><span class="v">${esc(String(stats.pagesCount || 0))}</span></div>
+      <div class="ec-item"><span class="k">Page Target</span><span class="v">${esc(String(stats.pageTarget || 0))}</span></div>
+      <div class="ec-item"><span class="k">Missing Pages</span><span class="v">${esc(String(stats.missingPages || 0))}</span></div>
+    </div>
+    <div class="ec-summary">${esc(payload.summary || '-')}</div>
+  `;
+}
+
 export class ExportCenterModule {
   constructor(app){
     this.app = app;
@@ -528,6 +616,7 @@ export class ExportCenterModule {
     var currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
     var currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
     var currentPdfPrep = hasPlan ? safeBuildPdfPrep(currentPlan) : null;
+    var currentInteriorPdfPayload = null;
 
     root.innerHTML = `
       <style>
@@ -664,8 +753,9 @@ export class ExportCenterModule {
 
     var area = root.querySelector('#ec_area');
     var self = this;
+    var paintToken = 0;
 
-    function rebuildAll(){
+    async function rebuildAll(){
       currentPlan = normalizePlan(Storage.get('coloring:book_plan', null) || {});
       hasPlan = hasUsablePlan(currentPlan);
 
@@ -676,10 +766,13 @@ export class ExportCenterModule {
       currentPackage = hasPlan ? safeBuildPackage(currentPlan) : null;
       currentZipPayload = currentPackage ? safeBuildZipPayload(currentPackage) : null;
       currentPdfPrep = hasPlan ? safeBuildPdfPrep(currentPlan) : null;
+      currentInteriorPdfPayload = currentPdfPrep ? await safeBuildInteriorPdfPayload(currentPdfPrep) : null;
     }
 
-    function paint(){
-      rebuildAll();
+    async function paint(){
+      var myToken = ++paintToken;
+      await rebuildAll();
+      if (myToken !== paintToken) return;
 
       if (!hasPlan) {
         area.innerHTML = `
@@ -750,6 +843,12 @@ export class ExportCenterModule {
           ${currentPdfPrep ? `<pre class="ec-code">${esc(JSON.stringify(currentPdfPrep, null, 2))}</pre>` : ''}
         </div>
 
+        <div class="card">
+          <h3>Interior PDF Payload</h3>
+          ${renderInteriorPdfPayloadSummary(currentInteriorPdfPayload)}
+          ${currentInteriorPdfPayload ? `<pre class="ec-code">${esc(JSON.stringify(currentInteriorPdfPayload, null, 2))}</pre>` : ''}
+        </div>
+
         <div class="ec-actions">
           <button class="btn primary" id="ec_rebuild">Rebuild Export Data</button>
           <button class="btn" id="ec_download_manifest">Download Manifest JSON</button>
@@ -757,6 +856,7 @@ export class ExportCenterModule {
           <button class="btn" id="ec_download_package">Download Export Package JSON</button>
           <button class="btn" id="ec_download_zip_payload">Download ZIP Payload JSON</button>
           <button class="btn" id="ec_download_pdf_prep">Download PDF Export Prep JSON</button>
+          <button class="btn" id="ec_download_interior_pdf_payload">Download Interior PDF Payload JSON</button>
           <button class="btn secondary" id="ec_reload">Reload Project</button>
         </div>
       `;
@@ -767,13 +867,13 @@ export class ExportCenterModule {
       var downloadPackageBtn = area.querySelector('#ec_download_package');
       var downloadZipPayloadBtn = area.querySelector('#ec_download_zip_payload');
       var downloadPdfPrepBtn = area.querySelector('#ec_download_pdf_prep');
+      var downloadInteriorPdfPayloadBtn = area.querySelector('#ec_download_interior_pdf_payload');
       var reloadBtn = area.querySelector('#ec_reload');
 
       if (rebuildBtn) {
-        rebuildBtn.onclick = function(){
+        rebuildBtn.onclick = async function(){
           try {
-            rebuildAll();
-            paint();
+            await paint();
             if (self.app && self.app.toast) self.app.toast('Export data rebuilt ✅');
           } catch (e) {
             if (self.app && self.app.toast) self.app.toast('Failed to rebuild export data', 'err');
@@ -782,9 +882,9 @@ export class ExportCenterModule {
       }
 
       if (downloadManifestBtn) {
-        downloadManifestBtn.onclick = function(){
+        downloadManifestBtn.onclick = async function(){
           try {
-            if (!currentManifest) rebuildAll();
+            if (!currentManifest) await rebuildAll();
             if (!currentManifest) throw new Error('Manifest unavailable');
 
             downloadJson(
@@ -800,9 +900,9 @@ export class ExportCenterModule {
       }
 
       if (downloadMetadataBtn) {
-        downloadMetadataBtn.onclick = function(){
+        downloadMetadataBtn.onclick = async function(){
           try {
-            if (!currentMetadata) rebuildAll();
+            if (!currentMetadata) await rebuildAll();
             if (!currentMetadata) throw new Error('Metadata unavailable');
 
             downloadJson(
@@ -818,9 +918,9 @@ export class ExportCenterModule {
       }
 
       if (downloadPackageBtn) {
-        downloadPackageBtn.onclick = function(){
+        downloadPackageBtn.onclick = async function(){
           try {
-            if (!currentPackage) rebuildAll();
+            if (!currentPackage) await rebuildAll();
             if (!currentPackage) throw new Error('Package unavailable');
 
             downloadJson(
@@ -836,9 +936,9 @@ export class ExportCenterModule {
       }
 
       if (downloadZipPayloadBtn) {
-        downloadZipPayloadBtn.onclick = function(){
+        downloadZipPayloadBtn.onclick = async function(){
           try {
-            if (!currentZipPayload) rebuildAll();
+            if (!currentZipPayload) await rebuildAll();
             if (!currentZipPayload) throw new Error('ZIP payload unavailable');
 
             downloadJson(
@@ -854,9 +954,9 @@ export class ExportCenterModule {
       }
 
       if (downloadPdfPrepBtn) {
-        downloadPdfPrepBtn.onclick = function(){
+        downloadPdfPrepBtn.onclick = async function(){
           try {
-            if (!currentPdfPrep) rebuildAll();
+            if (!currentPdfPrep) await rebuildAll();
             if (!currentPdfPrep) throw new Error('PDF export prep unavailable');
 
             downloadJson(
@@ -871,9 +971,27 @@ export class ExportCenterModule {
         };
       }
 
+      if (downloadInteriorPdfPayloadBtn) {
+        downloadInteriorPdfPayloadBtn.onclick = async function(){
+          try {
+            if (!currentInteriorPdfPayload) await rebuildAll();
+            if (!currentInteriorPdfPayload) throw new Error('Interior PDF payload unavailable');
+
+            downloadJson(
+              'interior-pdf-payload-' + (currentPlan.id || 'project') + '.json',
+              currentInteriorPdfPayload
+            );
+
+            if (self.app && self.app.toast) self.app.toast('Interior PDF payload downloaded ✅');
+          } catch (e) {
+            if (self.app && self.app.toast) self.app.toast('Failed to download interior PDF payload', 'err');
+          }
+        };
+      }
+
       if (reloadBtn) {
-        reloadBtn.onclick = function(){
-          paint();
+        reloadBtn.onclick = async function(){
+          await paint();
           if (self.app && self.app.toast) self.app.toast('Project reloaded ✅');
         };
       }
