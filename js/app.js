@@ -1,12 +1,12 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Patch de integração:
+// PATCH SAFE — boot defensivo + start seguro
+// Integra:
 // - Coloring Agent
 // - Coloring Book Builder
 // - Coloring Review
 // - Export Center
-// - boot defensivo
-// - compatibilidade com módulos estáveis
+// - módulos estáveis
 // - Comfy permanece como legado/compat, não como fluxo principal
 
 import { Storage } from './core/storage.js';
@@ -319,7 +319,7 @@ function mountNav(){
     btnCopyLog.__bccBound = true;
     btnCopyLog.addEventListener('click', async function(){
       try {
-        await safeClipboardCopy(($('#log') && $('#log').textContent) || '');
+        await safeClipboardCopy((($('#log') && $('#log').textContent) || ''));
         toast('Logs copiados ✅', 'ok');
       } catch (e) {
         toast('Falha ao copiar logs', 'err');
@@ -361,7 +361,7 @@ function renderViewError(root, err, title){
 
 function routeTo(viewId){
   var root = $('#view');
-  var chosen = viewId || 'coloring_agent';
+  var chosen = viewId || 'help';
 
   State.activeView = chosen;
   mergeConfig({ lastView: chosen });
@@ -370,7 +370,11 @@ function routeTo(viewId){
   if (!root) return;
 
   if (chosen === 'help') {
-    helpRender(root);
+    try {
+      helpRender(root);
+    } catch (e) {
+      renderViewError(root, e, 'Erro ao abrir ajuda');
+    }
     return;
   }
 
@@ -400,16 +404,19 @@ function routeTo(viewId){
 }
 
 function getSafeStartView(){
-  var last = getConfig().lastView || 'coloring_agent';
-  if (last === 'help') return 'help';
-  if (State.modules.has(last)) return last;
+  var last = getConfig().lastView || '';
 
-  if (State.modules.has('coloring_agent')) return 'coloring_agent';
-  if (State.modules.has('coloring_book')) return 'coloring_book';
-  if (State.modules.has('coloring_review')) return 'coloring_review';
-  if (State.modules.has('export_center')) return 'export_center';
-  if (State.modules.has('cultural')) return 'cultural';
-  if (State.modules.has('coloring')) return 'coloring';
+  if (last === 'help') return 'help';
+
+  if (
+    last === 'cultural' ||
+    last === 'book' ||
+    last === 'coloring' ||
+    last === 'settings' ||
+    last === 'export_center'
+  ) {
+    if (State.modules.has(last)) return last;
+  }
 
   return 'help';
 }
@@ -482,7 +489,13 @@ async function boot(){
     mountNav();
     uiStatus('READY', 'ok');
 
-    routeTo(getSafeStartView());
+    try {
+      routeTo(getSafeStartView());
+    } catch (e) {
+      log('[START VIEW ERROR] ' + String((e && e.stack) || e));
+      routeTo('help');
+    }
+
     toast('Pronto ✅', 'ok');
   } catch (e) {
     console.error(e);
