@@ -239,28 +239,17 @@ function renderWordsColumns(wordsDisplay){
   const list = (wordsDisplay || []).map(displayWord).filter(Boolean);
   if (!list.length) return '';
 
-  // 3 colunas (estilo impresso) + "leader" pontilhado
-  const cols = 3;
-  const buckets = Array.from({ length: cols }, () => []);
-  let maxLen = 0;
-  for (let i = 0; i < list.length; i++) {
-    const w = list[i];
-    if (w.length > maxLen) maxLen = w.length;
-    buckets[i % cols].push(w);
+  const rows = [];
+  for (let i = 0; i < list.length; i += 3) {
+    rows.push(list.slice(i, i + 3));
   }
 
-  // shrink automático se tiver palavra muito longa (evita quebra feia)
-  // 14+ começa a apertar — reduz gradual até ~0.72
-  const shrink = Math.max(0.72, Math.min(1, 1 - Math.max(0, (maxLen - 14)) * 0.04));
-
-  const colHtml = buckets.map(col => {
-    const items = col.map(w => (
-      `<div class="ws-item"><span class="ws-word">${esc(w)}</span><span class="ws-leader" aria-hidden="true"></span></div>`
-    )).join('');
-    return `<div class="ws-col">${items}</div>`;
+  const html = rows.map(row => {
+    const cols = row.map(word => `<span class="ws-word-bullet">${esc(word)}</span>`).join('');
+    return `<div class="ws-word-row">${cols}</div>`;
   }).join('');
 
-  return `<div class="ws-words-cols" style="--wsw:${shrink.toFixed(3)}">${colHtml}</div>`;
+  return `<div class="ws-words-list">${html}</div>`;
 }
 
 
@@ -542,13 +531,14 @@ export class CulturalBookBuilderModule {
         .ws-subline{
           text-align:center;
           font-weight: 800;
-          letter-spacing: .4px;
+          letter-spacing: .3px;
           font-size: 12px;
-          opacity: .78;
-          margin-top: -2px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
+          opacity: .82;
+          margin-top: -1px;
+          white-space: normal;
+          overflow: visible;
+          text-overflow: clip;
+          line-height: 1.1;
         }
         .ws-hr{
           height: 1px;
@@ -562,29 +552,28 @@ export class CulturalBookBuilderModule {
           align-items:center;
           flex: 1 1 auto;
           overflow:hidden;
-          padding-top: 4px;
+          padding-top: 2px;
         }
         .ws-wordswrap{
           margin-top: auto;
           overflow:hidden;
-          padding-bottom: 2px;
+          padding-bottom: 0;
         }
 
         .ws-table{
           border-collapse: collapse;
           margin: 0 auto;
-          /* moldura externa (estilo impresso) */
-          border: 2px solid rgba(0,0,0,.55);
+          border: 2px solid rgba(0,0,0,.72);
         }
         .ws-table td{
-          border: 1px solid rgba(0,0,0,.35);
-          width: 20px;
-          height: 20px;
+          border: 1px solid rgba(0,0,0,.28);
+          width: 21px;
+          height: 21px;
           text-align:center;
           vertical-align:middle;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 13px;
+          font-size: 14px;
           line-height: 1;
           padding: 0;
         }
@@ -592,7 +581,6 @@ export class CulturalBookBuilderModule {
           .ws-table td{ width: 18px; height: 18px; font-size: 12px; }
         }
 
-        /* palavras: estilo “impresso”, 3 colunas e sem truncar */
         .words-box{
           border: none;
           background: transparent;
@@ -604,49 +592,38 @@ export class CulturalBookBuilderModule {
           font-size: 12px;
           letter-spacing: .6px;
           text-transform: uppercase;
-          margin: 10px 0 6px;
+          margin: 8px 0 6px;
         }
         .words-grid{
-          /* container neutro (estrutura real em .ws-words-cols) */
           display:block;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
           font-size: 12px;
         }
-        .ws-words-cols{
-          display:grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 7px 18px;
-          font-size: calc(12px * var(--wsw, 1));
-        }
-        .ws-col{
+        .ws-words-list{
           display:flex;
           flex-direction:column;
-          gap: 6px;
-          min-width: 0;
-        }
-        .ws-item{
-          display:flex;
-          align-items:baseline;
           gap: 8px;
-          min-width: 0;
-          white-space: nowrap; /* NÃO quebrar no meio */
         }
-        .ws-word{
-          overflow: visible;
-          text-overflow: clip;
+        .ws-word-row{
+          display:grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px 18px;
         }
-        .ws-leader{
-          flex: 1;
-          border-bottom: 1px dotted rgba(0,0,0,.55);
-          transform: translateY(-2px);
-        }
-        /* permite frases e acentos sem cortar */
-        .ws-w{
+        .ws-word-bullet{
+          display:block;
+          text-align:left;
           white-space: nowrap;
-          word-break: normal;
-          overflow: visible;
-          text-overflow: clip;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          font-size: 12px;
+        }
+        .ws-word-bullet::after{
+          content: ' •';
+          font-weight: 900;
+        }
+        .ws-word-row .ws-word-bullet:last-child::after{
+          content: '';
         }
 
         /* ilustração (só no TEXTO) */
@@ -768,14 +745,6 @@ export class CulturalBookBuilderModule {
                   <div class="words-title" style="text-align:center; margin: 2px 0 8px;">PALAVRAS</div>
                   <div class="words-grid">${renderWordsColumns(page.wordsDisplay || page.wordsNorm || [])}</div>
                 </div>
-
-                ${
-                  withSend
-                    ? `<div style="display:flex; justify-content:flex-end;">
-                        <button class="btn" data-send="ws">Enviar p/ Caça-Palavras</button>
-                      </div>`
-                    : ``
-                }
               </div>
             </div>
           </div>
