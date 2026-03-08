@@ -245,7 +245,9 @@ function renderWordsColumns(wordsDisplay){
   }
 
   const html = rows.map(row => {
-    const cols = row.map(word => `<span class="ws-word-bullet">${esc(word)}</span>`).join('');
+    const padded = row.slice();
+    while (padded.length < 3) padded.push('');
+    const cols = padded.map(word => `<span class="ws-word-item">${word ? esc(word) : '&nbsp;'}</span>`).join('');
     return `<div class="ws-word-row">${cols}</div>`;
   }).join('');
 
@@ -513,32 +515,32 @@ export class CulturalBookBuilderModule {
         .ws-frame{
           height: 100%;
           border: 2px solid rgba(0,0,0,.78);
-          padding: 16px 16px 14px;
+          padding: 14px 14px 12px;
           display:flex;
           flex-direction:column;
-          gap: 10px;
+          gap: 8px;
           overflow:hidden; /* papel fixo */
         }
         .ws-headline{
           text-align:center;
           font-weight: 900;
-          letter-spacing: .8px;
+          letter-spacing: .6px;
           text-transform: uppercase;
-          font-size: clamp(22px, 5.4vw, 34px);
-          line-height: 1.05;
-          margin-top: 2px;
+          font-size: clamp(20px, 4.8vw, 30px);
+          line-height: 1.02;
+          margin-top: 0;
         }
         .ws-subline{
           text-align:center;
           font-weight: 800;
-          letter-spacing: .3px;
-          font-size: 12px;
+          letter-spacing: .2px;
+          font-size: 11px;
           opacity: .82;
-          margin-top: -1px;
+          margin-top: -2px;
           white-space: normal;
           overflow: visible;
           text-overflow: clip;
-          line-height: 1.1;
+          line-height: 1.08;
         }
         .ws-hr{
           height: 1px;
@@ -549,13 +551,14 @@ export class CulturalBookBuilderModule {
         .ws-gridwrap{
           display:flex;
           justify-content:center;
-          align-items:center;
-          flex: 1 1 auto;
+          align-items:flex-start;
+          flex: 0 0 auto;
           overflow:hidden;
           padding-top: 2px;
+          margin-bottom: 10px;
         }
         .ws-wordswrap{
-          margin-top: auto;
+          margin-top: 0;
           overflow:hidden;
           padding-bottom: 0;
         }
@@ -567,18 +570,18 @@ export class CulturalBookBuilderModule {
         }
         .ws-table td{
           border: 1px solid rgba(0,0,0,.28);
-          width: 21px;
-          height: 21px;
+          width: 18px;
+          height: 18px;
           text-align:center;
           vertical-align:middle;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 14px;
+          font-size: 13px;
           line-height: 1;
           padding: 0;
         }
         @media (max-width: 420px){
-          .ws-table td{ width: 18px; height: 18px; font-size: 12px; }
+          .ws-table td{ width: 16px; height: 16px; font-size: 11px; }
         }
 
         .words-box{
@@ -589,41 +592,36 @@ export class CulturalBookBuilderModule {
         }
         .words-title{
           font-weight: 900;
-          font-size: 12px;
+          font-size: 11px;
           letter-spacing: .6px;
           text-transform: uppercase;
-          margin: 8px 0 6px;
+          margin: 2px 0 6px;
         }
         .words-grid{
           display:block;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 12px;
+          font-size: 11px;
         }
         .ws-words-list{
           display:flex;
           flex-direction:column;
-          gap: 8px;
+          gap: 6px;
         }
         .ws-word-row{
           display:grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 10px 18px;
+          gap: 6px 18px;
         }
-        .ws-word-bullet{
+        .ws-word-item{
           display:block;
           text-align:left;
           white-space: nowrap;
           overflow: hidden;
-          text-overflow: ellipsis;
-          font-size: 12px;
-        }
-        .ws-word-bullet::after{
-          content: ' •';
-          font-weight: 900;
-        }
-        .ws-word-row .ws-word-bullet:last-child::after{
-          content: '';
+          text-overflow: clip;
+          font-size: 11px;
+          line-height: 1.2;
+          min-width: 0;
         }
 
         /* ilustração (só no TEXTO) */
@@ -742,7 +740,7 @@ export class CulturalBookBuilderModule {
                 </div>
 
                 <div class="ws-wordswrap">
-                  <div class="words-title" style="text-align:center; margin: 2px 0 8px;">PALAVRAS</div>
+                  <div class="words-title" style="text-align:center;">PALAVRAS</div>
                   <div class="words-grid">${renderWordsColumns(page.wordsDisplay || page.wordsNorm || [])}</div>
                 </div>
               </div>
