@@ -1,17 +1,17 @@
 /* FILE: /js/app.js */
-// Bright Cup Creator — /js/app.js (PATCH SAFE)
-// Objetivo:
-// - boot previsível
-// - contratos estáveis para settings/coloring/comfy
-// - export/import/reset compatíveis
-// - fallback seguro de view/render
-// - patch mínimo sem reescrever arquitetura
+// Bright Cup Creator — /js/app.js
+// Patch de integração do Coloring Agent
+// - integra /js/modules/coloring_agent.js
+// - mantém boot defensivo
+// - mantém compatibilidade com módulos estáveis
+// - Comfy permanece como legado/compat, não como fluxo principal
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
-import { ComfyClient } from './core/comfy.js';
+import { ComfyClient } from './core/comfy_client.js';
 
 import { ColoringModule } from './modules/coloring.js';
+import { ColoringAgentModule } from './modules/coloring_agent.js';
 import { CoversModule } from './modules/covers.js';
 import { WordSearchModule } from './modules/wordsearch.js';
 import { CrosswordModule } from './modules/crossword.js';
@@ -20,8 +20,8 @@ import { SettingsModule } from './modules/settings.js';
 import { CulturalAgentModule } from './modules/cultural_agent.js';
 import { CulturalBookBuilderModule } from './modules/cultural_book_builder.js';
 
-const $ = function(s, r){ return (r || document).querySelector(s); };
-const $$ = function(s, r){ return Array.from((r || document).querySelectorAll(s)); };
+const $ = function(sel, root){ return (root || document).querySelector(sel); };
+const $$ = function(sel, root){ return Array.from((root || document).querySelectorAll(sel)); };
 
 const State = {
   themes: null,
@@ -41,7 +41,7 @@ function normalizeConfig(cfg){
   });
 }
 
-function uiStatus(text, kind) {
+function uiStatus(text, kind){
   var el = $('#uiStatus');
   if (!el) return;
   el.textContent = text;
@@ -49,7 +49,7 @@ function uiStatus(text, kind) {
   el.classList.add(kind || 'ok');
 }
 
-function toast(msg, type) {
+function toast(msg, type){
   var el = $('#toast');
   if (!el) return;
 
@@ -64,48 +64,47 @@ function toast(msg, type) {
   }, 2600);
 }
 
-function log(line) {
+function log(line){
   var el = $('#log');
   if (!el) return;
 
-  var t = typeof line === 'string' ? line : JSON.stringify(line, null, 2);
-  el.textContent += t + '\n';
+  var txt = typeof line === 'string' ? line : JSON.stringify(line, null, 2);
+  el.textContent += txt + '\n';
   el.scrollTop = el.scrollHeight;
 }
 
-async function loadThemes() {
+async function loadThemes(){
   var res = await fetch('./data/themes.json', { cache: 'no-cache' });
   if (!res.ok) throw new Error('Falha ao carregar themes.json');
   return await res.json();
 }
 
-function mergeConfig(patch) {
+function mergeConfig(patch){
   var next = normalizeConfig(Object.assign({}, State.cfg || {}, patch || {}));
   State.cfg = next;
   Storage.set('config', next);
 
-  // compat com bridge do Comfy
   try {
     localStorage.setItem(Storage.prefix + 'comfy:base_url', JSON.stringify(next.baseUrl || ''));
   } catch (e) {}
 }
 
-function getConfig() {
+function getConfig(){
   State.cfg = normalizeConfig(State.cfg || Storage.get('config', {}));
   return State.cfg;
 }
 
-function setConfig(patch) {
+function setConfig(patch){
   mergeConfig(patch || {});
   return getConfig();
 }
 
-function buildExportDump() {
+function buildExportDump(){
   var keys = Storage.listKeys();
   var data = {};
   var i, k;
 
-  for (i = 0; i < keys.length; i += 1) {
+  for (i = 0; i < keys.length; i += 1){
     k = keys[i];
     data[k] = Storage.get(k, null);
   }
@@ -116,18 +115,19 @@ function buildExportDump() {
   };
 }
 
-function downloadJson(filename, obj) {
+function downloadJson(filename, obj){
   var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
+
   setTimeout(function(){
     URL.revokeObjectURL(a.href);
   }, 5000);
 }
 
-function exportAll() {
+function exportAll(){
   var dump = buildExportDump();
 
   try {
@@ -141,7 +141,7 @@ function exportAll() {
   return dump;
 }
 
-function importAll(payload) {
+function importAll(payload){
   if (!payload || typeof payload !== 'object') {
     throw new Error('Payload de importação inválido.');
   }
@@ -150,7 +150,7 @@ function importAll(payload) {
   var keys = Object.keys(data);
   var i, k;
 
-  for (i = 0; i < keys.length; i += 1) {
+  for (i = 0; i < keys.length; i += 1){
     k = keys[i];
     Storage.set(k, data[k]);
   }
@@ -167,11 +167,11 @@ function importAll(payload) {
   return true;
 }
 
-function resetAll() {
+function resetAll(){
   var keys = Storage.listKeys();
   var i;
 
-  for (i = 0; i < keys.length; i += 1) {
+  for (i = 0; i < keys.length; i += 1){
     Storage.del(keys[i]);
   }
 
@@ -185,23 +185,23 @@ function resetAll() {
   return true;
 }
 
-function helpRender(root) {
+function helpRender(root){
   root.innerHTML = `
     <div class="grid">
       <div class="card">
         <h2>Ajuda rápida</h2>
         <p class="muted">
-          Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b> para validar →
-          depois Export PDF (KDP).
+          Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b>.
           <br/><br/>
-          Linha Coloring (USA/Global) permanece separada.
+          Linha Coloring: <b>Coloring Agent</b> → planejar cenas → evoluir para geração e validação.
+          <br/><br/>
+          O fluxo legado de imagem externa continua apenas como compatibilidade temporária.
         </p>
       </div>
     </div>
   `;
 }
 
-/* === Mobile Hamburger UX === */
 function navOpen(on){
   document.body.classList.toggle('nav-open', !!on);
 }
@@ -212,7 +212,7 @@ function navClose(){
   navOpen(false);
 }
 
-function safeClipboardCopy(text) {
+function safeClipboardCopy(text){
   if (navigator.clipboard && navigator.clipboard.writeText) {
     return navigator.clipboard.writeText(text);
   }
@@ -235,16 +235,49 @@ function safeClipboardCopy(text) {
   });
 }
 
-function mountNav() {
+function bindNavClicks(){
   $$('.navitem').forEach(function(btn){
+    if (btn.__bccNavBound) return;
+    btn.__bccNavBound = true;
+
     btn.addEventListener('click', function(){
       routeTo(btn.dataset.view);
       navClose();
     });
   });
+}
+
+function ensureColoringAgentNav(){
+  var existing = document.querySelector('.navitem[data-view="coloring_agent"]');
+  if (existing) return;
+
+  var anchor = document.querySelector('.navitem[data-view="coloring"]');
+  var parent = anchor ? anchor.parentNode : null;
+
+  if (!parent) {
+    var any = document.querySelector('.navitem');
+    parent = any ? any.parentNode : null;
+  }
+
+  if (!parent) return;
+
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'navitem';
+  btn.dataset.view = 'coloring_agent';
+  btn.textContent = 'Coloring Agent';
+
+  if (anchor && anchor.nextSibling) parent.insertBefore(btn, anchor.nextSibling);
+  else parent.appendChild(btn);
+}
+
+function mountNav(){
+  ensureColoringAgentNav();
+  bindNavClicks();
 
   var btnHelp = $('#btnHelp');
-  if (btnHelp) {
+  if (btnHelp && !btnHelp.__bccBound) {
+    btnHelp.__bccBound = true;
     btnHelp.addEventListener('click', function(){
       routeTo('help');
       navClose();
@@ -252,14 +285,16 @@ function mountNav() {
   }
 
   var btnExport = $('#btnExport');
-  if (btnExport) {
+  if (btnExport && !btnExport.__bccBound) {
+    btnExport.__bccBound = true;
     btnExport.addEventListener('click', function(){
       exportAll();
     });
   }
 
   var btnClear = $('#btnClear');
-  if (btnClear) {
+  if (btnClear && !btnClear.__bccBound) {
+    btnClear.__bccBound = true;
     btnClear.addEventListener('click', function(){
       var el = $('#log');
       if (el) el.textContent = '';
@@ -267,7 +302,8 @@ function mountNav() {
   }
 
   var btnCopyLog = $('#btnCopyLog');
-  if (btnCopyLog) {
+  if (btnCopyLog && !btnCopyLog.__bccBound) {
+    btnCopyLog.__bccBound = true;
     btnCopyLog.addEventListener('click', async function(){
       try {
         await safeClipboardCopy(($('#log') && $('#log').textContent) || '');
@@ -279,27 +315,29 @@ function mountNav() {
   }
 
   var btnMenu = $('#btnMenu');
-  if (btnMenu) {
+  if (btnMenu && !btnMenu.__bccBound) {
+    btnMenu.__bccBound = true;
     btnMenu.addEventListener('click', function(){
       navToggle();
     });
   }
 
   var navOverlay = $('#navOverlay');
-  if (navOverlay) {
+  if (navOverlay && !navOverlay.__bccBound) {
+    navOverlay.__bccBound = true;
     navOverlay.addEventListener('click', function(){
       navClose();
     });
   }
 }
 
-function setActiveNav(viewId) {
+function setActiveNav(viewId){
   $$('.navitem').forEach(function(b){
     b.classList.toggle('active', b.dataset.view === viewId);
   });
 }
 
-function renderViewError(root, err, title) {
+function renderViewError(root, err, title){
   root.innerHTML = `
     <div class="card">
       <h2>${escapeHtml(title || 'Erro ao renderizar')}</h2>
@@ -308,9 +346,9 @@ function renderViewError(root, err, title) {
   `;
 }
 
-function routeTo(viewId) {
+function routeTo(viewId){
   var root = $('#view');
-  var chosen = viewId || 'coloring';
+  var chosen = viewId || 'coloring_agent';
 
   State.activeView = chosen;
   mergeConfig({ lastView: chosen });
@@ -348,14 +386,19 @@ function routeTo(viewId) {
   }
 }
 
-function getSafeStartView() {
-  var last = getConfig().lastView || 'coloring';
+function getSafeStartView(){
+  var last = getConfig().lastView || 'coloring_agent';
   if (last === 'help') return 'help';
   if (State.modules.has(last)) return last;
-  return 'coloring';
+
+  if (State.modules.has('coloring_agent')) return 'coloring_agent';
+  if (State.modules.has('cultural')) return 'cultural';
+  if (State.modules.has('coloring')) return 'coloring';
+
+  return 'help';
 }
 
-async function initModule(id, mod) {
+async function initModule(id, mod){
   State.modules.set(id, mod);
 
   if (mod && typeof mod.init === 'function') {
@@ -367,7 +410,7 @@ async function initModule(id, mod) {
   }
 }
 
-async function boot() {
+async function boot(){
   uiStatus('BOOT', 'warn');
   log('[BOOT] ' + new Date().toISOString());
 
@@ -380,11 +423,16 @@ async function boot() {
       }
     }
 
-    State.themes = await loadThemes();
+    try {
+      State.themes = await loadThemes();
+    } catch (e) {
+      State.themes = {};
+      log('[THEMES WARN] ' + String((e && e.message) || e));
+    }
 
     var app = {
       themes: State.themes,
-      promptEngine: new PromptEngine(State.themes),
+      promptEngine: new PromptEngine(State.themes || {}),
       comfy: new ComfyClient(function(){
         var cfg = getConfig();
         return String(cfg.baseUrl || cfg.comfyBase || '').trim();
@@ -402,6 +450,7 @@ async function boot() {
       }
     };
 
+    await initModule('coloring_agent', new ColoringAgentModule(app));
     await initModule('coloring', new ColoringModule(app));
     await initModule('covers', new CoversModule(app));
     await initModule('wordsearch', new WordSearchModule(app));
@@ -429,7 +478,7 @@ async function boot() {
   }
 }
 
-function escapeHtml(s) {
+function escapeHtml(s){
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
