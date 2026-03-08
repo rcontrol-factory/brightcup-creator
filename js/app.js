@@ -1,5 +1,11 @@
 /* FILE: /js/app.js */
-// Bright Cup Creator — /js/app.js (PADRÃO) + Mobile Hamburger UX
+// Bright Cup Creator — /js/app.js (PATCH SAFE)
+// Objetivo:
+// - boot previsível
+// - contratos estáveis para settings/coloring/comfy
+// - export/import/reset compatíveis
+// - fallback seguro de view/render
+// - patch mínimo sem reescrever arquitetura
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
@@ -14,71 +20,169 @@ import { SettingsModule } from './modules/settings.js';
 import { CulturalAgentModule } from './modules/cultural_agent.js';
 import { CulturalBookBuilderModule } from './modules/cultural_book_builder.js';
 
-const $ = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const $ = function(s, r){ return (r || document).querySelector(s); };
+const $$ = function(s, r){ return Array.from((r || document).querySelectorAll(s)); };
 
 const State = {
   themes: null,
-  cfg: Storage.get('config', {}),
+  cfg: normalizeConfig(Storage.get('config', {})),
   activeView: null,
   modules: new Map(),
-  toastTimer: null,
+  toastTimer: null
 };
 
-function uiStatus(text, kind = 'ok') {
-  const el = $('#uiStatus');
+function normalizeConfig(cfg){
+  var safe = cfg && typeof cfg === 'object' ? cfg : {};
+  var base = String(safe.baseUrl || safe.comfyBase || '').trim();
+
+  return Object.assign({}, safe, {
+    baseUrl: base,
+    comfyBase: base
+  });
+}
+
+function uiStatus(text, kind) {
+  var el = $('#uiStatus');
   if (!el) return;
   el.textContent = text;
   el.classList.remove('ok', 'warn', 'bad');
-  el.classList.add(kind);
+  el.classList.add(kind || 'ok');
 }
 
-function toast(msg, type = 'info') {
-  const el = $('#toast');
+function toast(msg, type) {
+  var el = $('#toast');
   if (!el) return;
+
   el.hidden = false;
   el.textContent = msg;
-  el.className = `toast show ${type}`;
+  el.className = 'toast show ' + (type || 'info');
+
   clearTimeout(State.toastTimer);
-  State.toastTimer = setTimeout(() => {
+  State.toastTimer = setTimeout(function(){
     el.classList.remove('show');
     el.hidden = true;
   }, 2600);
 }
 
 function log(line) {
-  const el = $('#log');
+  var el = $('#log');
   if (!el) return;
-  const t = typeof line === 'string' ? line : JSON.stringify(line, null, 2);
+
+  var t = typeof line === 'string' ? line : JSON.stringify(line, null, 2);
   el.textContent += t + '\n';
   el.scrollTop = el.scrollHeight;
 }
 
 async function loadThemes() {
-  const res = await fetch('./data/themes.json', { cache: 'no-cache' });
+  var res = await fetch('./data/themes.json', { cache: 'no-cache' });
   if (!res.ok) throw new Error('Falha ao carregar themes.json');
   return await res.json();
 }
 
 function mergeConfig(patch) {
-  State.cfg = { ...(State.cfg || {}), ...(patch || {}) };
-  Storage.set('config', State.cfg);
+  var next = normalizeConfig(Object.assign({}, State.cfg || {}, patch || {}));
+  State.cfg = next;
+  Storage.set('config', next);
+
+  // compat com bridge do Comfy
+  try {
+    localStorage.setItem(Storage.prefix + 'comfy:base_url', JSON.stringify(next.baseUrl || ''));
+  } catch (e) {}
 }
 
-function getConfig() { return State.cfg || {}; }
-function setConfig(patch) { mergeConfig(patch); }
+function getConfig() {
+  State.cfg = normalizeConfig(State.cfg || Storage.get('config', {}));
+  return State.cfg;
+}
+
+function setConfig(patch) {
+  mergeConfig(patch || {});
+  return getConfig();
+}
+
+function buildExportDump() {
+  var keys = Storage.listKeys();
+  var data = {};
+  var i, k;
+
+  for (i = 0; i < keys.length; i += 1) {
+    k = keys[i];
+    data[k] = Storage.get(k, null);
+  }
+
+  return {
+    exportedAt: new Date().toISOString(),
+    data: data
+  };
+}
+
+function downloadJson(filename, obj) {
+  var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(function(){
+    URL.revokeObjectURL(a.href);
+  }, 5000);
+}
 
 function exportAll() {
-  const keys = Storage.listKeys();
-  const data = {};
-  keys.forEach(k => { data[k] = Storage.get(k, null); });
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), data }, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `brightcup-backup-${Date.now()}.json`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  toast('Backup exportado ✅', 'ok');
+  var dump = buildExportDump();
+
+  try {
+    downloadJson('brightcup-backup-' + Date.now() + '.json', dump);
+    toast('Backup exportado ✅', 'ok');
+  } catch (e) {
+    toast('Falha ao exportar backup', 'err');
+    log('[EXPORT ERROR] ' + String((e && e.stack) || e));
+  }
+
+  return dump;
+}
+
+function importAll(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Payload de importação inválido.');
+  }
+
+  var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+  var keys = Object.keys(data);
+  var i, k;
+
+  for (i = 0; i < keys.length; i += 1) {
+    k = keys[i];
+    Storage.set(k, data[k]);
+  }
+
+  var importedCfg = Storage.get('config', {});
+  State.cfg = normalizeConfig(importedCfg);
+  Storage.set('config', State.cfg);
+
+  try {
+    localStorage.setItem(Storage.prefix + 'comfy:base_url', JSON.stringify(State.cfg.baseUrl || ''));
+  } catch (e) {}
+
+  toast('Backup importado ✅', 'ok');
+  return true;
+}
+
+function resetAll() {
+  var keys = Storage.listKeys();
+  var i;
+
+  for (i = 0; i < keys.length; i += 1) {
+    Storage.del(keys[i]);
+  }
+
+  try {
+    localStorage.removeItem(Storage.prefix + 'comfy:base_url');
+  } catch (e) {}
+
+  State.cfg = normalizeConfig({});
+  State.activeView = null;
+  toast('Dados resetados ✅', 'ok');
+  return true;
 }
 
 function helpRender(root) {
@@ -108,105 +212,230 @@ function navClose(){
   navOpen(false);
 }
 
+function safeClipboardCopy(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+
+  return new Promise(function(resolve, reject){
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text || '';
+      ta.setAttribute('readonly', 'readonly');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      resolve(true);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
 function mountNav() {
-  // nav buttons
-  $$('.navitem').forEach(btn => btn.addEventListener('click', () => {
-    routeTo(btn.dataset.view);
-    navClose(); // no mobile, fecha após escolher
-  }));
-
-  // top actions
-  $('#btnHelp')?.addEventListener('click', () => { routeTo('help'); navClose(); });
-  $('#btnExport')?.addEventListener('click', () => exportAll());
-
-  // logs
-  $('#btnClear')?.addEventListener('click', () => { const el = $('#log'); if (el) el.textContent = ''; });
-  $('#btnCopyLog')?.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText($('#log')?.textContent || ''); toast('Logs copiados ✅', 'ok'); }
-    catch { toast('Falha ao copiar logs', 'err'); }
+  $$('.navitem').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      routeTo(btn.dataset.view);
+      navClose();
+    });
   });
 
-  // hamburger
-  $('#btnMenu')?.addEventListener('click', () => navToggle());
-  $('#navOverlay')?.addEventListener('click', () => navClose());
+  var btnHelp = $('#btnHelp');
+  if (btnHelp) {
+    btnHelp.addEventListener('click', function(){
+      routeTo('help');
+      navClose();
+    });
+  }
+
+  var btnExport = $('#btnExport');
+  if (btnExport) {
+    btnExport.addEventListener('click', function(){
+      exportAll();
+    });
+  }
+
+  var btnClear = $('#btnClear');
+  if (btnClear) {
+    btnClear.addEventListener('click', function(){
+      var el = $('#log');
+      if (el) el.textContent = '';
+    });
+  }
+
+  var btnCopyLog = $('#btnCopyLog');
+  if (btnCopyLog) {
+    btnCopyLog.addEventListener('click', async function(){
+      try {
+        await safeClipboardCopy(($('#log') && $('#log').textContent) || '');
+        toast('Logs copiados ✅', 'ok');
+      } catch (e) {
+        toast('Falha ao copiar logs', 'err');
+      }
+    });
+  }
+
+  var btnMenu = $('#btnMenu');
+  if (btnMenu) {
+    btnMenu.addEventListener('click', function(){
+      navToggle();
+    });
+  }
+
+  var navOverlay = $('#navOverlay');
+  if (navOverlay) {
+    navOverlay.addEventListener('click', function(){
+      navClose();
+    });
+  }
 }
 
 function setActiveNav(viewId) {
-  $$('.navitem').forEach(b => b.classList.toggle('active', b.dataset.view === viewId));
+  $$('.navitem').forEach(function(b){
+    b.classList.toggle('active', b.dataset.view === viewId);
+  });
+}
+
+function renderViewError(root, err, title) {
+  root.innerHTML = `
+    <div class="card">
+      <h2>${escapeHtml(title || 'Erro ao renderizar')}</h2>
+      <pre class="log">${escapeHtml(String((err && err.stack) || err || 'Erro desconhecido'))}</pre>
+    </div>
+  `;
 }
 
 function routeTo(viewId) {
-  State.activeView = viewId;
-  mergeConfig({ lastView: viewId });
-  setActiveNav(viewId);
+  var root = $('#view');
+  var chosen = viewId || 'coloring';
 
-  const root = $('#view');
+  State.activeView = chosen;
+  mergeConfig({ lastView: chosen });
+  setActiveNav(chosen);
+
   if (!root) return;
 
-  if (viewId === 'help') return helpRender(root);
+  if (chosen === 'help') {
+    helpRender(root);
+    return;
+  }
 
-  const mod = State.modules.get(viewId);
+  var mod = State.modules.get(chosen);
+
   if (!mod) {
-    root.innerHTML = `<div class="card"><h2>View não encontrada</h2><p class="muted">${viewId}</p></div>`;
+    root.innerHTML = '<div class="card"><h2>View não encontrada</h2><p class="muted">' + escapeHtml(chosen) + '</p></div>';
     return;
   }
 
   try {
-    mod.render?.(root);
-    mod.onShow?.();
+    if (typeof mod.render !== 'function') {
+      throw new Error('Módulo sem render().');
+    }
+
+    mod.render(root);
+
+    if (typeof mod.onShow === 'function') {
+      mod.onShow();
+    }
   } catch (e) {
     console.error(e);
-    root.innerHTML = `<div class="card"><h2>Erro ao renderizar</h2><pre class="log">${String(e?.stack || e)}</pre></div>`;
+    log('[ROUTE ERROR][' + chosen + '] ' + String((e && e.stack) || e));
+    renderViewError(root, e, 'Erro ao abrir view');
     toast('Erro ao renderizar view', 'err');
+  }
+}
+
+function getSafeStartView() {
+  var last = getConfig().lastView || 'coloring';
+  if (last === 'help') return 'help';
+  if (State.modules.has(last)) return last;
+  return 'coloring';
+}
+
+async function initModule(id, mod) {
+  State.modules.set(id, mod);
+
+  if (mod && typeof mod.init === 'function') {
+    try {
+      await mod.init();
+    } catch (e) {
+      log('[MODULE INIT ERROR][' + id + '] ' + String((e && e.stack) || e));
+    }
   }
 }
 
 async function boot() {
   uiStatus('BOOT', 'warn');
-  log(`[BOOT] ${new Date().toISOString()}`);
+  log('[BOOT] ' + new Date().toISOString());
 
   try {
-    if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch {} }
+    if ('serviceWorker' in navigator) {
+      try {
+        await navigator.serviceWorker.register('./sw.js');
+      } catch (e) {
+        log('[SW WARN] ' + String((e && e.message) || e));
+      }
+    }
+
     State.themes = await loadThemes();
 
-    const app = {
+    var app = {
       themes: State.themes,
       promptEngine: new PromptEngine(State.themes),
-      comfy: new ComfyClient(() => (getConfig().comfyBase || '').trim()),
-      toast, log,
-      getConfig, setConfig,
-      exportAll,
-      saveProject: (obj) => { Storage.set('project:last', obj); toast('Projeto salvo ✅', 'ok'); },
+      comfy: new ComfyClient(function(){
+        var cfg = getConfig();
+        return String(cfg.baseUrl || cfg.comfyBase || '').trim();
+      }),
+      toast: toast,
+      log: log,
+      getConfig: getConfig,
+      setConfig: setConfig,
+      exportAll: exportAll,
+      importAll: importAll,
+      resetAll: resetAll,
+      saveProject: function(obj){
+        Storage.set('project:last', obj);
+        toast('Projeto salvo ✅', 'ok');
+      }
     };
 
-    // módulos
-    State.modules.set('coloring', new ColoringModule(app));
-    State.modules.set('covers', new CoversModule(app));
-    State.modules.set('wordsearch', new WordSearchModule(app));
-    State.modules.set('crossword', new CrosswordModule(app));
-    State.modules.set('mandala', new MandalaModule(app));
-
-    // Linha Cultural Brasil (separada do coloring)
-    State.modules.set('cultural', new CulturalAgentModule(app));
-    State.modules.set('book', new CulturalBookBuilderModule(app));
-
-    State.modules.set('settings', new SettingsModule(app));
-
-    for (const m of State.modules.values()) { try { await m.init?.(); } catch {} }
+    await initModule('coloring', new ColoringModule(app));
+    await initModule('covers', new CoversModule(app));
+    await initModule('wordsearch', new WordSearchModule(app));
+    await initModule('crossword', new CrosswordModule(app));
+    await initModule('mandala', new MandalaModule(app));
+    await initModule('cultural', new CulturalAgentModule(app));
+    await initModule('book', new CulturalBookBuilderModule(app));
+    await initModule('settings', new SettingsModule(app));
 
     mountNav();
     uiStatus('READY', 'ok');
 
-    const start = getConfig().lastView || 'coloring';
-    routeTo(start);
-
+    routeTo(getSafeStartView());
     toast('Pronto ✅', 'ok');
   } catch (e) {
     console.error(e);
     uiStatus('ERROR', 'bad');
-    toast(`Erro no boot: ${e?.message || e}`, 'err');
-    log(`[ERROR] ${String(e?.stack || e)}`);
+    toast('Erro no boot: ' + ((e && e.message) || e), 'err');
+    log('[BOOT ERROR] ' + String((e && e.stack) || e));
+
+    var root = $('#view');
+    if (root) {
+      renderViewError(root, e, 'Erro no boot');
+    }
   }
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 boot();
