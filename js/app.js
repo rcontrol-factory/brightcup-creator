@@ -1,7 +1,8 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Patch de integração do Coloring Agent
+// Patch de integração do Coloring Agent + Coloring Book Builder
 // - integra /js/modules/coloring_agent.js
+// - integra /js/modules/coloring_book_builder.js
 // - mantém boot defensivo
 // - mantém compatibilidade com módulos estáveis
 // - Comfy permanece como legado/compat, não como fluxo principal
@@ -12,6 +13,7 @@ import { ComfyClient } from './core/comfy_client.js';
 
 import { ColoringModule } from './modules/coloring.js';
 import { ColoringAgentModule } from './modules/coloring_agent.js';
+import { ColoringBookBuilderModule } from './modules/coloring_book_builder.js';
 import { CoversModule } from './modules/covers.js';
 import { WordSearchModule } from './modules/wordsearch.js';
 import { CrosswordModule } from './modules/crossword.js';
@@ -193,7 +195,7 @@ function helpRender(root){
         <p class="muted">
           Linha Cultural Brasil: <b>Cultural Agent</b> → gerar plano → <b>Livro (Builder)</b>.
           <br/><br/>
-          Linha Coloring: <b>Coloring Agent</b> → planejar cenas → evoluir para geração e validação.
+          Linha Coloring: <b>Coloring Agent</b> → validar plano → <b>Coloring Book Builder</b>.
           <br/><br/>
           O fluxo legado de imagem externa continua apenas como compatibilidade temporária.
         </p>
@@ -247,11 +249,11 @@ function bindNavClicks(){
   });
 }
 
-function ensureColoringAgentNav(){
-  var existing = document.querySelector('.navitem[data-view="coloring_agent"]');
+function ensureNavItem(viewId, label, afterView){
+  var existing = document.querySelector('.navitem[data-view="' + viewId + '"]');
   if (existing) return;
 
-  var anchor = document.querySelector('.navitem[data-view="coloring"]');
+  var anchor = afterView ? document.querySelector('.navitem[data-view="' + afterView + '"]') : null;
   var parent = anchor ? anchor.parentNode : null;
 
   if (!parent) {
@@ -264,15 +266,20 @@ function ensureColoringAgentNav(){
   var btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'navitem';
-  btn.dataset.view = 'coloring_agent';
-  btn.textContent = 'Coloring Agent';
+  btn.dataset.view = viewId;
+  btn.textContent = label;
 
   if (anchor && anchor.nextSibling) parent.insertBefore(btn, anchor.nextSibling);
   else parent.appendChild(btn);
 }
 
+function ensureDynamicNavItems(){
+  ensureNavItem('coloring_agent', 'Coloring Agent', 'coloring');
+  ensureNavItem('coloring_book', 'Coloring Builder', 'coloring_agent');
+}
+
 function mountNav(){
-  ensureColoringAgentNav();
+  ensureDynamicNavItems();
   bindNavClicks();
 
   var btnHelp = $('#btnHelp');
@@ -392,6 +399,7 @@ function getSafeStartView(){
   if (State.modules.has(last)) return last;
 
   if (State.modules.has('coloring_agent')) return 'coloring_agent';
+  if (State.modules.has('coloring_book')) return 'coloring_book';
   if (State.modules.has('cultural')) return 'cultural';
   if (State.modules.has('coloring')) return 'coloring';
 
@@ -451,6 +459,7 @@ async function boot(){
     };
 
     await initModule('coloring_agent', new ColoringAgentModule(app));
+    await initModule('coloring_book', new ColoringBookBuilderModule(app));
     await initModule('coloring', new ColoringModule(app));
     await initModule('covers', new CoversModule(app));
     await initModule('wordsearch', new WordSearchModule(app));
