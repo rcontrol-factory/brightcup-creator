@@ -1,9 +1,10 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Boot defensivo + integração segura do pipeline coloring/export/release
+// Boot defensivo + integração segura do pipeline coloring/export/release/test-book
 // - Coloring Agent
 // - Coloring Book Builder
 // - Coloring Review
+// - Test Book Center
 // - Export Center
 // - Release Center
 // - compatibilidade com linha cultural
@@ -18,6 +19,7 @@ import { ColoringModule } from './modules/coloring.js';
 import { ColoringAgentModule } from './modules/coloring_agent.js';
 import { ColoringBookBuilderModule } from './modules/coloring_book_builder.js';
 import { ColoringReviewModule } from './modules/coloring_review.js';
+import { TestBookCenterModule } from './modules/test_book_center.js';
 import { ExportCenterModule } from './modules/export_center.js';
 import { ReleaseCenterModule } from './modules/release_center.js';
 import { CoversModule } from './modules/covers.js';
@@ -213,7 +215,7 @@ function helpRender(root){
         <p class="muted">
           Linha Cultural: <b>Cultural Agent</b> → <b>Livro (Builder)</b>.
           <br/><br/>
-          Linha Coloring: <b>Coloring Agent</b> → <b>Coloring Builder</b> → <b>Coloring Review</b> → <b>Export Center</b> → <b>Release Center</b>.
+          Linha Coloring: <b>Coloring Agent</b> → <b>Coloring Builder</b> → <b>Coloring Review</b> → <b>Test Book Center</b> → <b>Export Center</b> → <b>Release Center</b>.
           <br/><br/>
           O Comfy continua apenas como compatibilidade temporária.
         </p>
@@ -295,7 +297,8 @@ function ensureDynamicNavItems(){
   ensureNavItem('coloring_agent', 'Coloring Agent', 'coloring');
   ensureNavItem('coloring_book', 'Coloring Builder', 'coloring_agent');
   ensureNavItem('coloring_review', 'Coloring Review', 'coloring_book');
-  ensureNavItem('export_center', 'Export Center', 'coloring_review');
+  ensureNavItem('test_book_center', 'Test Book Center', 'coloring_review');
+  ensureNavItem('export_center', 'Export Center', 'test_book_center');
   ensureNavItem('release_center', 'Release Center', 'export_center');
 }
 
@@ -421,6 +424,7 @@ function getSafeStartView(){
   if (State.modules.has(last)) return last;
 
   if (State.modules.has('release_center')) return 'release_center';
+  if (State.modules.has('test_book_center')) return 'test_book_center';
   if (State.modules.has('coloring_agent')) return 'coloring_agent';
   if (State.modules.has('coloring_book')) return 'coloring_book';
   if (State.modules.has('coloring_review')) return 'coloring_review';
@@ -487,6 +491,7 @@ async function boot(){
     await initModule('coloring_agent', new ColoringAgentModule(app));
     await initModule('coloring_book', new ColoringBookBuilderModule(app));
     await initModule('coloring_review', new ColoringReviewModule(app));
+    await initModule('test_book_center', new TestBookCenterModule(app));
     await initModule('export_center', new ExportCenterModule(app));
     await initModule('release_center', new ReleaseCenterModule(app));
 
