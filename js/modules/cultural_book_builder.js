@@ -1,24 +1,31 @@
 /* FILE: /js/modules/cultural_book_builder.js */
-// Bright Cup Creator — Cultural Book Builder v0.4a PADRÃO (1 ano)
-// V0.4a:
-// - Builder = só folhear/aprovar (layout vem do Agent via plan.meta.layout)
-// - Visual “folha de papel” (sem bolhas/cápsulas)
-// - Grade estilo revistinha: quadrado/linhas (sem cápsula)
-// - Palavras sem chips/cápsulas (colunas simples)
-// - Ilustração aparece só nas páginas de TEXTO (não no puzzle)
-// - Swipe mobile mais confiável (bind no container + touch-action)
+// Bright Cup Creator — Cultural Book Builder v0.4b SAFE
+// Patch final:
+// - remove linha abaixo do subtítulo no puzzle
+// - subtítulo com mais respiro e melhor line-height
+// - página de texto mais limpa e sem “bolha” pesada
+// - ilustração só aparece quando houver espaço real
+// - sem botão dentro da folha
+// - swipe e navegação preservados
+// - Safari/iOS compat
 
 import { Storage } from '../core/storage.js';
 import { generateWordSearch, normalizeWord as wsNormalizeWord } from '../core/wordsearch_gen.js';
 
 function esc(s){
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[c]));
+  return String(s ?? '').replace(/[&<>"']/g, function(c){
+    return ({
+      '&':'&amp;',
+      '<':'&lt;',
+      '>':'&gt;',
+      '"':'&quot;',
+      "'":'&#39;'
+    })[c];
+  });
 }
 
 function normalizeWord(s){
-  try { return wsNormalizeWord(s); } catch {}
+  try { return wsNormalizeWord(s); } catch (e) {}
   return String(s || '')
     .trim()
     .toUpperCase()
@@ -35,10 +42,10 @@ function displayWord(s){
 }
 
 function uniqNorm(list){
-  const seen = new Set();
-  const out = [];
+  var seen = new Set();
+  var out = [];
   for (const it of list){
-    const w = normalizeWord(it);
+    var w = normalizeWord(it);
     if (!w) continue;
     if (seen.has(w)) continue;
     seen.add(w);
@@ -47,21 +54,29 @@ function uniqNorm(list){
   return out;
 }
 
-function wrap(text, max=72){
-  const words = String(text||'').split(/\s+/g);
-  const lines = [];
-  let line = '';
+function wrap(text, max){
+  max = Number(max || 72);
+  var words = String(text || '').split(/\s+/g);
+  var lines = [];
+  var line = '';
+
   for (const w of words){
-    if (!line) { line = w; continue; }
+    if (!line) {
+      line = w;
+      continue;
+    }
     if ((line + ' ' + w).length <= max) line += ' ' + w;
-    else { lines.push(line); line = w; }
+    else {
+      lines.push(line);
+      line = w;
+    }
   }
   if (line) lines.push(line);
   return lines.join('\n');
 }
 
 function iconLabel(icon){
-  const map = {
+  var map = {
     mountain: 'Serra / Montanha',
     history: 'História',
     cheese: 'Queijo',
@@ -77,29 +92,28 @@ function iconLabel(icon){
 }
 
 function buildPagesFromPlan(plan){
-  const m = plan.meta || {};
-  const gridDefault = Number(m.grid_default || 15);
-  const wppDefault  = Number(m.words_per_puzzle || 20);
+  var m = plan.meta || {};
+  var gridDefault = Number(m.grid_default || 15);
+  var wppDefault  = Number(m.words_per_puzzle || 20);
 
-  const pages = [];
+  var pages = [];
 
-  // capa/apresentação
   pages.push({
     kind:'text',
     icon:'history',
     title: m.title || 'MINAS GERAIS CULTURAL',
     meta: (m.subtitle || '').trim(),
     body: wrap(
-      `Apresentação\n\nEste livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n` +
-      `Cada seção traz um texto curto e um caça-palavras temático.\n\n` +
-      `No final, você encontra o gabarito completo. Boa leitura e bom passatempo.`,
+      'Apresentação\n\n' +
+      'Este livro é uma viagem por Minas Gerais: sabores, histórias, fé, trilhos e montanhas.\n\n' +
+      'Cada seção traz um texto curto e um caça-palavras temático.\n\n' +
+      'No final, você encontra o gabarito completo. Boa leitura e bom passatempo.',
       72
     ),
     sectionId: 'intro'
   });
 
-  (plan.sections || []).forEach((s) => {
-    // página de texto (tem ilustração)
+  (plan.sections || []).forEach(function(s){
     pages.push({
       kind:'text',
       icon: s.icon,
@@ -109,53 +123,50 @@ function buildPagesFromPlan(plan){
       sectionId: s.id
     });
 
-    // página de puzzle (SEM ilustração)
-    // Evita frases longas (ex: "O que é Minas?") como "palavra" no puzzle.
-    // Se o Agent não mandou wordHints, a gente usa fallback com tokens do título.
-    const titleTokens = String(s.title || '')
+    var titleTokens = String(s.title || '')
       .trim()
       .split(/\s+/g)
       .filter(Boolean);
-    const rawHints = []
+
+    var rawHints = []
       .concat(s.wordHints || [])
       .concat(titleTokens)
       .concat(['Minas', 'Cultura', 'História', 'Uai']);
 
-    // palavras normalizadas p/ grade
-    const wordsNorm = uniqNorm(rawHints)
-      .filter(w => w.length >= 3 && w.length <= gridDefault)
+    var wordsNorm = uniqNorm(rawHints)
+      .filter(function(w){ return w.length >= 3 && w.length <= gridDefault; })
       .slice(0, Math.max(6, wppDefault));
 
-    // palavras display (com ortografia se existir)
-    // aqui o plan normalmente já tem as wordHints “bonitas”
-    const wordsDisplay = rawHints
+    var wordsDisplay = rawHints
       .map(displayWord)
-      .map(w => w.trim())
+      .map(function(w){ return w.trim(); })
       .filter(Boolean);
 
-    // map display por norm (preferir a versão com acento/ç se existir)
-    const mapDisp = {};
+    var mapDisp = {};
     for (const d of wordsDisplay){
-      const n = normalizeWord(d);
+      var n = normalizeWord(d);
       if (!n) continue;
-      const hasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(d);
+      var hasAccent = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(d);
       if (!mapDisp[n]) mapDisp[n] = d;
       else {
-        const prevHas = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(mapDisp[n]);
+        var prevHas = /[ÁÀÂÃÉÊÍÓÔÕÚÜÇ]/i.test(mapDisp[n]);
         if (!prevHas && hasAccent) mapDisp[n] = d;
       }
     }
-    const wordsDisplayPicked = wordsNorm.map(n => mapDisp[n] || n);
+
+    var wordsDisplayPicked = wordsNorm.map(function(n){
+      return mapDisp[n] || n;
+    });
 
     pages.push({
       kind:'puzzle',
       icon: s.icon,
-      title: `Caça-Palavras — ${s.title}`,
-      meta: `grade ${gridDefault}x${gridDefault} • palavras ${wordsNorm.length}`,
+      title: 'Caça-Palavras — ' + s.title,
+      meta: 'grade ' + gridDefault + 'x' + gridDefault + ' • palavras ' + wordsNorm.length,
       sectionId: s.id,
       sectionTitle: s.title,
       grid: gridDefault,
-      wordsNorm,
+      wordsNorm: wordsNorm,
       wordsDisplay: wordsDisplayPicked
     });
   });
@@ -166,21 +177,24 @@ function buildPagesFromPlan(plan){
     title:'Gabarito (no final)',
     meta:'(entra completo no Export PDF)',
     body: wrap(
-      `O gabarito completo entra na fase do Export PDF (KDP).\n\n` +
-      `Aqui no Builder a gente valida: ordem, texto, tema, grade e padrão editorial.`,
+      'O gabarito completo entra na fase do Export PDF (KDP).\n\n' +
+      'Aqui no Builder a gente valida: ordem, texto, tema, grade e padrão editorial.',
       72
     ),
     sectionId: 'key'
   });
 
-  pages.forEach((p,i)=> p.pageNo = i+1);
+  pages.forEach(function(p, i){
+    p.pageNo = i + 1;
+  });
+
   return pages;
 }
 
 function seedKeyForPlan(plan){
-  const pid = String(plan?.meta?.id || 'book');
-  const ts = String(plan?.meta?.createdAt || '');
-  return `cultural:builder_cache:${pid}:${ts}`;
+  var pid = String((plan && plan.meta && plan.meta.id) || 'book');
+  var ts = String((plan && plan.meta && plan.meta.createdAt) || '');
+  return 'cultural:builder_cache:' + pid + ':' + ts;
 }
 
 function getPuzzleCache(plan){
@@ -193,11 +207,15 @@ function setPuzzleCache(plan, cache){
 
 function ensurePuzzleGenerated(plan, page){
   if (!page || page.kind !== 'puzzle') return null;
-  const cache = getPuzzleCache(plan);
-  const key = `p${page.pageNo}:${page.sectionId || ''}:${page.grid || ''}`;
-  if (cache?.puzzles?.[key]) return cache.puzzles[key];
 
-  const gen = generateWordSearch({
+  var cache = getPuzzleCache(plan);
+  var key = 'p' + page.pageNo + ':' + (page.sectionId || '') + ':' + (page.grid || '');
+
+  if (cache && cache.puzzles && cache.puzzles[key]) {
+    return cache.puzzles[key];
+  }
+
+  var gen = generateWordSearch({
     size: page.grid || 15,
     words: page.wordsNorm || [],
     maxWords: (page.wordsNorm || []).length || 16,
@@ -205,7 +223,7 @@ function ensurePuzzleGenerated(plan, page){
     allowBackwards: true
   });
 
-  const payload = {
+  var payload = {
     size: gen.size,
     grid: gen.grid,
     placedCount: (gen.placed || []).length,
@@ -220,14 +238,14 @@ function ensurePuzzleGenerated(plan, page){
 }
 
 function renderGridHTML(grid){
-  const N = grid?.length || 0;
+  var N = grid && grid.length || 0;
   if (!N) return '<div class="ws-empty">Grade vazia</div>';
 
-  let html = '<table class="ws-table" aria-label="Caça-palavras"><tbody>';
-  for (let y=0;y<N;y++){
+  var html = '<table class="ws-table" aria-label="Caça-palavras"><tbody>';
+  for (var y = 0; y < N; y += 1){
     html += '<tr>';
-    for (let x=0;x<N;x++){
-      html += `<td>${esc(grid[y][x] || '')}</td>`;
+    for (var x = 0; x < N; x += 1){
+      html += '<td>' + esc((grid[y] && grid[y][x]) || '') + '</td>';
     }
     html += '</tr>';
   }
@@ -236,59 +254,66 @@ function renderGridHTML(grid){
 }
 
 function renderWordsColumns(wordsDisplay){
-  const list = (wordsDisplay || []).map(displayWord).filter(Boolean);
+  var list = (wordsDisplay || []).map(displayWord).filter(Boolean);
   if (!list.length) return '';
 
-  const rows = [];
-  for (let i = 0; i < list.length; i += 3) {
-    rows.push(list.slice(i, i + 3));
+  var cols = 3;
+  var buckets = Array.from({ length: cols }, function(){ return []; });
+  var maxLen = 0;
+
+  for (var i = 0; i < list.length; i += 1){
+    var w = list[i];
+    if (w.length > maxLen) maxLen = w.length;
+    buckets[i % cols].push(w);
   }
 
-  const html = rows.map(row => {
-    const padded = row.slice();
-    while (padded.length < 3) padded.push('');
-    const cols = padded.map(word => `<span class="ws-word-item">${word ? esc(word) : '&nbsp;'}</span>`).join('');
-    return `<div class="ws-word-row">${cols}</div>`;
+  var shrink = Math.max(0.72, Math.min(1, 1 - Math.max(0, (maxLen - 14)) * 0.04));
+
+  var colHtml = buckets.map(function(col){
+    var items = col.map(function(w){
+      return '<div class="ws-item"><span class="ws-word">' + esc(w) + '</span></div>';
+    }).join('');
+    return '<div class="ws-col">' + items + '</div>';
   }).join('');
 
-  return `<div class="ws-words-list">${html}</div>`;
+  return '<div class="ws-words-cols" style="--wsw:' + shrink.toFixed(3) + '">' + colHtml + '</div>';
 }
-
 
 function bindSwipe(el, onPrev, onNext){
   if (!el) return;
 
-  // Teardown seguro (compatível): remove listeners antigos antes de adicionar novos
   try {
-    const prev = el.__bccSwipe;
+    var prev = el.__bccSwipe;
     if (prev && typeof prev.teardown === 'function') prev.teardown();
   } catch (e) {}
 
-  let startX = 0, startY = 0;
-  let dx = 0, dy = 0;
-  let tracking = false;
-  let locked = false;
-  let pointerId = null;
+  var startX = 0;
+  var startY = 0;
+  var dx = 0;
+  var dy = 0;
+  var tracking = false;
+  var locked = false;
+  var pointerId = null;
 
-  const MIN_DIST = 42;
-  const MAX_OFF_AXIS = 55;
-  const COOLDOWN_MS = 220;
+  var MIN_DIST = 42;
+  var MAX_OFF_AXIS = 55;
+  var COOLDOWN_MS = 220;
 
-  const cooldown = () => {
+  var cooldown = function(){
     locked = true;
-    setTimeout(() => { locked = false; }, COOLDOWN_MS);
+    setTimeout(function(){ locked = false; }, COOLDOWN_MS);
   };
 
-  const shouldFire = () => {
-    const adx = Math.abs(dx);
-    const ady = Math.abs(dy);
+  var shouldFire = function(){
+    var adx = Math.abs(dx);
+    var ady = Math.abs(dy);
     if (adx < MIN_DIST) return false;
     if (ady > MAX_OFF_AXIS) return false;
     if (adx < ady * 1.15) return false;
     return true;
   };
 
-  const fire = () => {
+  var fire = function(){
     if (locked) return;
     if (!shouldFire()) return;
     cooldown();
@@ -299,53 +324,51 @@ function bindSwipe(el, onPrev, onNext){
     }
   };
 
-  // Touch (mais compatível no iOS/PWA)
-  const onTouchStart = (e) => {
+  var onTouchStart = function(e){
     if (locked) return;
-    const t = e && e.touches && e.touches[0];
+    var t = e && e.touches && e.touches[0];
     if (!t) return;
     tracking = true;
     startX = t.clientX;
     startY = t.clientY;
-    dx = 0; dy = 0;
+    dx = 0;
+    dy = 0;
   };
 
-  const onTouchMove = (e) => {
+  var onTouchMove = function(e){
     if (!tracking) return;
-    const t = e && e.touches && e.touches[0];
+    var t = e && e.touches && e.touches[0];
     if (!t) return;
     dx = t.clientX - startX;
     dy = t.clientY - startY;
 
-    // se gesto é horizontal, impede scroll para não “correr”
     if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) {
       try { e.preventDefault(); } catch (err) {}
     }
   };
 
-  const onTouchEnd = () => {
+  var onTouchEnd = function(){
     if (!tracking) return;
     tracking = false;
     fire();
   };
 
-  const onTouchCancel = () => {
+  var onTouchCancel = function(){
     tracking = false;
   };
 
-  // Pointer events (se existir) — sem AbortController/signal (compat)
-  const onPointerDown = (e) => {
-    if (locked) return;
-    if (!e) return;
+  var onPointerDown = function(e){
+    if (locked || !e) return;
     pointerId = e.pointerId;
     tracking = true;
     startX = e.clientX;
     startY = e.clientY;
-    dx = 0; dy = 0;
+    dx = 0;
+    dy = 0;
     try { el.setPointerCapture(pointerId); } catch (err) {}
   };
 
-  const onPointerMove = (e) => {
+  var onPointerMove = function(e){
     if (!tracking) return;
     if (pointerId !== null && e.pointerId !== pointerId) return;
     dx = e.clientX - startX;
@@ -355,7 +378,7 @@ function bindSwipe(el, onPrev, onNext){
     }
   };
 
-  const onPointerUp = (e) => {
+  var onPointerUp = function(e){
     if (!tracking) return;
     if (pointerId !== null && e.pointerId !== pointerId) return;
     tracking = false;
@@ -364,28 +387,25 @@ function bindSwipe(el, onPrev, onNext){
     fire();
   };
 
-  const onPointerCancel = (e) => {
+  var onPointerCancel = function(e){
     if (pointerId !== null && e && e.pointerId !== pointerId) return;
     tracking = false;
     try { if (pointerId !== null) el.releasePointerCapture(pointerId); } catch (err) {}
     pointerId = null;
   };
 
-  // attach
   el.addEventListener('touchstart', onTouchStart, { passive: true });
   el.addEventListener('touchmove', onTouchMove, { passive: false });
   el.addEventListener('touchend', onTouchEnd, { passive: true });
   el.addEventListener('touchcancel', onTouchCancel, { passive: true });
 
-  // pointer (optional)
   el.addEventListener('pointerdown', onPointerDown, { passive: true });
   el.addEventListener('pointermove', onPointerMove, { passive: false });
   el.addEventListener('pointerup', onPointerUp, { passive: true });
   el.addEventListener('pointercancel', onPointerCancel, { passive: true });
 
-  // save teardown
   el.__bccSwipe = {
-    teardown(){
+    teardown: function(){
       try { el.removeEventListener('touchstart', onTouchStart); } catch (e) {}
       try { el.removeEventListener('touchmove', onTouchMove); } catch (e) {}
       try { el.removeEventListener('touchend', onTouchEnd); } catch (e) {}
@@ -398,6 +418,28 @@ function bindSwipe(el, onPrev, onNext){
   };
 }
 
+function estimateTextLines(text){
+  var raw = String(text || '');
+  if (!raw) return 0;
+  var parts = raw.split('\n');
+  var total = 0;
+  for (var i = 0; i < parts.length; i += 1){
+    var seg = parts[i] || '';
+    total += Math.max(1, Math.ceil(seg.length / 44));
+  }
+  return total;
+}
+
+function shouldShowIllustration(page){
+  if (!page || page.kind !== 'text') return false;
+  var body = String(page.body || '');
+  var lines = estimateTextLines(body);
+  var chars = body.length;
+  if (chars > 720) return false;
+  if (lines > 16) return false;
+  return true;
+}
+
 export class CulturalBookBuilderModule {
   constructor(app){
     this.app = app;
@@ -408,16 +450,17 @@ export class CulturalBookBuilderModule {
   async init(){}
 
   render(root){
-    let plan = Storage.get('cultural:book_plan', null);
-    const seed = Storage.get('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
+    var plan = Storage.get('cultural:book_plan', null);
+    var seed = Storage.get('cultural:builder_seed', { mode:'FOLHEAR', pageIndex: 0 });
 
-    const saveSeed = (next) => Storage.set('cultural:builder_seed', next);
+    var saveSeed = function(next){
+      Storage.set('cultural:builder_seed', next);
+    };
 
     root.innerHTML = `
       <style>
         .bb-wrap{ display:grid; gap:14px; }
 
-        /* folha (sem bolha) */
         .paper{
           width: 100%;
           display:flex;
@@ -433,45 +476,37 @@ export class CulturalBookBuilderModule {
           overflow:hidden;
           position:relative;
           width: min(100%, var(--page-maxw, 560px));
-          aspect-ratio: 6 / 9; /* default */
-          touch-action: pan-y; /* swipe horizontal tratado no bindSwipe */
+          aspect-ratio: 6 / 9;
+          touch-action: pan-y;
         }
         .page[data-size="8.5x11"]{ aspect-ratio: 8.5 / 11; }
         .page[data-size="6x9"]{ aspect-ratio: 6 / 9; }
 
         .page-inner{
-          padding: 14px;
+          padding: 16px;
           height: 100%;
           overflow: hidden;
           display:grid;
           grid-template-rows: auto 1fr;
-          gap:8px;
+          gap:10px;
         }
 
         .page-head{
-          display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
-          border-bottom: 1px solid rgba(0,0,0,.12);
-          padding-bottom: 10px;
+          display:flex;
+          align-items:flex-start;
+          justify-content:space-between;
+          gap:12px;
+          padding-bottom: 6px;
         }
         .page-title{
-          /* menor e mais “impresso” (evita ocupar área do puzzle) */
-          font-size: clamp(20px, 4.6vw, 28px);
-          line-height: 1.06;
+          font-size: clamp(20px, 4.4vw, 28px);
+          line-height: 1.08;
           font-weight: 900;
           letter-spacing: -0.2px;
         }
-        .ws-title{
-          font-size: 15px;
-          letter-spacing: .6px;
-          text-transform: uppercase;
-        }
-        .ws-meta{
-          font-size: 11px;
-          opacity: .72;
-          margin-top: 6px;
-        }
         .page-meta{
-          font-size: clamp(13px, 3.7vw, 16px);
+          font-size: clamp(12px, 3.3vw, 15px);
+          line-height: 1.3;
           opacity: .72;
           margin-top: 6px;
         }
@@ -481,15 +516,26 @@ export class CulturalBookBuilderModule {
           font-weight: 900;
           min-width: 52px;
           text-align:right;
-          padding-top: 6px;
+          padding-top: 4px;
         }
 
         /* texto */
+        .text-page{
+          display:grid;
+          grid-template-rows: 1fr auto;
+          gap: 10px;
+          min-height: 0;
+        }
+        .text-page.no-illus{
+          grid-template-rows: 1fr;
+        }
         .page-body{
-          border: 1px solid rgba(0,0,0,.12);
-          background: #ffffff;
-          padding: 14px;
-          border-radius: 12px;
+          border: none;
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+          min-height: 0;
+          overflow: hidden;
         }
         .page-body pre{
           margin:0;
@@ -497,81 +543,102 @@ export class CulturalBookBuilderModule {
           overflow-wrap:anywhere;
           word-break:break-word;
           font-family: ui-serif, Georgia, "Times New Roman", serif;
-          font-size: clamp(16px, 4.2vw, 19px);
-          line-height: 1.42;
+          font-size: clamp(15px, 3.9vw, 18px);
+          line-height: 1.45;
         }
 
-        /* caça-palavras: grade quadriculada (revistinha) */
+        .illus{
+          border: 1px dashed rgba(0,0,0,.28);
+          background: #ffffff;
+          padding: 8px 10px;
+          border-radius: 10px;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+        }
+        .illus .t{ font-weight: 900; font-size: 13px; line-height: 1.2; }
+        .illus .s{ opacity:.7; font-size: 11px; margin-top: 2px; line-height: 1.25; }
+        .illus .badge{
+          border: 1px solid rgba(0,0,0,.22);
+          border-radius: 10px;
+          padding: 6px 9px;
+          font-weight: 900;
+          font-size: 11px;
+          opacity:.85;
+          flex: 0 0 auto;
+        }
+
+        /* caça-palavras */
+        .ws-frame{
+          height: 100%;
+          border: 2px solid rgba(0,0,0,.78);
+          padding: 14px 14px 12px;
+          display:flex;
+          flex-direction:column;
+          gap: 8px;
+          overflow:hidden;
+        }
+        .ws-head{
+          flex: 0 0 auto;
+        }
+        .ws-headline{
+          text-align:center;
+          font-weight: 900;
+          letter-spacing: .7px;
+          text-transform: uppercase;
+          font-size: clamp(22px, 5.2vw, 34px);
+          line-height: 1.04;
+          margin-top: 2px;
+        }
+        .ws-subline{
+          text-align:center;
+          font-weight: 800;
+          letter-spacing: .18px;
+          font-size: 13px;
+          line-height: 1.34;
+          opacity: .82;
+          margin-top: 6px;
+          padding: 0 8px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .ws-gridwrap{
+          display:flex;
+          justify-content:center;
+          align-items:center;
+          flex: 1 1 auto;
+          overflow:hidden;
+          padding-top: 2px;
+          min-height: 0;
+        }
+        .ws-wordswrap{
+          margin-top: 4px;
+          overflow:hidden;
+          padding-bottom: 0;
+          flex: 0 0 auto;
+        }
+
         .ws-box{
-          /* sem card arredondado/scroll interno */
           border: none;
           background: transparent;
           padding: 0;
           border-radius: 0;
           overflow: hidden;
-        }
-
-        /* layout retro em UMA folha (modelo clássico) */
-        .ws-frame{
-          height: 100%;
-          border: 2px solid rgba(0,0,0,.78);
-          padding: 10px 10px 9px;
-          display:flex;
-          flex-direction:column;
-          gap: 5px;
-          overflow:hidden; /* papel fixo */
-        }
-        .ws-headline{
-          text-align:center;
-          font-weight: 900;
-          letter-spacing: .4px;
-          text-transform: uppercase;
-          font-size: clamp(18px, 4.3vw, 27px);
-          line-height: 1.0;
-          margin-top: 0;
-        }
-        .ws-subline{
-          text-align:center;
-          font-weight: 800;
-          letter-spacing: .15px;
-          font-size: 10px;
-          opacity: .82;
-          margin-top: -3px;
-          white-space: normal;
-          overflow: visible;
-          text-overflow: clip;
-          line-height: 1.02;
-        }
-        .ws-hr{
-          height: 1px;
-          background: rgba(0,0,0,.55);
-          margin: 1px 0 0;
-          flex: 0 0 auto;
-        }
-        .ws-gridwrap{
-          display:flex;
-          justify-content:center;
-          align-items:flex-start;
-          flex: 0 0 auto;
-          overflow:hidden;
-          padding-top: 1px;
-          margin-bottom: 8px;
-        }
-        .ws-wordswrap{
-          margin-top: 0;
-          overflow:hidden;
-          padding-bottom: 0;
+          max-width: 100%;
         }
 
         .ws-table{
           border-collapse: collapse;
           margin: 0 auto;
-          border: 2px solid rgba(0,0,0,.72);
+          border: 2px solid rgba(0,0,0,.55);
         }
         .ws-table td{
-          border: 1px solid rgba(0,0,0,.28);
-          width: 17px;
-          height: 17px;
+          border: 1px solid rgba(0,0,0,.35);
+          width: 18px;
+          height: 18px;
           text-align:center;
           vertical-align:middle;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -581,69 +648,43 @@ export class CulturalBookBuilderModule {
           padding: 0;
         }
         @media (max-width: 420px){
-          .ws-table td{ width: 15px; height: 15px; font-size: 10px; }
+          .ws-table td{ width: 17px; height: 17px; font-size: 11px; }
         }
 
-        .words-box{
-          border: none;
-          background: transparent;
-          padding: 0;
-          border-radius: 0;
-        }
         .words-title{
           font-weight: 900;
-          font-size: 10px;
+          font-size: 11px;
           letter-spacing: .5px;
           text-transform: uppercase;
-          margin: 1px 0 4px;
+          margin: 2px 0 6px;
         }
         .words-grid{
           display:block;
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
           font-weight: 900;
-          font-size: 10px;
+          font-size: 11px;
         }
-        .ws-words-list{
-          display:flex;
-          flex-direction:column;
-          gap: 4px;
-        }
-        .ws-word-row{
+        .ws-words-cols{
           display:grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 4px 14px;
+          gap: 6px 16px;
+          font-size: calc(11px * var(--wsw, 1));
         }
-        .ws-word-item{
-          display:block;
-          text-align:left;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: clip;
-          font-size: 10px;
-          line-height: 1.08;
+        .ws-col{
+          display:flex;
+          flex-direction:column;
+          gap: 5px;
           min-width: 0;
         }
-
-        /* ilustração (só no TEXTO) */
-        .illus{
-          border: 1px dashed rgba(0,0,0,.35);
-          background: #ffffff;
-          padding: 10px 12px;
-          border-radius: 12px;
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap:12px;
+        .ws-item{
+          display:block;
+          min-width: 0;
+          white-space: nowrap;
+          line-height: 1.18;
         }
-        .illus .t{ font-weight: 900; }
-        .illus .s{ opacity:.7; font-size: 12px; margin-top: 2px; }
-        .illus .badge{
-          border: 1px solid rgba(0,0,0,.25);
-          border-radius: 10px;
-          padding: 7px 10px;
-          font-weight: 900;
-          font-size: 12px;
-          opacity:.85;
+        .ws-word{
+          overflow: visible;
+          text-overflow: clip;
         }
 
         .bb-toolbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
@@ -656,6 +697,11 @@ export class CulturalBookBuilderModule {
         @media (max-width: 860px){
           .spread{ grid-template-columns: 1fr; }
           .page-inner{ padding: 14px; }
+          .ws-frame{ padding: 12px 12px 10px; gap: 7px; }
+          .ws-subline{ font-size: 12px; margin-top: 5px; }
+          .ws-table td{ width: 16px; height: 16px; font-size: 10px; }
+          .ws-words-cols{ gap: 5px 12px; font-size: calc(10px * var(--wsw, 1)); }
+          .words-title{ font-size: 10px; margin-bottom: 5px; }
         }
       </style>
 
@@ -668,9 +714,9 @@ export class CulturalBookBuilderModule {
       </div>
     `;
 
-    const area = root.querySelector('#bb_area');
+    var area = root.querySelector('#bb_area');
 
-    const renderEmpty = () => {
+    var renderEmpty = () => {
       area.innerHTML = `
         <div class="bb-empty">
           <p class="muted"><b>Nenhum livro carregado.</b> Isso pode acontecer se o Safari limpar o armazenamento.</p>
@@ -680,19 +726,25 @@ export class CulturalBookBuilderModule {
           <p class="bb-mini muted">Dica: no Agent, clique “Gerar Plano” e volte pra cá.</p>
         </div>
       `;
-      area.querySelector('#bb_go_agent').onclick = () => {
-        const btn = document.querySelector('.navitem[data-view="cultural"]');
-        btn?.click?.();
-      };
+      var btn = area.querySelector('#bb_go_agent');
+      if (btn) {
+        btn.onclick = function(){
+          var nav = document.querySelector('.navitem[data-view="cultural"]');
+          if (nav && nav.click) nav.click();
+        };
+      }
     };
 
-    const renderPage = (page, plan, withSend=true) => {
+    var renderPage = (page, plan) => {
       if (!page) return '';
-      const layout = plan?.meta?.layout || {};
-      const pageSize = layout.pageSize || plan?.meta?.format || '6x9';
-      const maxw = (String(pageSize) === '8.5x11') ? '720px' : '560px';
+
+      var layout = (plan && plan.meta && plan.meta.layout) || {};
+      var pageSize = layout.pageSize || (plan && plan.meta && plan.meta.format) || '6x9';
+      var maxw = String(pageSize) === '8.5x11' ? '720px' : '560px';
 
       if (page.kind === 'text') {
+        var showIllus = shouldShowIllustration(page);
+
         return `
           <div class="paper" style="--page-maxw:${esc(maxw)}">
             <div class="page" data-size="${esc(pageSize)}">
@@ -705,14 +757,18 @@ export class CulturalBookBuilderModule {
                   <div class="page-no">p.${esc(String(page.pageNo || ''))}</div>
                 </div>
 
-                <div class="page-body"><pre>${esc(page.body || '')}</pre></div>
+                <div class="text-page ${showIllus ? '' : 'no-illus'}">
+                  <div class="page-body"><pre>${esc(page.body || '')}</pre></div>
 
-                <div class="illus">
-                  <div>
-                    <div class="t">Ilustração P&B: ${esc(iconLabel(page.icon))}</div>
-                    <div class="s">Slot reservado (entra no Export/IA) — nesta página de texto.</div>
-                  </div>
-                  <div class="badge">Imagem</div>
+                  ${showIllus ? `
+                    <div class="illus">
+                      <div>
+                        <div class="t">Ilustração P&B: ${esc(iconLabel(page.icon))}</div>
+                        <div class="s">Slot reservado apenas quando houver espaço real na página.</div>
+                      </div>
+                      <div class="badge">Imagem</div>
+                    </div>
+                  ` : ``}
                 </div>
               </div>
             </div>
@@ -720,19 +776,17 @@ export class CulturalBookBuilderModule {
         `;
       }
 
-      const gen = ensurePuzzleGenerated(plan, page);
-      const gridHtml = renderGridHTML(gen?.grid);
+      var gen = ensurePuzzleGenerated(plan, page);
+      var gridHtml = renderGridHTML(gen && gen.grid);
 
-      
       return `
         <div class="paper" style="--page-maxw:${esc(maxw)}">
           <div class="page" data-size="${esc(pageSize)}">
             <div class="page-inner">
               <div class="ws-frame">
-                <div>
+                <div class="ws-head">
                   <div class="ws-headline">CAÇA-PALAVRAS</div>
                   <div class="ws-subline">${esc(page.sectionTitle || page.title || '')}</div>
-                  <div class="ws-hr"></div>
                 </div>
 
                 <div class="ws-gridwrap">
@@ -748,48 +802,38 @@ export class CulturalBookBuilderModule {
           </div>
         </div>
       `;
-
     };
 
-    const sendPageToWordSearch = (page, plan) => {
-      if (!page || page.kind !== 'puzzle') return;
-      const ws = {
-        title: page.title || `Caça-Palavras ${page.grid}x${page.grid}`,
-        preset: (page.grid || 15) <= 13 ? 'BR_POCKET' : 'BR_PLUS',
-        size: page.grid || 15,
-        maxWords: (page.wordsNorm || []).length || 16,
-        includeKey: true,
-        words: (page.wordsNorm || []).join('\n'), // normalizado
-        puzzleId: page.sectionId || '',
-        sectionId: page.sectionId || '',
-        sectionTitle: page.sectionTitle || '',
-        output: '',
-        ts: Date.now()
-      };
-      Storage.set('wordsearch:seed', ws);
-      this.app.toast?.('Enviado ✅ (abra Caça-Palavras e clique Gerar+Salvar)');
-      try { this.app.log?.(`[BOOK] sent section="${page.sectionTitle || ''}" grid=${ws.size} words=${(page.wordsNorm||[]).length}`); } catch {}
-    };
-
-    const renderMain = () => {
+    var renderMain = () => {
       plan = Storage.get('cultural:book_plan', null);
       if (!plan) return renderEmpty();
 
-      const pages = buildPagesFromPlan(plan);
-      let mode = seed.mode === 'SPREAD' ? 'SPREAD' : 'FOLHEAR';
-      let pageIndex = Math.max(0, Math.min(seed.pageIndex || 0, pages.length - 1));
+      var pages = buildPagesFromPlan(plan);
+      var mode = seed.mode === 'SPREAD' ? 'SPREAD' : 'FOLHEAR';
+      var pageIndex = Math.max(0, Math.min(seed.pageIndex || 0, pages.length - 1));
 
-      const save = () => saveSeed({ mode, pageIndex });
+      var save = function(){
+        saveSeed({ mode: mode, pageIndex: pageIndex });
+      };
 
-      const goPrev = () => { pageIndex = Math.max(0, pageIndex - 1); save(); paint(); };
-      const goNext = () => { pageIndex = Math.min(pages.length - 1, pageIndex + 1); save(); paint(); };
+      var goPrev = function(){
+        pageIndex = Math.max(0, pageIndex - 1);
+        save();
+        paint();
+      };
+
+      var goNext = function(){
+        pageIndex = Math.min(pages.length - 1, pageIndex + 1);
+        save();
+        paint();
+      };
 
       area.innerHTML = `
         <div class="bb-toolbar">
           <div class="left">
-            <span class="bb-mini"><b>${esc(plan.meta?.title || 'LIVRO')}</b></span>
-            <span class="bb-mini">• estilo <b>${esc(plan.meta?.layout?.style || 'RETRO')}</b></span>
-            <span class="bb-mini">• formato <b>${esc(plan.meta?.layout?.pageSize || plan.meta?.format || '6x9')}</b></span>
+            <span class="bb-mini"><b>${esc((plan.meta && plan.meta.title) || 'LIVRO')}</b></span>
+            <span class="bb-mini">• estilo <b>${esc((plan.meta && plan.meta.layout && plan.meta.layout.style) || 'RETRO')}</b></span>
+            <span class="bb-mini">• formato <b>${esc((plan.meta && plan.meta.layout && plan.meta.layout.pageSize) || (plan.meta && plan.meta.format) || '6x9')}</b></span>
           </div>
           <div class="right">
             <button class="btn" id="bb_prev">◀</button>
@@ -799,8 +843,8 @@ export class CulturalBookBuilderModule {
 
         <div class="bb-top">
           <div class="bb-tabs">
-            <button class="btn ${mode==='SPREAD'?'primary':''}" id="bb_mode_spread">Spread</button>
-            <button class="btn ${mode==='FOLHEAR'?'primary':''}" id="bb_mode_folhear">Folhear</button>
+            <button class="btn ${mode==='SPREAD' ? 'primary' : ''}" id="bb_mode_spread">Spread</button>
+            <button class="btn ${mode==='FOLHEAR' ? 'primary' : ''}" id="bb_mode_folhear">Folhear</button>
           </div>
           <div class="bb-mini">Página <b id="bb_pos"></b> • <span class="bb-mini muted">No mobile: arraste pro lado (folhear)</span></div>
         </div>
@@ -817,62 +861,93 @@ export class CulturalBookBuilderModule {
         </div>
       `;
 
-      const view = area.querySelector('#bb_view');
+      var view = area.querySelector('#bb_view');
 
-      const paint = () => {
-        area.querySelector('#bb_pos').textContent = `${pageIndex+1}/${pages.length}`;
+      var paint = function(){
+        var pos = area.querySelector('#bb_pos');
+        if (pos) pos.textContent = (pageIndex + 1) + '/' + pages.length;
 
         if (mode === 'FOLHEAR') {
-          const p = pages[pageIndex];
-          view.innerHTML = renderPage(p, plan, true);
-
-          // swipe no container (mais confiável)
+          var p = pages[pageIndex];
+          view.innerHTML = renderPage(p, plan);
           bindSwipe(view, goPrev, goNext);
           return;
         }
 
-        const left = pages[pageIndex];
-        const right = pages[pageIndex+1] || null;
+        var left = pages[pageIndex];
+        var right = pages[pageIndex + 1] || null;
 
         view.innerHTML = `
           <div class="spread">
-            <div>${renderPage(left, plan, true)}</div>
-            <div>${right ? renderPage(right, plan, true) : ''}</div>
+            <div>${renderPage(left, plan)}</div>
+            <div>${right ? renderPage(right, plan) : ''}</div>
           </div>
         `;
 
         bindSwipe(
           view,
-          ()=>{ pageIndex = Math.max(0, pageIndex - 2); save(); paint(); },
-          ()=>{ pageIndex = Math.min(pages.length - 1, pageIndex + 2); save(); paint(); }
+          function(){
+            pageIndex = Math.max(0, pageIndex - 2);
+            save();
+            paint();
+          },
+          function(){
+            pageIndex = Math.min(pages.length - 1, pageIndex + 2);
+            save();
+            paint();
+          }
         );
       };
 
-      area.querySelector('#bb_prev').onclick = goPrev;
-      area.querySelector('#bb_next').onclick = goNext;
+      var prevBtn = area.querySelector('#bb_prev');
+      var nextBtn = area.querySelector('#bb_next');
+      var spreadBtn = area.querySelector('#bb_mode_spread');
+      var folhearBtn = area.querySelector('#bb_mode_folhear');
+      var goAgentBtn = area.querySelector('#bb_go_agent');
+      var dlBtn = area.querySelector('#bb_download_plan');
 
-      area.querySelector('#bb_mode_spread').onclick = () => { mode='SPREAD'; save(); renderMain(); };
-      area.querySelector('#bb_mode_folhear').onclick = () => { mode='FOLHEAR'; save(); renderMain(); };
+      if (prevBtn) prevBtn.onclick = goPrev;
+      if (nextBtn) nextBtn.onclick = goNext;
 
-      area.querySelector('#bb_go_agent').onclick = () => {
-        const btn = document.querySelector('.navitem[data-view="cultural"]');
-        btn?.click?.();
-      };
+      if (spreadBtn) {
+        spreadBtn.onclick = function(){
+          mode = 'SPREAD';
+          save();
+          renderMain();
+        };
+      }
 
-      area.querySelector('#bb_download_plan').onclick = () => {
-        if (!plan) return;
-        try{
-          const blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `book-plan-${(plan?.meta?.id||'cultural')}-${Date.now()}.json`;
-          a.click();
-          setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-          this.app.toast?.('Plano baixado ✅');
-        } catch {
-          this.app.toast?.('Falha ao baixar', 'err');
-        }
-      };
+      if (folhearBtn) {
+        folhearBtn.onclick = function(){
+          mode = 'FOLHEAR';
+          save();
+          renderMain();
+        };
+      }
+
+      if (goAgentBtn) {
+        goAgentBtn.onclick = function(){
+          var btn = document.querySelector('.navitem[data-view="cultural"]');
+          if (btn && btn.click) btn.click();
+        };
+      }
+
+      if (dlBtn) {
+        dlBtn.onclick = () => {
+          if (!plan) return;
+          try {
+            var blob = new Blob([JSON.stringify(plan, null, 2)], { type:'application/json' });
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'book-plan-' + (((plan && plan.meta && plan.meta.id) || 'cultural')) + '-' + Date.now() + '.json';
+            a.click();
+            setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+            if (this.app && this.app.toast) this.app.toast('Plano baixado ✅');
+          } catch (e) {
+            if (this.app && this.app.toast) this.app.toast('Falha ao baixar', 'err');
+          }
+        };
+      }
 
       paint();
     };
