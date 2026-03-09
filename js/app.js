@@ -524,9 +524,11 @@ function routeTo(viewId){
   } catch (e) {
     console.error(e);
     safeSessionSet('bcc:last_render_error', String((e && e.stack) || e || 'route render error'));
+    safeSessionRemove('bcc:view:rendering');
     log('[ROUTE ERROR][' + chosen + '] ' + String((e && e.stack) || e));
     renderViewError(root, e, 'Erro ao abrir view');
     toast('Erro ao renderizar view', 'bad');
+    throw e;
   }
 }
 
@@ -592,11 +594,11 @@ async function boot(){
   log('[BOOT] ' + new Date().toISOString());
 
   try {
-    markBootStart();
-
     if (recoverFromStuckBoot()) {
       log('[BOOT RECOVERY] Recovered from stuck boot marker');
     }
+
+    markBootStart();
 
     if ('serviceWorker' in navigator){
       try {
@@ -663,9 +665,8 @@ async function boot(){
     mountNav();
 
     uiStatus('READY', 'ok');
-    markBootSuccess();
-
     routeTo(getSafeStartView());
+    markBootSuccess();
     toast('Pronto ✅', 'ok');
   } catch (e) {
     console.error(e);
