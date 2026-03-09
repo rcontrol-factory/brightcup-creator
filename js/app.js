@@ -6,6 +6,7 @@
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
 import { ComfyClient } from './core/comfy_client.js';
+
 import {
   safeSessionGet,
   safeSessionSet,
@@ -14,6 +15,12 @@ import {
   recoverRuntimeState,
   buildRuntimeDiagnostic
 } from './core/runtime_stability_guard.js';
+
+import {
+  shouldRunBootCacheGuard,
+  runBootCacheGuard,
+  buildBootCacheDiagnostic
+} from './core/boot_cache_guard.js';
 
 import { AgentCenterModule } from './modules/agent_center.js';
 import { WorkflowCenterModule } from './modules/workflow_center.js';
@@ -80,17 +87,13 @@ function escapeHtml(s){
 }
 
 function clone(v){
-  try {
-    return JSON.parse(JSON.stringify(v));
-  } catch (e) {
-    return v;
-  }
+  try { return JSON.parse(JSON.stringify(v)); }
+  catch (e) { return v; }
 }
 
 function uiStatus(text, kind){
   var el = $('#uiStatus');
   if (!el) return;
-
   el.textContent = text;
   el.classList.remove('ok','warn','bad');
   el.classList.add(kind || 'ok');
@@ -121,11 +124,31 @@ function log(line){
 }
 
 function logBootStep(step, extra){
-  if (extra) {
-    log('[BOOT STEP] ' + step + ' — ' + extra);
-  } else {
-    log('[BOOT STEP] ' + step);
+  if (extra) log('[BOOT STEP] ' + step + ' — ' + extra);
+  else log('[BOOT STEP] ' + step);
+}
+
+function safeClipboardCopy(text){
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
   }
+
+  return new Promise(function(resolve, reject){
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text || '';
+      ta.setAttribute('readonly','readonly');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      resolve(true);
+    } catch (e) {
+      reject(e);
+    }
+  });
 }
 
 function markBootStart(){
@@ -186,19 +209,13 @@ function buildExportDump(){
   var i;
   var k;
 
-  try {
-    keys = Storage.listKeys();
-  } catch (e) {
-    keys = [];
-  }
+  try { keys = Storage.listKeys(); }
+  catch (e) { keys = []; }
 
   for (i = 0; i < keys.length; i += 1){
     k = keys[i];
-    try {
-      data[k] = Storage.get(k, null);
-    } catch (e2) {
-      data[k] = null;
-    }
+    try { data[k] = Storage.get(k, null); }
+    catch (e2) { data[k] = null; }
   }
 
   return {
@@ -242,9 +259,7 @@ function importAll(payload){
   var i;
   var k;
 
-  if (!src) {
-    throw new Error('Payload de importação inválido.');
-  }
+  if (!src) throw new Error('Payload de importação inválido.');
 
   data = src.data && typeof src.data === 'object' ? src.data : src;
   keys = Object.keys(data);
@@ -267,11 +282,8 @@ function resetAll(){
   var keys = [];
   var i;
 
-  try {
-    keys = Storage.listKeys();
-  } catch (e) {
-    keys = [];
-  }
+  try { keys = Storage.listKeys(); }
+  catch (e) { keys = []; }
 
   for (i = 0; i < keys.length; i += 1){
     try { Storage.del(keys[i]); } catch (e2) {}
@@ -301,35 +313,8 @@ function helpRender(root){
 function navOpen(on){
   document.body.classList.toggle('nav-open', !!on);
 }
-function navToggle(){
-  navOpen(!document.body.classList.contains('nav-open'));
-}
-function navClose(){
-  navOpen(false);
-}
-
-function safeClipboardCopy(text){
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text);
-  }
-
-  return new Promise(function(resolve, reject){
-    try {
-      var ta = document.createElement('textarea');
-      ta.value = text || '';
-      ta.setAttribute('readonly', 'readonly');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      resolve(true);
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
+function navToggle(){ navOpen(!document.body.classList.contains('nav-open')); }
+function navClose(){ navOpen(false); }
 
 function bindNavClicks(){
   $$('.navitem').forEach(function(btn){
@@ -417,12 +402,8 @@ function mountNav(){
     btnCopyLog.__bccBound = true;
     btnCopyLog.addEventListener('click', function(){
       safeClipboardCopy((($('#log') && $('#log').textContent) || ''))
-        .then(function(){
-          toast('Logs copiados ✅', 'ok');
-        })
-        .catch(function(){
-          toast('Falha ao copiar logs', 'bad');
-        });
+        .then(function(){ toast('Logs copiados ✅','ok'); })
+        .catch(function(){ toast('Falha ao copiar logs','bad'); });
     });
   }
 
@@ -487,13 +468,12 @@ function routeTo(viewId){
 
     mod.render(root);
 
-    if (typeof mod.onShow === 'function') {
-      mod.onShow();
-    }
+    if (typeof mod.onShow === 'function') mod.onShow();
 
     safeSessionRemove('bcc:view:rendering');
     safeSessionRemove('bcc:last_render_error');
     return true;
+
   } catch (e) {
     console.error(e);
     safeSessionSet('bcc:last_render_error', String((e && e.stack) || e || 'route render error'));
@@ -509,7 +489,6 @@ function getSafeStartView(){
   var last = getConfig().lastView;
 
   if (last && State.modules.has(last)) return last;
-
   if (State.modules.has('workflow_center')) return 'workflow_center';
   if (State.modules.has('publishing_center')) return 'publishing_center';
   if (State.modules.has('agent_center')) return 'agent_center';
@@ -524,55 +503,6 @@ function getSafeStartView(){
   if (State.modules.has('book')) return 'book';
   if (State.modules.has('coloring')) return 'coloring';
   return 'help';
-}
-
-function buildBootStartCandidates(){
-  var preferred = getSafeStartView();
-  var candidates = [];
-  var seen = {};
-
-  function push(view){
-    if (!view) return;
-    if (seen[view]) return;
-    seen[view] = true;
-    candidates.push(view);
-  }
-
-  push(preferred);
-  push('workflow_center');
-  push('agent_center');
-  push('help');
-
-  return candidates;
-}
-
-function tryOpenStartView(){
-  var candidates = buildBootStartCandidates();
-  var i;
-  var chosen;
-  var ok = false;
-  var lastError = null;
-
-  for (i = 0; i < candidates.length; i += 1){
-    chosen = candidates[i];
-    logBootStep('route start', chosen);
-
-    try {
-      ok = routeTo(chosen);
-      if (ok) {
-        logBootStep('route success', chosen);
-        return chosen;
-      }
-      logBootStep('route skipped', chosen);
-    } catch (e) {
-      lastError = e;
-      logBootStep('route failed', chosen);
-      log('[BOOT ROUTE ERROR][' + chosen + '] ' + String((e && e.stack) || e));
-    }
-  }
-
-  if (lastError) throw lastError;
-  throw new Error('No usable start view.');
 }
 
 async function initModule(id, mod){
@@ -621,6 +551,7 @@ async function boot(){
   log('[BOOT] ' + new Date().toISOString());
 
   try {
+
     if (recoverFromStuckBoot()) {
       log('[BOOT RECOVERY] Recovered from stuck boot marker');
       try {
@@ -630,15 +561,28 @@ async function boot(){
       }
     }
 
+    /* BOOT CACHE GUARD */
+    try {
+      var guardDiag = buildBootCacheDiagnostic();
+      log('[BOOT CACHE GUARD DIAG] ' + JSON.stringify(guardDiag));
+
+      var shouldRun = shouldRunBootCacheGuard();
+      log('[BOOT CACHE GUARD] should_run=' + shouldRun);
+
+      if (shouldRun) {
+        var guardResult = await runBootCacheGuard();
+        log('[BOOT CACHE GUARD RESULT] ' + JSON.stringify(guardResult));
+      }
+    } catch (guardErr) {
+      log('[BOOT CACHE GUARD ERROR] ' + String((guardErr && guardErr.stack) || guardErr));
+    }
+
     markBootStart();
 
     logBootStep('service worker');
     if ('serviceWorker' in navigator){
-      try {
-        await navigator.serviceWorker.register('./sw.js');
-      } catch (e) {
-        log('[SW WARN] ' + String((e && e.message) || e));
-      }
+      try { await navigator.serviceWorker.register('./sw.js'); }
+      catch (e) { log('[SW WARN] ' + String((e && e.message) || e)); }
     }
 
     logBootStep('themes load');
@@ -706,12 +650,16 @@ async function boot(){
 
     uiStatus('READY', 'ok');
 
-    logBootStep('start view chosen', getSafeStartView());
-    tryOpenStartView();
+    var startView = getSafeStartView();
+    logBootStep('start view chosen', startView);
+
+    routeTo(startView);
 
     markBootSuccess();
     logBootStep('boot success');
+
     toast('Pronto ✅', 'ok');
+
   } catch (e) {
     console.error(e);
     markBootFailure(e);
