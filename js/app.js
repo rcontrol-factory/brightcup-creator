@@ -36,6 +36,13 @@ import { SettingsModule } from './modules/settings.js';
 const $ = function(sel, root){ return (root || document).querySelector(sel); };
 const $$ = function(sel, root){ return Array.from((root || document).querySelectorAll(sel)); };
 
+const BOOT_KEYS = {
+  RUNNING: 'bcc:boot:running',
+  LAST_OK: 'bcc:boot:last_ok',
+  FAIL_COUNT: 'bcc:boot:fail_count',
+  LAST_ERROR: 'bcc:boot:last_error'
+};
+
 const State = {
   themes: null,
   cfg: null,
@@ -72,6 +79,39 @@ function clone(v){
   }
 }
 
+function safeSessionGet(key, fallback){
+  try {
+    var raw = sessionStorage.getItem(key);
+    return raw == null ? fallback : raw;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function safeSessionSet(key, value){
+  try {
+    sessionStorage.setItem(key, String(value));
+  } catch (e) {}
+}
+
+function safeSessionRemove(key){
+  try {
+    sessionStorage.removeItem(key);
+  } catch (e) {}
+}
+
+function safeLocalRemove(key){
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {}
+}
+
+function toIntSafe(v, fallback){
+  var n = parseInt(v, 10);
+  if (!isFinite(n)) return typeof fallback === 'number' ? fallback : 0;
+  return n;
+}
+
 function uiStatus(text, kind){
   var el = $('#uiStatus');
   if (!el) return;
@@ -105,8 +145,48 @@ function log(line){
   el.scrollTop = el.scrollHeight;
 }
 
+function markBootStart(){
+  safeSessionSet(BOOT_KEYS.RUNNING, new Date().toISOString());
+}
+
+function markBootSuccess(){
+  safeSessionRemove(BOOT_KEYS.RUNNING);
+  safeSessionSet(BOOT_KEYS.LAST_OK, new Date().toISOString());
+  safeSessionSet(BOOT_KEYS.FAIL_COUNT, '0');
+  safeSessionRemove(BOOT_KEYS.LAST_ERROR);
+}
+
+function markBootFailure(err){
+  var current = toIntSafe(safeSessionGet(BOOT_KEYS.FAIL_COUNT, '0'), 0);
+  safeSessionSet(BOOT_KEYS.FAIL_COUNT, String(current + 1));
+  safeSessionSet(BOOT_KEYS.LAST_ERROR, String((err && err.stack) || err || 'unknown error'));
+}
+
+function recoverFromStuckBoot(){
+  var hadRunning = !!safeSessionGet(BOOT_KEYS.RUNNING, '');
+  if (!hadRunning) return false;
+
+  try {
+    safeSessionRemove(BOOT_KEYS.RUNNING);
+
+    safeSessionRemove('bcc:view:rendering');
+    safeSessionRemove('bcc:view:pending');
+    safeSessionRemove('bcc:navigation:pending');
+    safeSessionRemove('bcc:last_route_attempt');
+    safeSessionRemove('bcc:last_render_error');
+
+    safeLocalRemove('bcc:view:rendering');
+    safeLocalRemove('bcc:view:pending');
+    safeLocalRemove('bcc:navigation:pending');
+    safeLocalRemove('bcc:last_route_attempt');
+    safeLocalRemove('bcc:last_render_error');
+  } catch (e) {}
+
+  return true;
+}
+
 async function loadThemes(){
-  var res = await fetch('./data/themes.json', { cache: 'no-cache' });
+  var res = await fetch('./data/themes.json', { cache:'no-cache' });
   if (!res.ok) throw new Error('Falha ao carregar themes.json');
   return await res.json();
 }
@@ -410,6 +490,8 @@ function routeTo(viewId){
   mergeConfig({ lastView: chosen });
   setActiveNav(chosen);
 
+  safeSessionSet('bcc:last_route_attempt', chosen);
+
   if (!root) return;
 
   if (chosen === 'help'){
@@ -425,6 +507,8 @@ function routeTo(viewId){
   }
 
   try {
+    safeSessionSet('bcc:view:rendering', chosen);
+
     if (typeof mod.render !== 'function') {
       throw new Error('Módulo sem render().');
     }
@@ -434,8 +518,12 @@ function routeTo(viewId){
     if (typeof mod.onShow === 'function') {
       mod.onShow();
     }
+
+    safeSessionRemove('bcc:view:rendering');
+    safeSessionRemove('bcc:last_render_error');
   } catch (e) {
     console.error(e);
+    safeSessionSet('bcc:last_render_error', String((e && e.stack) || e || 'route render error'));
     log('[ROUTE ERROR][' + chosen + '] ' + String((e && e.stack) || e));
     renderViewError(root, e, 'Erro ao abrir view');
     toast('Erro ao renderizar view', 'bad');
@@ -486,11 +574,30 @@ document.addEventListener('bcc:navigate', function(e){
 
 window.routeTo = routeTo;
 
+window.addEventListener('error', function(e){
+  try {
+    log('[WINDOW ERROR] ' + String((e && (e.error && e.error.stack || e.message)) || 'Unknown window error'));
+  } catch (err) {}
+});
+
+window.addEventListener('unhandledrejection', function(e){
+  try {
+    var reason = e && e.reason ? e.reason : 'Unhandled rejection';
+    log('[UNHANDLED REJECTION] ' + String((reason && reason.stack) || reason));
+  } catch (err) {}
+});
+
 async function boot(){
   uiStatus('BOOT', 'warn');
   log('[BOOT] ' + new Date().toISOString());
 
   try {
+    markBootStart();
+
+    if (recoverFromStuckBoot()) {
+      log('[BOOT RECOVERY] Recovered from stuck boot marker');
+    }
+
     if ('serviceWorker' in navigator){
       try {
         await navigator.serviceWorker.register('./sw.js');
@@ -556,10 +663,13 @@ async function boot(){
     mountNav();
 
     uiStatus('READY', 'ok');
+    markBootSuccess();
+
     routeTo(getSafeStartView());
     toast('Pronto ✅', 'ok');
   } catch (e) {
     console.error(e);
+    markBootFailure(e);
     uiStatus('ERROR', 'bad');
     toast('Erro no boot', 'bad');
     log('[BOOT ERROR] ' + String((e && e.stack) || e));
