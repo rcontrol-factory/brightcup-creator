@@ -2,6 +2,7 @@
 // Bright Cup Creator — /js/app.js
 // Boot defensivo + integração dos módulos principais
 // - Agent Center
+// - Workflow Center
 // - Coloring Builder / Review
 // - Test Book / Export / Release
 // - Cultural / Puzzles / Covers
@@ -12,6 +13,7 @@ import { PromptEngine } from './core/prompt_engine.js';
 import { ComfyClient } from './core/comfy_client.js';
 
 import { AgentCenterModule } from './modules/agent_center.js';
+import { WorkflowCenterModule } from './modules/workflow_center.js';
 
 import { ColoringModule } from './modules/coloring.js';
 import { ColoringAgentModule } from './modules/coloring_agent.js';
@@ -130,7 +132,7 @@ function helpRender(root){
         <h2>Ajuda rápida</h2>
         <p class="muted">
           Fluxo principal:<br/>
-          Agent Center → Coloring Builder → Coloring Review → Test Book Center → Export Center → Release Center
+          Agent Center → Workflow Center → Coloring Builder → Coloring Review → Test Book Center → Export Center → Release Center
         </p>
       </div>
     </div>
@@ -185,7 +187,8 @@ function ensureNavItem(viewId,label,afterView){
 
 function ensureDynamicNavItems(){
   ensureNavItem('agent_center','Agent Center','coloring');
-  ensureNavItem('coloring_book','Coloring Builder','agent_center');
+  ensureNavItem('workflow_center','Workflow Center','agent_center');
+  ensureNavItem('coloring_book','Coloring Builder','workflow_center');
   ensureNavItem('coloring_review','Coloring Review','coloring_book');
   ensureNavItem('test_book_center','Test Book Center','coloring_review');
   ensureNavItem('export_center','Export Center','test_book_center');
@@ -270,6 +273,7 @@ function getSafeStartView(){
   if (last === 'help') return 'help';
   if (State.modules.has(last)) return last;
 
+  if (State.modules.has('workflow_center')) return 'workflow_center';
   if (State.modules.has('release_center')) return 'release_center';
   if (State.modules.has('test_book_center')) return 'test_book_center';
   if (State.modules.has('coloring_review')) return 'coloring_review';
@@ -335,6 +339,7 @@ async function boot(){
     };
 
     await initModule('agent_center',new AgentCenterModule(app));
+    await initModule('workflow_center',new WorkflowCenterModule(app));
 
     await initModule('coloring_agent',new ColoringAgentModule(app));
     await initModule('coloring_book',new ColoringBookBuilderModule(app));
