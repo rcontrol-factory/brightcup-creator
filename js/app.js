@@ -6,6 +6,15 @@
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
 import { ComfyClient } from './core/comfy_client.js';
+import {
+  safeSessionGet,
+  safeSessionSet,
+  safeSessionRemove,
+  safeLocalRemove,
+  toIntSafe,
+  recoverRuntimeState,
+  buildRuntimeDiagnostic
+} from './core/runtime_stability_guard.js';
 
 import { AgentCenterModule } from './modules/agent_center.js';
 import { WorkflowCenterModule } from './modules/workflow_center.js';
@@ -79,39 +88,6 @@ function clone(v){
   }
 }
 
-function safeSessionGet(key, fallback){
-  try {
-    var raw = sessionStorage.getItem(key);
-    return raw == null ? fallback : raw;
-  } catch (e) {
-    return fallback;
-  }
-}
-
-function safeSessionSet(key, value){
-  try {
-    sessionStorage.setItem(key, String(value));
-  } catch (e) {}
-}
-
-function safeSessionRemove(key){
-  try {
-    sessionStorage.removeItem(key);
-  } catch (e) {}
-}
-
-function safeLocalRemove(key){
-  try {
-    localStorage.removeItem(key);
-  } catch (e) {}
-}
-
-function toIntSafe(v, fallback){
-  var n = parseInt(v, 10);
-  if (!isFinite(n)) return typeof fallback === 'number' ? fallback : 0;
-  return n;
-}
-
 function uiStatus(text, kind){
   var el = $('#uiStatus');
   if (!el) return;
@@ -168,18 +144,7 @@ function recoverFromStuckBoot(){
 
   try {
     safeSessionRemove(BOOT_KEYS.RUNNING);
-
-    safeSessionRemove('bcc:view:rendering');
-    safeSessionRemove('bcc:view:pending');
-    safeSessionRemove('bcc:navigation:pending');
-    safeSessionRemove('bcc:last_route_attempt');
-    safeSessionRemove('bcc:last_render_error');
-
-    safeLocalRemove('bcc:view:rendering');
-    safeLocalRemove('bcc:view:pending');
-    safeLocalRemove('bcc:navigation:pending');
-    safeLocalRemove('bcc:last_route_attempt');
-    safeLocalRemove('bcc:last_render_error');
+    recoverRuntimeState();
   } catch (e) {}
 
   return true;
@@ -596,6 +561,11 @@ async function boot(){
   try {
     if (recoverFromStuckBoot()) {
       log('[BOOT RECOVERY] Recovered from stuck boot marker');
+      try {
+        log('[RUNTIME DIAGNOSTIC] ' + JSON.stringify(buildRuntimeDiagnostic()));
+      } catch (eDiag) {
+        log('[RUNTIME DIAGNOSTIC] unavailable');
+      }
     }
 
     markBootStart();
