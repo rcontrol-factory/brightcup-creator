@@ -1,6 +1,6 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Boot defensivo + orquestração principal da árvore atual
+// Boot defensivo + boot leve + init sob demanda
 // Safari/iPhone/PWA safe
 
 import { Storage } from './core/storage.js';
@@ -21,6 +21,8 @@ import {
   runBootCacheGuard,
   buildBootCacheDiagnostic
 } from './core/boot_cache_guard.js';
+
+import { buildBootRecoverySnapshot } from './core/boot_recovery_snapshot.js';
 
 import { AgentCenterModule } from './modules/agent_center.js';
 import { WorkflowCenterModule } from './modules/workflow_center.js';
@@ -58,12 +60,30 @@ const BOOT_KEYS = {
   LAST_ERROR: 'bcc:boot:last_error'
 };
 
+const TOP_LEVEL_VIEWS = [
+  'agent_center',
+  'workflow_center',
+  'publishing_center',
+  'coloring',
+  'covers',
+  'wordsearch',
+  'crossword',
+  'mandala',
+  'cultural',
+  'book',
+  'settings',
+  'help'
+];
+
 const State = {
   themes: null,
   cfg: null,
   activeView: null,
   modules: new Map(),
-  toastTimer: null
+  moduleFactories: new Map(),
+  modulePromises: new Map(),
+  toastTimer: null,
+  app: null
 };
 
 function normalizeConfig(cfg){
@@ -301,7 +321,7 @@ function helpRender(root){
         <h2>Ajuda rápida</h2>
         <p class="muted">
           Fluxo principal:<br/>
-          Agent Center → Workflow Center → Publishing Center → Export/Release
+          Agent Center → Workflow Center → Publishing Center
           <br/><br/>
           No fluxo de coloring, a execução passa por Coloring Builder e Coloring Review antes da publicação.
         </p>
@@ -322,7 +342,7 @@ function bindNavClicks(){
     btn.__bccNavBound = true;
 
     btn.addEventListener('click', function(){
-      routeTo(btn.dataset.view);
+      routeTo(btn.dataset.view).catch(function(){});
       navClose();
     });
   });
@@ -357,14 +377,15 @@ function ensureDynamicNavItems(){
   ensureNavItem('workflow_center', 'Workflow Center', 'agent_center');
   ensureNavItem('publishing_center', 'Publishing Center', 'workflow_center');
 
-  ensureNavItem('coloring_agent', 'Coloring Agent', 'publishing_center');
-  ensureNavItem('coloring_book', 'Coloring Builder', 'coloring_agent');
-  ensureNavItem('coloring_review', 'Coloring Review', 'coloring_book');
-  ensureNavItem('test_book_center', 'Test Book Center', 'coloring_review');
-  ensureNavItem('master_test_book_center', 'Master Test Book Center', 'test_book_center');
-  ensureNavItem('master_test_book_export_center', 'Master Test Book Export Center', 'master_test_book_center');
-  ensureNavItem('export_center', 'Export Center', 'master_test_book_export_center');
-  ensureNavItem('release_center', 'Release Center', 'export_center');
+  ensureNavItem('coloring', 'Coloring');
+  ensureNavItem('covers', 'Covers');
+  ensureNavItem('wordsearch', 'Word Search');
+  ensureNavItem('crossword', 'Crossword');
+  ensureNavItem('mandala', 'Mandala');
+  ensureNavItem('cultural', 'Cultural');
+  ensureNavItem('book', 'Book');
+  ensureNavItem('settings', 'Settings');
+  ensureNavItem('help', 'Help');
 }
 
 function mountNav(){
@@ -375,7 +396,7 @@ function mountNav(){
   if (btnHelp && !btnHelp.__bccBound){
     btnHelp.__bccBound = true;
     btnHelp.addEventListener('click', function(){
-      routeTo('help');
+      routeTo('help').catch(function(){});
       navClose();
     });
   }
@@ -435,7 +456,92 @@ function renderViewError(root, err, title){
   `;
 }
 
-function routeTo(viewId){
+async function initModule(id, mod){
+  State.modules.set(id, mod);
+  logBootStep('init module', id);
+
+  if (mod && typeof mod.init === 'function'){
+    try {
+      await mod.init();
+      logBootStep('init module ok', id);
+    } catch (e) {
+      log('[MODULE INIT ERROR][' + id + '] ' + String((e && e.stack) || e));
+      logBootStep('init module failed', id);
+    }
+  } else {
+    logBootStep('init module ok', id);
+  }
+}
+
+function registerModuleFactories(app){
+  State.moduleFactories.clear();
+
+  State.moduleFactories.set('coloring', function(){ return new ColoringModule(app); });
+  State.moduleFactories.set('coloring_agent', function(){ return new ColoringAgentModule(app); });
+  State.moduleFactories.set('coloring_book', function(){ return new ColoringBookBuilderModule(app); });
+  State.moduleFactories.set('coloring_review', function(){ return new ColoringReviewModule(app); });
+
+  State.moduleFactories.set('test_book_center', function(){ return new TestBookCenterModule(app); });
+  State.moduleFactories.set('master_test_book_center', function(){ return new MasterTestBookCenterModule(app); });
+  State.moduleFactories.set('master_test_book_export_center', function(){ return new MasterTestBookExportCenterModule(app); });
+
+  State.moduleFactories.set('export_center', function(){ return new ExportCenterModule(app); });
+  State.moduleFactories.set('release_center', function(){ return new ReleaseCenterModule(app); });
+
+  State.moduleFactories.set('covers', function(){ return new CoversModule(app); });
+  State.moduleFactories.set('wordsearch', function(){ return new WordSearchModule(app); });
+  State.moduleFactories.set('crossword', function(){ return new CrosswordModule(app); });
+  State.moduleFactories.set('mandala', function(){ return new MandalaModule(app); });
+
+  State.moduleFactories.set('cultural', function(){ return new CulturalAgentModule(app); });
+  State.moduleFactories.set('book', function(){ return new CulturalBookBuilderModule(app); });
+}
+
+function hasRouteAvailable(viewId){
+  if (!viewId) return false;
+  if (viewId === 'help') return true;
+  if (State.modules.has(viewId)) return true;
+  if (State.moduleFactories.has(viewId)) return true;
+  return false;
+}
+
+async function ensureModuleReady(id){
+  if (!id || id === 'help') return null;
+
+  if (State.modules.has(id)) return State.modules.get(id);
+
+  if (State.modulePromises.has(id)) {
+    return State.modulePromises.get(id);
+  }
+
+  if (!State.moduleFactories.has(id)) return null;
+
+  log('[LAZY MODULE] preparing ' + id);
+
+  var promise = (async function(){
+    try {
+      var factory = State.moduleFactories.get(id);
+      if (typeof factory !== 'function') {
+        throw new Error('Factory not found for ' + id);
+      }
+
+      var mod = factory();
+      await initModule(id, mod);
+      log('[LAZY MODULE] ready ' + id);
+      return State.modules.get(id) || mod;
+    } catch (e) {
+      log('[LAZY MODULE ERROR][' + id + '] ' + String((e && e.stack) || e));
+      throw e;
+    } finally {
+      State.modulePromises.delete(id);
+    }
+  })();
+
+  State.modulePromises.set(id, promise);
+  return promise;
+}
+
+async function routeTo(viewId){
   var root = $('#view');
   var chosen = viewId || 'workflow_center';
 
@@ -452,15 +558,16 @@ function routeTo(viewId){
     return true;
   }
 
-  var mod = State.modules.get(chosen);
-
-  if (!mod){
-    root.innerHTML = '<div class="card"><h2>View não encontrada</h2><p class="muted">' + escapeHtml(chosen) + '</p></div>';
-    return false;
-  }
-
   try {
     safeSessionSet('bcc:view:rendering', chosen);
+
+    var mod = await ensureModuleReady(chosen);
+
+    if (!mod){
+      safeSessionRemove('bcc:view:rendering');
+      root.innerHTML = '<div class="card"><h2>View não encontrada</h2><p class="muted">' + escapeHtml(chosen) + '</p></div>';
+      return false;
+    }
 
     if (typeof mod.render !== 'function') {
       throw new Error('Módulo sem render().');
@@ -488,38 +595,63 @@ function routeTo(viewId){
 function getSafeStartView(){
   var last = getConfig().lastView;
 
-  if (last && State.modules.has(last)) return last;
-  if (State.modules.has('workflow_center')) return 'workflow_center';
-  if (State.modules.has('publishing_center')) return 'publishing_center';
-  if (State.modules.has('agent_center')) return 'agent_center';
-  if (State.modules.has('release_center')) return 'release_center';
-  if (State.modules.has('master_test_book_export_center')) return 'master_test_book_export_center';
-  if (State.modules.has('master_test_book_center')) return 'master_test_book_center';
-  if (State.modules.has('test_book_center')) return 'test_book_center';
-  if (State.modules.has('coloring_review')) return 'coloring_review';
-  if (State.modules.has('coloring_book')) return 'coloring_book';
-  if (State.modules.has('coloring_agent')) return 'coloring_agent';
-  if (State.modules.has('cultural')) return 'cultural';
-  if (State.modules.has('book')) return 'book';
-  if (State.modules.has('coloring')) return 'coloring';
+  if (last && TOP_LEVEL_VIEWS.indexOf(last) !== -1 && hasRouteAvailable(last)) return last;
+  if (hasRouteAvailable('workflow_center')) return 'workflow_center';
+  if (hasRouteAvailable('publishing_center')) return 'publishing_center';
+  if (hasRouteAvailable('agent_center')) return 'agent_center';
   return 'help';
 }
 
-async function initModule(id, mod){
-  State.modules.set(id, mod);
-  logBootStep('init module', id);
+function resolveSafeBootStartView(){
+  var preferred = getSafeStartView();
+  log('[BOOT ROUTE] preferred=' + preferred);
 
-  if (mod && typeof mod.init === 'function'){
-    try {
-      await mod.init();
-      logBootStep('init module ok', id);
-    } catch (e) {
-      log('[MODULE INIT ERROR][' + id + '] ' + String((e && e.stack) || e));
-      logBootStep('init module failed', id);
-    }
-  } else {
-    logBootStep('init module ok', id);
+  var snapshot;
+  try {
+    snapshot = buildBootRecoverySnapshot();
+    log('[BOOT RECOVERY SNAPSHOT] ' + JSON.stringify(snapshot));
+  } catch(e){
+    log('[BOOT SNAPSHOT ERROR] ' + String(e));
+    snapshot = null;
   }
+
+  if (!snapshot) return preferred;
+
+  if (snapshot.routing && snapshot.routing.shouldAvoidLastRoute === true){
+    log('[BOOT ROUTE] avoiding last route due to snapshot');
+  }
+
+  if (snapshot.safety && snapshot.safety.safeToOpenPreferredRoute === false){
+    log('[BOOT ROUTE] preferred route not safe');
+  }
+
+  if (
+    snapshot.routing &&
+    (snapshot.routing.shouldAvoidLastRoute === true ||
+     (snapshot.safety && snapshot.safety.safeToOpenPreferredRoute === false))
+  ){
+    var suggested = snapshot.routing.suggestedSafeRoute;
+
+    if (suggested && hasRouteAvailable(suggested)){
+      log('[BOOT ROUTE] using suggested safe route=' + suggested);
+      return suggested;
+    }
+
+    if (hasRouteAvailable('agent_center')){
+      log('[BOOT ROUTE] fallback agent_center');
+      return 'agent_center';
+    }
+
+    if (hasRouteAvailable('workflow_center')){
+      log('[BOOT ROUTE] fallback workflow_center');
+      return 'workflow_center';
+    }
+
+    log('[BOOT ROUTE] final fallback help');
+    return 'help';
+  }
+
+  return preferred;
 }
 
 document.addEventListener('bcc:navigate', function(e){
@@ -527,7 +659,7 @@ document.addEventListener('bcc:navigate', function(e){
     if (!e || !e.detail) return;
     var view = e.detail.view;
     if (!view) return;
-    routeTo(view);
+    routeTo(view).catch(function(){});
   } catch (err) {}
 });
 
@@ -561,7 +693,6 @@ async function boot(){
       }
     }
 
-    /* BOOT CACHE GUARD */
     try {
       var guardDiag = buildBootCacheDiagnostic();
       log('[BOOT CACHE GUARD DIAG] ' + JSON.stringify(guardDiag));
@@ -618,30 +749,12 @@ async function boot(){
       resetAll: resetAll
     };
 
+    State.app = app;
+    registerModuleFactories(app);
+
     await initModule('agent_center', new AgentCenterModule(app));
     await initModule('workflow_center', new WorkflowCenterModule(app));
     await initModule('publishing_center', new PublishingCenterModule(app));
-
-    await initModule('coloring', new ColoringModule(app));
-    await initModule('coloring_agent', new ColoringAgentModule(app));
-    await initModule('coloring_book', new ColoringBookBuilderModule(app));
-    await initModule('coloring_review', new ColoringReviewModule(app));
-
-    await initModule('test_book_center', new TestBookCenterModule(app));
-    await initModule('master_test_book_center', new MasterTestBookCenterModule(app));
-    await initModule('master_test_book_export_center', new MasterTestBookExportCenterModule(app));
-
-    await initModule('export_center', new ExportCenterModule(app));
-    await initModule('release_center', new ReleaseCenterModule(app));
-
-    await initModule('covers', new CoversModule(app));
-    await initModule('wordsearch', new WordSearchModule(app));
-    await initModule('crossword', new CrosswordModule(app));
-    await initModule('mandala', new MandalaModule(app));
-
-    await initModule('cultural', new CulturalAgentModule(app));
-    await initModule('book', new CulturalBookBuilderModule(app));
-
     await initModule('settings', new SettingsModule(app));
 
     logBootStep('nav mount');
@@ -650,10 +763,10 @@ async function boot(){
 
     uiStatus('READY', 'ok');
 
-    var startView = getSafeStartView();
+    var startView = resolveSafeBootStartView();
     logBootStep('start view chosen', startView);
 
-    routeTo(startView);
+    await routeTo(startView);
 
     markBootSuccess();
     logBootStep('boot success');
