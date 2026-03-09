@@ -1,137 +1,143 @@
-/* FILE: /sw.js
-   Bright Cup Creator — SW HARD RESET (iOS/PWA SAFE)
-   Goal: eliminate mixed-cache boots that freeze UI (menu/copy dead).
-*/
-const SW_VERSION = "bcc-reset-2026-03-01-1908";
-const CACHE_NAME = `bcc-${SW_VERSION}`;
-const CORE_ASSETS = [
-  "./",
-  "./index.html",
-  "./styles.css",
-  "./manifest.json",
-  "./js/app.js",
-  "./js/core/storage.js",
-  "./js/core/wordsearch_gen.js",
-  "./js/core/prompt_engine.js",
-  "./js/core/comfy.js",
-  "./js/core/comfy_client.js",
-  "./js/modules/cultural_agent.js",
-  "./js/modules/cultural_book_builder.js",
-  "./js/modules/wordsearch.js",
-  "./js/modules/coloring.js",
-  "./js/modules/crossword.js",
-  "./js/modules/mandala.js",
-  "./js/modules/covers.js",
-  "./js/modules/settings.js",
-  "./data/themes.json",
-  "./assets/icon-192.png",
-  "./assets/icon-512.png"
-];
+/* FILE: /sw.js */
+// Bright Cup Creator — Stable PWA Service Worker
+// Goal: avoid stale-cache white screens on Safari/iOS/PWA
 
-// Install: pre-cache core
-self.addEventListener("install", (event) => {
-  self.skipWaiting();
-  event.waitUntil((async () => {
-    const cache = await caches.open(CACHE_NAME);
-    await cache.addAll(CORE_ASSETS.map(u => new Request(u, {cache: "reload"})));
-  })());
-});
+const CACHE_VERSION = 'bcc-v1';
+const CACHE_NAME = 'brightcup-cache-' + CACHE_VERSION;
 
-// Activate: HARD clean all old caches, claim clients
-self.addEventListener("activate", (event) => {
-  event.waitUntil((async () => {
-    const keys = await caches.keys();
-    await Promise.all(keys.map(k => (k !== CACHE_NAME) ? caches.delete(k) : Promise.resolve()));
-    await self.clients.claim();
-    // Tell open clients to hard-reload once (prevents “stuck shell”)
-    const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    clients.forEach(c => {
-      try { c.postMessage({ type: "SW_ACTIVATED", version: SW_VERSION }); } catch {}
+function isSameOrigin(requestUrl) {
+  try {
+    return new URL(requestUrl).origin === self.location.origin;
+  } catch (e) {
+    return false;
+  }
+}
+
+function isImageRequest(request) {
+  var url = '';
+  try { url = new URL(request.url).pathname; } catch (e) {}
+  return /\.(png|jpg|jpeg|webp|gif|svg|ico)$/i.test(url);
+}
+
+function isNetworkFirstRequest(request) {
+  var url = '';
+  var accept = '';
+
+  try { url = new URL(request.url).pathname; } catch (e) {}
+  try { accept = request.headers.get('accept') || ''; } catch (e2) {}
+
+  if (request.mode === 'navigate') return true;
+  if (accept.indexOf('text/html') !== -1) return true;
+  if (/\.js$/i.test(url)) return true;
+  if (/\.json$/i.test(url)) return true;
+  if (/\.html$/i.test(url)) return true;
+
+  return false;
+}
+
+function makeFallbackResponse(request) {
+  var accept = '';
+  try { accept = request.headers.get('accept') || ''; } catch (e) {}
+
+  if (request.mode === 'navigate' || accept.indexOf('text/html') !== -1) {
+    return new Response(
+      '<!doctype html><html><head><meta charset="utf-8"><title>Offline</title></head><body>Offline</body></html>',
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      }
+    );
+  }
+
+  if (accept.indexOf('application/json') !== -1 || /\.json$/i.test(request.url)) {
+    return new Response('{}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' }
     });
+  }
+
+  if (/\.js$/i.test(request.url)) {
+    return new Response('', {
+      status: 200,
+      headers: { 'Content-Type': 'application/javascript; charset=utf-8' }
+    });
+  }
+
+  return new Response('', { status: 200 });
+}
+
+self.addEventListener('install', function(event) {
+  self.skipWaiting();
+  event.waitUntil(Promise.resolve());
+});
+
+self.addEventListener('activate', function(event) {
+  event.waitUntil((async function() {
+    var keys = await caches.keys();
+    await Promise.all(keys.map(function(key) {
+      if (key !== CACHE_NAME) return caches.delete(key);
+      return Promise.resolve(false);
+    }));
+    await self.clients.claim();
   })());
 });
 
-// Message: allow manual skipWaiting from UI if you ever add it
-self.addEventListener("message", (event) => {
-  if (event?.data?.type === "SKIP_WAITING") {
-    try { self.skipWaiting(); } catch {}
-  }
-});
+self.addEventListener('fetch', function(event) {
+  var request = event.request;
 
-// Fetch strategy (iOS-safe):
-// - HTML navigations: network-first (fallback cache)
-// - JS/CSS/JSON: network-first with NO-STORE, then update cache (prevents mixed versions)
-// - Images/fonts: cache-first
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (!req || req.method !== "GET") return;
+  if (!request || request.method !== 'GET') return;
+  if (!isSameOrigin(request.url)) return;
 
-  const url = new URL(req.url);
-  // only handle same-origin
-  if (url.origin !== self.location.origin) return;
+  if (isImageRequest(request)) {
+    event.respondWith((async function() {
+      var cache = await caches.open(CACHE_NAME);
+      var cached = await cache.match(request);
 
-  const accept = req.headers.get("accept") || "";
-  const isNav = req.mode === "navigate" || accept.includes("text/html");
-  const isCode = url.pathname.endsWith(".js") || url.pathname.endsWith(".css") || url.pathname.endsWith(".json");
-  const isAsset = url.pathname.match(/\.(png|jpg|jpeg|webp|svg|gif|ico|woff2?|ttf)$/i);
-
-  if (isNav) {
-    event.respondWith((async () => {
-      try {
-        const fresh = await fetch(req, { cache: "no-store" });
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(req, fresh.clone());
-        return fresh;
-      } catch (e) {
-        const cached = await caches.match(req);
-        return cached || caches.match("./index.html");
-      }
-    })());
-    return;
-  }
-
-  if (isCode) {
-    event.respondWith((async () => {
-      try {
-        const fresh = await fetch(req, { cache: "no-store" });
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(req, fresh.clone());
-        return fresh;
-      } catch (e) {
-        const cached = await caches.match(req);
-        return cached || Response.error();
-      }
-    })());
-    return;
-  }
-
-  if (isAsset) {
-    event.respondWith((async () => {
-      const cached = await caches.match(req);
       if (cached) return cached;
+
       try {
-        const fresh = await fetch(req);
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(req, fresh.clone());
-        return fresh;
+        var fresh = await fetch(request);
+        if (fresh && fresh.ok) {
+          cache.put(request, fresh.clone());
+        }
+        return fresh || makeFallbackResponse(request);
       } catch (e) {
-        return cached || Response.error();
+        return cached || makeFallbackResponse(request);
       }
     })());
     return;
   }
 
-  // default: try cache then network
-  event.respondWith((async () => {
-    const cached = await caches.match(req);
-    if (cached) return cached;
+  if (isNetworkFirstRequest(request)) {
+    event.respondWith((async function() {
+      var cache = await caches.open(CACHE_NAME);
+
+      try {
+        var fresh = await fetch(request, { cache: 'no-store' });
+        if (fresh && fresh.ok) {
+          cache.put(request, fresh.clone());
+        }
+        return fresh || makeFallbackResponse(request);
+      } catch (e) {
+        var cached = await cache.match(request);
+        return cached || makeFallbackResponse(request);
+      }
+    })());
+    return;
+  }
+
+  event.respondWith((async function() {
+    var cache = await caches.open(CACHE_NAME);
+
     try {
-      const fresh = await fetch(req);
-      const cache = await caches.open(CACHE_NAME);
-      cache.put(req, fresh.clone());
-      return fresh;
+      var fresh = await fetch(request);
+      if (fresh && fresh.ok) {
+        cache.put(request, fresh.clone());
+      }
+      return fresh || makeFallbackResponse(request);
     } catch (e) {
-      return cached || Response.error();
+      var cached = await cache.match(request);
+      return cached || makeFallbackResponse(request);
     }
   })());
 });
