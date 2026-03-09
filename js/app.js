@@ -10,7 +10,6 @@ import {
   safeSessionGet,
   safeSessionSet,
   safeSessionRemove,
-  safeLocalRemove,
   toIntSafe,
   recoverRuntimeState,
   buildRuntimeDiagnostic
@@ -119,6 +118,14 @@ function log(line){
   var txt = typeof line === 'string' ? line : JSON.stringify(line, null, 2);
   el.textContent += txt + '\n';
   el.scrollTop = el.scrollHeight;
+}
+
+function logBootStep(step, extra){
+  if (extra) {
+    log('[BOOT STEP] ' + step + ' — ' + extra);
+  } else {
+    log('[BOOT STEP] ' + step);
+  }
 }
 
 function markBootStart(){
@@ -457,18 +464,18 @@ function routeTo(viewId){
 
   safeSessionSet('bcc:last_route_attempt', chosen);
 
-  if (!root) return;
+  if (!root) return false;
 
   if (chosen === 'help'){
     helpRender(root);
-    return;
+    return true;
   }
 
   var mod = State.modules.get(chosen);
 
   if (!mod){
     root.innerHTML = '<div class="card"><h2>View não encontrada</h2><p class="muted">' + escapeHtml(chosen) + '</p></div>';
-    return;
+    return false;
   }
 
   try {
@@ -486,6 +493,7 @@ function routeTo(viewId){
 
     safeSessionRemove('bcc:view:rendering');
     safeSessionRemove('bcc:last_render_error');
+    return true;
   } catch (e) {
     console.error(e);
     safeSessionSet('bcc:last_render_error', String((e && e.stack) || e || 'route render error'));
@@ -518,15 +526,69 @@ function getSafeStartView(){
   return 'help';
 }
 
+function buildBootStartCandidates(){
+  var preferred = getSafeStartView();
+  var candidates = [];
+  var seen = {};
+
+  function push(view){
+    if (!view) return;
+    if (seen[view]) return;
+    seen[view] = true;
+    candidates.push(view);
+  }
+
+  push(preferred);
+  push('workflow_center');
+  push('agent_center');
+  push('help');
+
+  return candidates;
+}
+
+function tryOpenStartView(){
+  var candidates = buildBootStartCandidates();
+  var i;
+  var chosen;
+  var ok = false;
+  var lastError = null;
+
+  for (i = 0; i < candidates.length; i += 1){
+    chosen = candidates[i];
+    logBootStep('route start', chosen);
+
+    try {
+      ok = routeTo(chosen);
+      if (ok) {
+        logBootStep('route success', chosen);
+        return chosen;
+      }
+      logBootStep('route skipped', chosen);
+    } catch (e) {
+      lastError = e;
+      logBootStep('route failed', chosen);
+      log('[BOOT ROUTE ERROR][' + chosen + '] ' + String((e && e.stack) || e));
+    }
+  }
+
+  if (lastError) throw lastError;
+  throw new Error('No usable start view.');
+}
+
 async function initModule(id, mod){
   State.modules.set(id, mod);
+  logBootStep('init module', id);
 
   if (mod && typeof mod.init === 'function'){
     try {
       await mod.init();
+      logBootStep('init module ok', id);
     } catch (e) {
       log('[MODULE INIT ERROR][' + id + '] ' + String((e && e.stack) || e));
+      logBootStep('init module failed', id);
     }
+  } else {
+    logBootStep('init module ok', id);
   }
 }
 
@@ -570,6 +632,7 @@ async function boot(){
 
     markBootStart();
 
+    logBootStep('service worker');
     if ('serviceWorker' in navigator){
       try {
         await navigator.serviceWorker.register('./sw.js');
@@ -578,14 +641,19 @@ async function boot(){
       }
     }
 
+    logBootStep('themes load');
     try {
       State.themes = await loadThemes();
+      logBootStep('themes loaded');
     } catch (e) {
       State.themes = {};
       log('[THEMES WARN] ' + String((e && e.message) || e));
+      logBootStep('themes fallback');
     }
 
+    logBootStep('config load');
     State.cfg = normalizeConfig(Storage.get('config', {}));
+    logBootStep('config loaded');
 
     var app = {
       themes: State.themes,
@@ -632,11 +700,17 @@ async function boot(){
 
     await initModule('settings', new SettingsModule(app));
 
+    logBootStep('nav mount');
     mountNav();
+    logBootStep('nav mounted');
 
     uiStatus('READY', 'ok');
-    routeTo(getSafeStartView());
+
+    logBootStep('start view chosen', getSafeStartView());
+    tryOpenStartView();
+
     markBootSuccess();
+    logBootStep('boot success');
     toast('Pronto ✅', 'ok');
   } catch (e) {
     console.error(e);
