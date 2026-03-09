@@ -1,38 +1,39 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Boot defensivo + integração segura do pipeline coloring/export/release/test-book
-// - Coloring Agent
-// - Coloring Book Builder
-// - Coloring Review
-// - Test Book Center
-// - Master Test Book Center
-// - Master Test Book Export Center
-// - Export Center
-// - Release Center
-// - compatibilidade com linha cultural
-// - Comfy permanece como legado/compat, não como fluxo principal
+// Boot defensivo + integração dos módulos principais
+// - Agent Center
+// - Coloring Builder / Review
+// - Test Book / Export / Release
+// - Cultural / Puzzles / Covers
 // - Safari/iOS/PWA safe
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
 import { ComfyClient } from './core/comfy_client.js';
 
+import { AgentCenterModule } from './modules/agent_center.js';
+
 import { ColoringModule } from './modules/coloring.js';
 import { ColoringAgentModule } from './modules/coloring_agent.js';
 import { ColoringBookBuilderModule } from './modules/coloring_book_builder.js';
 import { ColoringReviewModule } from './modules/coloring_review.js';
+
 import { TestBookCenterModule } from './modules/test_book_center.js';
 import { MasterTestBookCenterModule } from './modules/master_test_book_center.js';
 import { MasterTestBookExportCenterModule } from './modules/master_test_book_export_center.js';
+
 import { ExportCenterModule } from './modules/export_center.js';
 import { ReleaseCenterModule } from './modules/release_center.js';
+
 import { CoversModule } from './modules/covers.js';
 import { WordSearchModule } from './modules/wordsearch.js';
 import { CrosswordModule } from './modules/crossword.js';
 import { MandalaModule } from './modules/mandala.js';
-import { SettingsModule } from './modules/settings.js';
+
 import { CulturalAgentModule } from './modules/cultural_agent.js';
 import { CulturalBookBuilderModule } from './modules/cultural_book_builder.js';
+
+import { SettingsModule } from './modules/settings.js';
 
 const $ = function(sel, root){ return (root || document).querySelector(sel); };
 const $$ = function(sel, root){ return Array.from((root || document).querySelectorAll(sel)); };
@@ -57,19 +58,18 @@ function normalizeConfig(cfg){
 
 function escapeHtml(s){
   return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#039;');
 }
 
 function uiStatus(text, kind){
   var el = $('#uiStatus');
   if (!el) return;
-
   el.textContent = text;
-  el.classList.remove('ok', 'warn', 'bad');
+  el.classList.remove('ok','warn','bad');
   el.classList.add(kind || 'ok');
 }
 
@@ -85,36 +85,36 @@ function toast(msg, type){
   State.toastTimer = setTimeout(function(){
     el.classList.remove('show');
     el.hidden = true;
-  }, 2600);
+  },2600);
 }
 
 function log(line){
   var el = $('#log');
   if (!el) return;
 
-  var txt = typeof line === 'string' ? line : JSON.stringify(line, null, 2);
+  var txt = typeof line === 'string' ? line : JSON.stringify(line,null,2);
   el.textContent += txt + '\n';
   el.scrollTop = el.scrollHeight;
 }
 
 async function loadThemes(){
-  var res = await fetch('./data/themes.json', { cache: 'no-cache' });
+  var res = await fetch('./data/themes.json',{cache:'no-cache'});
   if (!res.ok) throw new Error('Falha ao carregar themes.json');
   return await res.json();
 }
 
 function mergeConfig(patch){
-  var next = normalizeConfig(Object.assign({}, State.cfg || {}, patch || {}));
+  var next = normalizeConfig(Object.assign({},State.cfg || {},patch || {}));
   State.cfg = next;
-  Storage.set('config', next);
+  Storage.set('config',next);
 
-  try {
-    localStorage.setItem(Storage.prefix + 'comfy:base_url', JSON.stringify(next.baseUrl || ''));
-  } catch (e) {}
+  try{
+    localStorage.setItem(Storage.prefix + 'comfy:base_url',JSON.stringify(next.baseUrl || ''));
+  }catch(e){}
 }
 
 function getConfig(){
-  State.cfg = normalizeConfig(State.cfg || Storage.get('config', {}));
+  State.cfg = normalizeConfig(State.cfg || Storage.get('config',{}));
   return State.cfg;
 }
 
@@ -123,105 +123,14 @@ function setConfig(patch){
   return getConfig();
 }
 
-function buildExportDump(){
-  var keys = Storage.listKeys();
-  var data = {};
-  var i;
-  var k;
-
-  for (i = 0; i < keys.length; i += 1){
-    k = keys[i];
-    data[k] = Storage.get(k, null);
-  }
-
-  return {
-    exportedAt: new Date().toISOString(),
-    data: data
-  };
-}
-
-function downloadJson(filename, obj){
-  var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-  var a = document.createElement('a');
-
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-
-  setTimeout(function(){
-    try { URL.revokeObjectURL(a.href); } catch (e) {}
-  }, 5000);
-}
-
-function exportAll(){
-  var dump = buildExportDump();
-
-  try {
-    downloadJson('brightcup-backup-' + Date.now() + '.json', dump);
-    toast('Backup exportado ✅', 'ok');
-  } catch (e) {
-    toast('Falha ao exportar backup', 'err');
-    log('[EXPORT ERROR] ' + String((e && e.stack) || e));
-  }
-
-  return dump;
-}
-
-function importAll(payload){
-  if (!payload || typeof payload !== 'object') {
-    throw new Error('Payload de importação inválido.');
-  }
-
-  var data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-  var keys = Object.keys(data);
-  var i;
-  var k;
-
-  for (i = 0; i < keys.length; i += 1){
-    k = keys[i];
-    Storage.set(k, data[k]);
-  }
-
-  State.cfg = normalizeConfig(Storage.get('config', {}));
-  Storage.set('config', State.cfg);
-
-  try {
-    localStorage.setItem(Storage.prefix + 'comfy:base_url', JSON.stringify(State.cfg.baseUrl || ''));
-  } catch (e) {}
-
-  toast('Backup importado ✅', 'ok');
-  return true;
-}
-
-function resetAll(){
-  var keys = Storage.listKeys();
-  var i;
-
-  for (i = 0; i < keys.length; i += 1){
-    Storage.del(keys[i]);
-  }
-
-  try {
-    localStorage.removeItem(Storage.prefix + 'comfy:base_url');
-  } catch (e) {}
-
-  State.cfg = normalizeConfig({});
-  State.activeView = null;
-  toast('Dados resetados ✅', 'ok');
-  return true;
-}
-
 function helpRender(root){
   root.innerHTML = `
     <div class="grid">
       <div class="card">
         <h2>Ajuda rápida</h2>
         <p class="muted">
-          Linha Cultural: <b>Cultural Agent</b> → <b>Livro (Builder)</b>.
-          <br/><br/>
-          Linha Coloring: <b>Coloring Agent</b> → <b>Coloring Builder</b> → <b>Coloring Review</b> → <b>Test Book Center</b> → <b>Master Test Book Center</b> → <b>Master Test Book Export Center</b> → <b>Export Center</b> → <b>Release Center</b>.
-          <br/><br/>
-          O Comfy continua apenas como compatibilidade temporária.
+          Fluxo principal:<br/>
+          Agent Center → Coloring Builder → Coloring Review → Test Book Center → Export Center → Release Center
         </p>
       </div>
     </div>
@@ -229,7 +138,7 @@ function helpRender(root){
 }
 
 function navOpen(on){
-  document.body.classList.toggle('nav-open', !!on);
+  document.body.classList.toggle('nav-open',!!on);
 }
 function navToggle(){
   navOpen(!document.body.classList.contains('nav-open'));
@@ -238,49 +147,26 @@ function navClose(){
   navOpen(false);
 }
 
-function safeClipboardCopy(text){
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text);
-  }
-
-  return new Promise(function(resolve, reject){
-    try {
-      var ta = document.createElement('textarea');
-      ta.value = text || '';
-      ta.setAttribute('readonly', 'readonly');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      resolve(true);
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
 function bindNavClicks(){
   $$('.navitem').forEach(function(btn){
     if (btn.__bccNavBound) return;
     btn.__bccNavBound = true;
 
-    btn.addEventListener('click', function(){
+    btn.addEventListener('click',function(){
       routeTo(btn.dataset.view);
       navClose();
     });
   });
 }
 
-function ensureNavItem(viewId, label, afterView){
-  var existing = document.querySelector('.navitem[data-view="' + viewId + '"]');
+function ensureNavItem(viewId,label,afterView){
+  var existing = document.querySelector('.navitem[data-view="'+viewId+'"]');
   if (existing) return;
 
-  var anchor = afterView ? document.querySelector('.navitem[data-view="' + afterView + '"]') : null;
+  var anchor = afterView ? document.querySelector('.navitem[data-view="'+afterView+'"]') : null;
   var parent = anchor ? anchor.parentNode : null;
 
-  if (!parent) {
+  if (!parent){
     var any = document.querySelector('.navitem');
     parent = any ? any.parentNode : null;
   }
@@ -293,19 +179,17 @@ function ensureNavItem(viewId, label, afterView){
   btn.dataset.view = viewId;
   btn.textContent = label;
 
-  if (anchor && anchor.nextSibling) parent.insertBefore(btn, anchor.nextSibling);
+  if (anchor && anchor.nextSibling) parent.insertBefore(btn,anchor.nextSibling);
   else parent.appendChild(btn);
 }
 
 function ensureDynamicNavItems(){
-  ensureNavItem('coloring_agent', 'Coloring Agent', 'coloring');
-  ensureNavItem('coloring_book', 'Coloring Builder', 'coloring_agent');
-  ensureNavItem('coloring_review', 'Coloring Review', 'coloring_book');
-  ensureNavItem('test_book_center', 'Test Book Center', 'coloring_review');
-  ensureNavItem('master_test_book_center', 'Master Test Book Center', 'test_book_center');
-  ensureNavItem('master_test_book_export_center', 'Master Test Book Export Center', 'master_test_book_center');
-  ensureNavItem('export_center', 'Export Center', 'master_test_book_export_center');
-  ensureNavItem('release_center', 'Release Center', 'export_center');
+  ensureNavItem('agent_center','Agent Center','coloring');
+  ensureNavItem('coloring_book','Coloring Builder','agent_center');
+  ensureNavItem('coloring_review','Coloring Review','coloring_book');
+  ensureNavItem('test_book_center','Test Book Center','coloring_review');
+  ensureNavItem('export_center','Export Center','test_book_center');
+  ensureNavItem('release_center','Release Center','export_center');
 }
 
 function mountNav(){
@@ -313,68 +197,34 @@ function mountNav(){
   bindNavClicks();
 
   var btnHelp = $('#btnHelp');
-  if (btnHelp && !btnHelp.__bccBound) {
+  if (btnHelp && !btnHelp.__bccBound){
     btnHelp.__bccBound = true;
-    btnHelp.addEventListener('click', function(){
+    btnHelp.addEventListener('click',function(){
       routeTo('help');
       navClose();
     });
   }
 
-  var btnExport = $('#btnExport');
-  if (btnExport && !btnExport.__bccBound) {
-    btnExport.__bccBound = true;
-    btnExport.addEventListener('click', function(){
-      exportAll();
-    });
-  }
-
-  var btnClear = $('#btnClear');
-  if (btnClear && !btnClear.__bccBound) {
-    btnClear.__bccBound = true;
-    btnClear.addEventListener('click', function(){
-      var el = $('#log');
-      if (el) el.textContent = '';
-    });
-  }
-
-  var btnCopyLog = $('#btnCopyLog');
-  if (btnCopyLog && !btnCopyLog.__bccBound) {
-    btnCopyLog.__bccBound = true;
-    btnCopyLog.addEventListener('click', async function(){
-      try {
-        await safeClipboardCopy(($('#log') && $('#log').textContent) || '');
-        toast('Logs copiados ✅', 'ok');
-      } catch (e) {
-        toast('Falha ao copiar logs', 'err');
-      }
-    });
-  }
-
   var btnMenu = $('#btnMenu');
-  if (btnMenu && !btnMenu.__bccBound) {
+  if (btnMenu && !btnMenu.__bccBound){
     btnMenu.__bccBound = true;
-    btnMenu.addEventListener('click', function(){
-      navToggle();
-    });
+    btnMenu.addEventListener('click',navToggle);
   }
 
   var navOverlay = $('#navOverlay');
-  if (navOverlay && !navOverlay.__bccBound) {
+  if (navOverlay && !navOverlay.__bccBound){
     navOverlay.__bccBound = true;
-    navOverlay.addEventListener('click', function(){
-      navClose();
-    });
+    navOverlay.addEventListener('click',navClose);
   }
 }
 
 function setActiveNav(viewId){
   $$('.navitem').forEach(function(b){
-    b.classList.toggle('active', b.dataset.view === viewId);
+    b.classList.toggle('active',b.dataset.view === viewId);
   });
 }
 
-function renderViewError(root, err, title){
+function renderViewError(root,err,title){
   root.innerHTML = `
     <div class="card">
       <h2>${escapeHtml(title || 'Erro ao renderizar')}</h2>
@@ -385,95 +235,89 @@ function renderViewError(root, err, title){
 
 function routeTo(viewId){
   var root = $('#view');
-  var chosen = viewId || 'coloring_agent';
+  var chosen = viewId || 'agent_center';
 
   State.activeView = chosen;
-  mergeConfig({ lastView: chosen });
+  mergeConfig({lastView:chosen});
   setActiveNav(chosen);
 
   if (!root) return;
 
-  if (chosen === 'help') {
+  if (chosen === 'help'){
     helpRender(root);
     return;
   }
 
   var mod = State.modules.get(chosen);
 
-  if (!mod) {
-    root.innerHTML = '<div class="card"><h2>View não encontrada</h2><p class="muted">' + escapeHtml(chosen) + '</p></div>';
+  if (!mod){
+    root.innerHTML = '<div class="card"><h2>View não encontrada</h2><p class="muted">'+escapeHtml(chosen)+'</p></div>';
     return;
   }
 
-  try {
-    if (typeof mod.render !== 'function') {
-      throw new Error('Módulo sem render().');
-    }
-
+  try{
     mod.render(root);
-
-    if (typeof mod.onShow === 'function') {
-      mod.onShow();
-    }
-  } catch (e) {
+  }catch(e){
     console.error(e);
-    log('[ROUTE ERROR][' + chosen + '] ' + String((e && e.stack) || e));
-    renderViewError(root, e, 'Erro ao abrir view');
-    toast('Erro ao renderizar view', 'err');
+    log('[ROUTE ERROR]['+chosen+'] ' + String((e && e.stack) || e));
+    renderViewError(root,e,'Erro ao abrir view');
   }
 }
 
 function getSafeStartView(){
-  var last = getConfig().lastView || 'coloring_agent';
+  var last = getConfig().lastView || 'agent_center';
 
   if (last === 'help') return 'help';
   if (State.modules.has(last)) return last;
 
   if (State.modules.has('release_center')) return 'release_center';
-  if (State.modules.has('master_test_book_export_center')) return 'master_test_book_export_center';
-  if (State.modules.has('master_test_book_center')) return 'master_test_book_center';
   if (State.modules.has('test_book_center')) return 'test_book_center';
-  if (State.modules.has('coloring_agent')) return 'coloring_agent';
-  if (State.modules.has('coloring_book')) return 'coloring_book';
   if (State.modules.has('coloring_review')) return 'coloring_review';
-  if (State.modules.has('export_center')) return 'export_center';
-  if (State.modules.has('cultural')) return 'cultural';
-  if (State.modules.has('book')) return 'book';
-  if (State.modules.has('coloring')) return 'coloring';
+  if (State.modules.has('coloring_book')) return 'coloring_book';
+  if (State.modules.has('agent_center')) return 'agent_center';
 
   return 'help';
 }
 
-async function initModule(id, mod){
-  State.modules.set(id, mod);
-
-  if (mod && typeof mod.init === 'function') {
-    try {
+async function initModule(id,mod){
+  State.modules.set(id,mod);
+  if (mod && typeof mod.init === 'function'){
+    try{
       await mod.init();
-    } catch (e) {
-      log('[MODULE INIT ERROR][' + id + '] ' + String((e && e.stack) || e));
+    }catch(e){
+      log('[MODULE INIT ERROR]['+id+'] '+String((e && e.stack) || e));
     }
   }
 }
 
-async function boot(){
-  uiStatus('BOOT', 'warn');
-  log('[BOOT] ' + new Date().toISOString());
+document.addEventListener('bcc:navigate',function(e){
+  try{
+    if (!e || !e.detail) return;
+    var view = e.detail.view;
+    if (!view) return;
+    routeTo(view);
+  }catch(err){}
+});
 
-  try {
-    if ('serviceWorker' in navigator) {
-      try {
+async function boot(){
+  uiStatus('BOOT','warn');
+  log('[BOOT] '+new Date().toISOString());
+
+  try{
+
+    if ('serviceWorker' in navigator){
+      try{
         await navigator.serviceWorker.register('./sw.js');
-      } catch (e) {
-        log('[SW WARN] ' + String((e && e.message) || e));
+      }catch(e){
+        log('[SW WARN] '+String((e && e.message) || e));
       }
     }
 
-    try {
+    try{
       State.themes = await loadThemes();
-    } catch (e) {
+    }catch(e){
       State.themes = {};
-      log('[THEMES WARN] ' + String((e && e.message) || e));
+      log('[THEMES WARN] '+String((e && e.message) || e));
     }
 
     var app = {
@@ -485,51 +329,51 @@ async function boot(){
       }),
       toast: toast,
       log: log,
+      routeTo: routeTo,
       getConfig: getConfig,
-      setConfig: setConfig,
-      exportAll: exportAll,
-      importAll: importAll,
-      resetAll: resetAll,
-      saveProject: function(obj){
-        Storage.set('project:last', obj);
-        toast('Projeto salvo ✅', 'ok');
-      }
+      setConfig: setConfig
     };
 
-    await initModule('coloring_agent', new ColoringAgentModule(app));
-    await initModule('coloring_book', new ColoringBookBuilderModule(app));
-    await initModule('coloring_review', new ColoringReviewModule(app));
-    await initModule('test_book_center', new TestBookCenterModule(app));
-    await initModule('master_test_book_center', new MasterTestBookCenterModule(app));
-    await initModule('master_test_book_export_center', new MasterTestBookExportCenterModule(app));
-    await initModule('export_center', new ExportCenterModule(app));
-    await initModule('release_center', new ReleaseCenterModule(app));
+    await initModule('agent_center',new AgentCenterModule(app));
 
-    await initModule('coloring', new ColoringModule(app));
-    await initModule('covers', new CoversModule(app));
-    await initModule('wordsearch', new WordSearchModule(app));
-    await initModule('crossword', new CrosswordModule(app));
-    await initModule('mandala', new MandalaModule(app));
+    await initModule('coloring_agent',new ColoringAgentModule(app));
+    await initModule('coloring_book',new ColoringBookBuilderModule(app));
+    await initModule('coloring_review',new ColoringReviewModule(app));
 
-    await initModule('cultural', new CulturalAgentModule(app));
-    await initModule('book', new CulturalBookBuilderModule(app));
+    await initModule('test_book_center',new TestBookCenterModule(app));
+    await initModule('master_test_book_center',new MasterTestBookCenterModule(app));
+    await initModule('master_test_book_export_center',new MasterTestBookExportCenterModule(app));
 
-    await initModule('settings', new SettingsModule(app));
+    await initModule('export_center',new ExportCenterModule(app));
+    await initModule('release_center',new ReleaseCenterModule(app));
+
+    await initModule('coloring',new ColoringModule(app));
+    await initModule('covers',new CoversModule(app));
+    await initModule('wordsearch',new WordSearchModule(app));
+    await initModule('crossword',new CrosswordModule(app));
+    await initModule('mandala',new MandalaModule(app));
+
+    await initModule('cultural',new CulturalAgentModule(app));
+    await initModule('book',new CulturalBookBuilderModule(app));
+
+    await initModule('settings',new SettingsModule(app));
 
     mountNav();
-    uiStatus('READY', 'ok');
+
+    uiStatus('READY','ok');
 
     routeTo(getSafeStartView());
-    toast('Pronto ✅', 'ok');
-  } catch (e) {
+    toast('Pronto ✅','ok');
+
+  }catch(e){
     console.error(e);
-    uiStatus('ERROR', 'bad');
-    toast('Erro no boot: ' + ((e && e.message) || e), 'err');
-    log('[BOOT ERROR] ' + String((e && e.stack) || e));
+    uiStatus('ERROR','bad');
+    toast('Erro no boot','err');
+    log('[BOOT ERROR] '+String((e && e.stack) || e));
 
     var root = $('#view');
-    if (root) {
-      renderViewError(root, e, 'Erro no boot');
+    if (root){
+      renderViewError(root,e,'Erro no boot');
     }
   }
 }
