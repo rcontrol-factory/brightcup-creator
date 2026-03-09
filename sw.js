@@ -1,8 +1,12 @@
 /* FILE: /sw.js */
 // Bright Cup Creator — Stable PWA Service Worker
-// Goal: avoid stale-cache white screens on Safari/iOS/PWA
+// Focus:
+// - avoid stale cache
+// - reduce white screen caused by old/inconsistent cache
+// - keep updates silent and predictable
+// - Safari/iOS/PWA safe
 
-const CACHE_VERSION = 'bcc-v1';
+const CACHE_VERSION = 'bcc-v2-stable';
 const CACHE_NAME = 'brightcup-cache-' + CACHE_VERSION;
 
 function isSameOrigin(requestUrl) {
@@ -33,6 +37,21 @@ function isNetworkFirstRequest(request) {
   if (/\.html$/i.test(url)) return true;
 
   return false;
+}
+
+function isCacheableResponse(response) {
+  if (!response) return false;
+  if (response.status !== 200) return false;
+
+  try {
+    if (response.type && response.type !== 'basic' && response.type !== 'default') {
+      return false;
+    }
+  } catch (e) {
+    return false;
+  }
+
+  return true;
 }
 
 function makeFallbackResponse(request) {
@@ -66,6 +85,34 @@ function makeFallbackResponse(request) {
   return new Response('', { status: 200 });
 }
 
+async function clearOldCaches() {
+  var keys = await caches.keys();
+  await Promise.all(keys.map(function(key) {
+    if (key !== CACHE_NAME) return caches.delete(key);
+    return Promise.resolve(false);
+  }));
+}
+
+async function getNavigationCacheFallback(cache, request) {
+  var candidates = [];
+  var cached;
+  var i;
+
+  candidates.push(request);
+  candidates.push('./');
+  candidates.push('/');
+  candidates.push(self.location.origin + '/');
+
+  for (i = 0; i < candidates.length; i += 1) {
+    try {
+      cached = await cache.match(candidates[i]);
+      if (cached) return cached;
+    } catch (e) {}
+  }
+
+  return null;
+}
+
 self.addEventListener('install', function(event) {
   self.skipWaiting();
   event.waitUntil(Promise.resolve());
@@ -73,13 +120,23 @@ self.addEventListener('install', function(event) {
 
 self.addEventListener('activate', function(event) {
   event.waitUntil((async function() {
-    var keys = await caches.keys();
-    await Promise.all(keys.map(function(key) {
-      if (key !== CACHE_NAME) return caches.delete(key);
-      return Promise.resolve(false);
-    }));
+    await clearOldCaches();
     await self.clients.claim();
   })());
+});
+
+self.addEventListener('message', function(event) {
+  var data = event && event.data ? event.data : {};
+  var type = data && data.type ? String(data.type) : '';
+
+  if (type === 'BCC_SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+
+  if (type === 'BCC_CLEAR_RUNTIME_CACHES') {
+    event.waitUntil(clearOldCaches());
+  }
 });
 
 self.addEventListener('fetch', function(event) {
@@ -97,7 +154,7 @@ self.addEventListener('fetch', function(event) {
 
       try {
         var fresh = await fetch(request);
-        if (fresh && fresh.ok) {
+        if (isCacheableResponse(fresh)) {
           cache.put(request, fresh.clone());
         }
         return fresh || makeFallbackResponse(request);
@@ -111,16 +168,34 @@ self.addEventListener('fetch', function(event) {
   if (isNetworkFirstRequest(request)) {
     event.respondWith((async function() {
       var cache = await caches.open(CACHE_NAME);
+      var cached = await cache.match(request);
+      var fresh;
 
       try {
-        var fresh = await fetch(request, { cache: 'no-store' });
-        if (fresh && fresh.ok) {
+        fresh = await fetch(request, { cache: 'no-store' });
+
+        if (isCacheableResponse(fresh)) {
           cache.put(request, fresh.clone());
+          return fresh;
         }
+
+        if (cached) return cached;
+
+        if (request.mode === 'navigate') {
+          var navFallback = await getNavigationCacheFallback(cache, request);
+          if (navFallback) return navFallback;
+        }
+
         return fresh || makeFallbackResponse(request);
       } catch (e) {
-        var cached = await cache.match(request);
-        return cached || makeFallbackResponse(request);
+        if (cached) return cached;
+
+        if (request.mode === 'navigate') {
+          var navigationFallback = await getNavigationCacheFallback(cache, request);
+          if (navigationFallback) return navigationFallback;
+        }
+
+        return makeFallbackResponse(request);
       }
     })());
     return;
@@ -128,15 +203,17 @@ self.addEventListener('fetch', function(event) {
 
   event.respondWith((async function() {
     var cache = await caches.open(CACHE_NAME);
+    var cached = await cache.match(request);
+
+    if (cached) return cached;
 
     try {
       var fresh = await fetch(request);
-      if (fresh && fresh.ok) {
+      if (isCacheableResponse(fresh)) {
         cache.put(request, fresh.clone());
       }
       return fresh || makeFallbackResponse(request);
     } catch (e) {
-      var cached = await cache.match(request);
       return cached || makeFallbackResponse(request);
     }
   })());
