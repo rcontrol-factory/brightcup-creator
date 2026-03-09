@@ -1,12 +1,8 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
-// Boot defensivo + integração dos módulos principais
-// - Agent Center
-// - Workflow Center
-// - Coloring Builder / Review
-// - Test Book / Export / Release
-// - Cultural / Puzzles / Covers
-// - Safari/iOS/PWA safe
+// Boot defensivo + navegação alinhada com arquitetura:
+// Agent Center → Workflow Center → Fluxos operacionais
+// Safari/iOS/PWA safe
 
 import { Storage } from './core/storage.js';
 import { PromptEngine } from './core/prompt_engine.js';
@@ -15,7 +11,6 @@ import { ComfyClient } from './core/comfy_client.js';
 import { AgentCenterModule } from './modules/agent_center.js';
 import { WorkflowCenterModule } from './modules/workflow_center.js';
 
-import { ColoringModule } from './modules/coloring.js';
 import { ColoringAgentModule } from './modules/coloring_agent.js';
 import { ColoringBookBuilderModule } from './modules/coloring_book_builder.js';
 import { ColoringReviewModule } from './modules/coloring_review.js';
@@ -26,11 +21,6 @@ import { MasterTestBookExportCenterModule } from './modules/master_test_book_exp
 
 import { ExportCenterModule } from './modules/export_center.js';
 import { ReleaseCenterModule } from './modules/release_center.js';
-
-import { CoversModule } from './modules/covers.js';
-import { WordSearchModule } from './modules/wordsearch.js';
-import { CrosswordModule } from './modules/crossword.js';
-import { MandalaModule } from './modules/mandala.js';
 
 import { CulturalAgentModule } from './modules/cultural_agent.js';
 import { CulturalBookBuilderModule } from './modules/cultural_book_builder.js';
@@ -109,10 +99,6 @@ function mergeConfig(patch){
   var next = normalizeConfig(Object.assign({},State.cfg || {},patch || {}));
   State.cfg = next;
   Storage.set('config',next);
-
-  try{
-    localStorage.setItem(Storage.prefix + 'comfy:base_url',JSON.stringify(next.baseUrl || ''));
-  }catch(e){}
 }
 
 function getConfig(){
@@ -186,11 +172,13 @@ function ensureNavItem(viewId,label,afterView){
 }
 
 function ensureDynamicNavItems(){
-  ensureNavItem('agent_center','Agent Center','coloring');
+  ensureNavItem('agent_center','Agent Center');
   ensureNavItem('workflow_center','Workflow Center','agent_center');
+
   ensureNavItem('coloring_book','Coloring Builder','workflow_center');
   ensureNavItem('coloring_review','Coloring Review','coloring_book');
   ensureNavItem('test_book_center','Test Book Center','coloring_review');
+
   ensureNavItem('export_center','Export Center','test_book_center');
   ensureNavItem('release_center','Release Center','export_center');
 }
@@ -238,7 +226,7 @@ function renderViewError(root,err,title){
 
 function routeTo(viewId){
   var root = $('#view');
-  var chosen = viewId || 'agent_center';
+  var chosen = viewId || 'workflow_center';
 
   State.activeView = chosen;
   mergeConfig({lastView:chosen});
@@ -268,19 +256,17 @@ function routeTo(viewId){
 }
 
 function getSafeStartView(){
-  var last = getConfig().lastView || 'agent_center';
+  var last = getConfig().lastView;
 
-  if (last === 'help') return 'help';
-  if (State.modules.has(last)) return last;
+  if (last && State.modules.has(last)) return last;
 
   if (State.modules.has('workflow_center')) return 'workflow_center';
-  if (State.modules.has('release_center')) return 'release_center';
+  if (State.modules.has('agent_center')) return 'agent_center';
   if (State.modules.has('test_book_center')) return 'test_book_center';
   if (State.modules.has('coloring_review')) return 'coloring_review';
   if (State.modules.has('coloring_book')) return 'coloring_book';
-  if (State.modules.has('agent_center')) return 'agent_center';
 
-  return 'help';
+  return 'agent_center';
 }
 
 async function initModule(id,mod){
@@ -351,12 +337,6 @@ async function boot(){
 
     await initModule('export_center',new ExportCenterModule(app));
     await initModule('release_center',new ReleaseCenterModule(app));
-
-    await initModule('coloring',new ColoringModule(app));
-    await initModule('covers',new CoversModule(app));
-    await initModule('wordsearch',new WordSearchModule(app));
-    await initModule('crossword',new CrosswordModule(app));
-    await initModule('mandala',new MandalaModule(app));
 
     await initModule('cultural',new CulturalAgentModule(app));
     await initModule('book',new CulturalBookBuilderModule(app));
