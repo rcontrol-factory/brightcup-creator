@@ -1,7 +1,7 @@
 /* FILE: /js/app.js */
 // Bright Cup Creator — /js/app.js
 // Boot defensivo + navegação alinhada com arquitetura:
-// Agent Center → Workflow Center → Fluxos operacionais
+// Agent Center → Workflow Center → Publishing Center → Fluxos operacionais
 // Safari/iOS/PWA safe
 
 import { Storage } from './core/storage.js';
@@ -10,6 +10,7 @@ import { ComfyClient } from './core/comfy_client.js';
 
 import { AgentCenterModule } from './modules/agent_center.js';
 import { WorkflowCenterModule } from './modules/workflow_center.js';
+import { PublishingCenterModule } from './modules/publishing_center.js';
 
 import { ColoringAgentModule } from './modules/coloring_agent.js';
 import { ColoringBookBuilderModule } from './modules/coloring_book_builder.js';
@@ -118,7 +119,9 @@ function helpRender(root){
         <h2>Ajuda rápida</h2>
         <p class="muted">
           Fluxo principal:<br/>
-          Agent Center → Workflow Center → Coloring Builder → Coloring Review → Test Book Center → Export Center → Release Center
+          Agent Center → Workflow Center → Publishing Center → Export/Release
+          <br/><br/>
+          No fluxo de coloring, a execução passa por Builder e Review antes da etapa de publicação.
         </p>
       </div>
     </div>
@@ -174,8 +177,9 @@ function ensureNavItem(viewId,label,afterView){
 function ensureDynamicNavItems(){
   ensureNavItem('agent_center','Agent Center');
   ensureNavItem('workflow_center','Workflow Center','agent_center');
+  ensureNavItem('publishing_center','Publishing Center','workflow_center');
 
-  ensureNavItem('coloring_book','Coloring Builder','workflow_center');
+  ensureNavItem('coloring_book','Coloring Builder','publishing_center');
   ensureNavItem('coloring_review','Coloring Review','coloring_book');
   ensureNavItem('test_book_center','Test Book Center','coloring_review');
 
@@ -261,6 +265,7 @@ function getSafeStartView(){
   if (last && State.modules.has(last)) return last;
 
   if (State.modules.has('workflow_center')) return 'workflow_center';
+  if (State.modules.has('publishing_center')) return 'publishing_center';
   if (State.modules.has('agent_center')) return 'agent_center';
   if (State.modules.has('test_book_center')) return 'test_book_center';
   if (State.modules.has('coloring_review')) return 'coloring_review';
@@ -326,6 +331,7 @@ async function boot(){
 
     await initModule('agent_center',new AgentCenterModule(app));
     await initModule('workflow_center',new WorkflowCenterModule(app));
+    await initModule('publishing_center',new PublishingCenterModule(app));
 
     await initModule('coloring_agent',new ColoringAgentModule(app));
     await initModule('coloring_book',new ColoringBookBuilderModule(app));
