@@ -75,6 +75,13 @@ const TOP_LEVEL_VIEWS = [
   'help'
 ];
 
+const SAFE_BOOT_VIEWS = [
+  'agent_center',
+  'workflow_center',
+  'publishing_center',
+  'help'
+];
+
 const State = {
   themes: null,
   cfg: null,
@@ -505,6 +512,10 @@ function hasRouteAvailable(viewId){
   return false;
 }
 
+function isSafeBootView(viewId){
+  return SAFE_BOOT_VIEWS.indexOf(viewId) !== -1;
+}
+
 async function ensureModuleReady(id){
   if (!id || id === 'help') return null;
 
@@ -594,16 +605,40 @@ async function routeTo(viewId){
 
 function getSafeStartView(){
   var last = getConfig().lastView;
+  log('[SAFE BOOT] lastView=' + (last || ''));
 
-  if (last && TOP_LEVEL_VIEWS.indexOf(last) !== -1 && hasRouteAvailable(last)) return last;
-  if (hasRouteAvailable('workflow_center')) return 'workflow_center';
-  if (hasRouteAvailable('publishing_center')) return 'publishing_center';
-  if (hasRouteAvailable('agent_center')) return 'agent_center';
+  if (last && isSafeBootView(last) && hasRouteAvailable(last)) {
+    log('[SAFE BOOT] lastView accepted');
+    return last;
+  }
+
+  if (last && !isSafeBootView(last)) {
+    log('[SAFE BOOT] lastView=' + last + ' rejected');
+  }
+
+  if (hasRouteAvailable('workflow_center')) {
+    log('[SAFE BOOT] using workflow_center');
+    return 'workflow_center';
+  }
+
+  if (hasRouteAvailable('agent_center')) {
+    log('[SAFE BOOT] using agent_center');
+    return 'agent_center';
+  }
+
+  if (hasRouteAvailable('publishing_center')) {
+    log('[SAFE BOOT] using publishing_center');
+    return 'publishing_center';
+  }
+
+  log('[SAFE BOOT] using help');
   return 'help';
 }
 
 function resolveSafeBootStartView(){
   var preferred = getSafeStartView();
+  var finalView = preferred;
+
   log('[BOOT ROUTE] preferred=' + preferred);
 
   var snapshot;
@@ -615,43 +650,56 @@ function resolveSafeBootStartView(){
     snapshot = null;
   }
 
-  if (!snapshot) return preferred;
-
-  if (snapshot.routing && snapshot.routing.shouldAvoidLastRoute === true){
-    log('[BOOT ROUTE] avoiding last route due to snapshot');
-  }
-
-  if (snapshot.safety && snapshot.safety.safeToOpenPreferredRoute === false){
-    log('[BOOT ROUTE] preferred route not safe');
-  }
-
-  if (
-    snapshot.routing &&
-    (snapshot.routing.shouldAvoidLastRoute === true ||
-     (snapshot.safety && snapshot.safety.safeToOpenPreferredRoute === false))
-  ){
-    var suggested = snapshot.routing.suggestedSafeRoute;
-
-    if (suggested && hasRouteAvailable(suggested)){
-      log('[BOOT ROUTE] using suggested safe route=' + suggested);
-      return suggested;
+  if (snapshot) {
+    if (snapshot.routing && snapshot.routing.shouldAvoidLastRoute === true){
+      log('[BOOT ROUTE] avoiding preferred route due to snapshot');
     }
 
-    if (hasRouteAvailable('agent_center')){
-      log('[BOOT ROUTE] fallback agent_center');
-      return 'agent_center';
+    if (snapshot.safety && snapshot.safety.safeToOpenPreferredRoute === false){
+      log('[BOOT ROUTE] preferred route not safe');
     }
 
-    if (hasRouteAvailable('workflow_center')){
-      log('[BOOT ROUTE] fallback workflow_center');
-      return 'workflow_center';
-    }
+    if (
+      snapshot.routing &&
+      (snapshot.routing.shouldAvoidLastRoute === true ||
+       (snapshot.safety && snapshot.safety.safeToOpenPreferredRoute === false))
+    ){
+      var suggested = snapshot.routing.suggestedSafeRoute;
 
-    log('[BOOT ROUTE] final fallback help');
-    return 'help';
+      if (suggested && isSafeBootView(suggested) && hasRouteAvailable(suggested)){
+        log('[BOOT ROUTE] using suggested safe route=' + suggested);
+        finalView = suggested;
+      } else if (hasRouteAvailable('workflow_center')){
+        log('[BOOT ROUTE] fallback workflow_center');
+        finalView = 'workflow_center';
+      } else if (hasRouteAvailable('agent_center')){
+        log('[BOOT ROUTE] fallback agent_center');
+        finalView = 'agent_center';
+      } else if (hasRouteAvailable('publishing_center')){
+        log('[BOOT ROUTE] fallback publishing_center');
+        finalView = 'publishing_center';
+      } else {
+        log('[BOOT ROUTE] final fallback help');
+        finalView = 'help';
+      }
+    }
   }
 
-  return preferred;
+  if (!isSafeBootView(finalView) || !hasRouteAvailable(finalView)) {
+    if (hasRouteAvailable('workflow_center')) finalView = 'workflow_center';
+    else if (hasRouteAvailable('agent_center')) finalView = 'agent_center';
+    else if (hasRouteAvailable('publishing_center')) finalView = 'publishing_center';
+    else finalView = 'help';
+  }
+
+  log('[SAFE BOOT] final route=' + finalView);
+  return finalView;
+}
+
+function hasRenderableViewContent(root){
+  if (!root) return false;
+  if (typeof root.innerHTML !== 'string') return false;
+  return root.innerHTML.trim().length > 0;
 }
 
 document.addEventListener('bcc:navigate', function(e){
@@ -767,6 +815,21 @@ async function boot(){
     logBootStep('start view chosen', startView);
 
     await routeTo(startView);
+
+    var root = $('#view');
+    if (!hasRenderableViewContent(root)) {
+      log('[BOOT FALLBACK] Empty initial view detected');
+
+      if (startView !== 'agent_center' && hasRouteAvailable('agent_center')) {
+        log('[BOOT FALLBACK] Switching to agent_center');
+        await routeTo('agent_center');
+      }
+
+      if (!hasRenderableViewContent(root)) {
+        log('[BOOT FALLBACK] Switching to help');
+        await routeTo('help');
+      }
+    }
 
     markBootSuccess();
     logBootStep('boot success');
